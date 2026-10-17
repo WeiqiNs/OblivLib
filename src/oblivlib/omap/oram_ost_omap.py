@@ -11,7 +11,7 @@ import msgpack
 
 from oblivlib.dependency import Blake2Prf, hash_data_to_leaf, hash_data_to_map
 from oblivlib.dependency.config import OramOstOmapConfig
-from oblivlib.dependency.contract import require_omap_key, require_value
+from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.omap.base_omap import BaseOmap
 from oblivlib.omap.ost_base_omap import ROOT, OstBaseOmap
 from oblivlib.oram.tree_base_oram import TreeBaseOram
@@ -62,10 +62,7 @@ class OramOstOmap(BaseOmap):
 
     @override
     def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
-        for key, value in data or []:
-            require_omap_key(self._identity, key, self._ost._key_size)
-            require_value(self._identity, value, self._ost._data_size)
-
+        require_omap_init(self._identity, data or [], key_size=self._ost._key_size, data_size=self._ost._data_size)
         data_map = hash_data_to_map(prf=self._prf, data=data or [], map_size=self._num_data)
         data_list = [data_map[key] for key in range(self._num_data)]
 

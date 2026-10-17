@@ -123,6 +123,18 @@ class TestOmapBehavior:
         for i in range(200):
             assert omap.search(key=_b(i)) == _b(i)
 
+    def test_init_rejects_repeated_key(self, omap_spec, client):
+        omap = omap_spec.make(client=client, num_data=64)
+        repeated = f"{omap_spec.cls.__name__} '.*given twice"
+        with pytest.raises(ContractError, match=repeated):
+            omap.init_server_storage(data=[(b"1", b"a"), (b"2", b"b"), (b"1", b"c")])
+        with pytest.raises(ContractError, match=repeated):
+            omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"2", b"b"), (b"2", b"c")]])
+
+        roots = omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"1", b"b")]])
+        omap.root = roots[1]
+        assert omap.search(key=b"1") == b"b"
+
     def test_mul_tree_init(self, omap_spec, num_data, client):
         extra = 3
         size_group = math.floor(math.log2(num_data))

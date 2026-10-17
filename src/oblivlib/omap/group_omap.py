@@ -12,7 +12,7 @@ import msgpack
 
 from oblivlib.dependency import UNSET, Blake2Prf, Data, hash_data_to_map
 from oblivlib.dependency.config import GroupOmapConfig, MulPathOramConfig
-from oblivlib.dependency.contract import require_omap_key, require_value
+from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.base_omap import BaseOmap
 from oblivlib.oram import MulPathOram, TreeBaseOram
@@ -122,10 +122,7 @@ class GroupOmap(BaseOmap):
     @override
     def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
         """Initialize both ORAMs with the given key-value pairs."""
-        for key, value in data or []:
-            require_omap_key(self._identity, key, self._key_size)
-            require_value(self._identity, value, self._data_size)
-
+        require_omap_init(self._identity, data or [], key_size=self._key_size, data_size=self._data_size)
         data_map = hash_data_to_map(prf=self._bucket_prf, data=data or [], map_size=self._num_buckets)
 
         upper_data: dict[int, bytes] = {}

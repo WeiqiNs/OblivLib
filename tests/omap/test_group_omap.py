@@ -98,6 +98,8 @@ class TestGroupOmap:
 
     def test_rejects_contract_violations(self, client):
         omap = _make_omap(client)
+        with pytest.raises(ContractError, match="GroupOmap 'group_omap'.*given twice"):
+            omap.init_server_storage(data=[(b"k", b"lost"), (b"k", b"kept")])
         omap.init_server_storage(data=[(b"k", b"kept")])
         rounds = client.metrics.rounds
 

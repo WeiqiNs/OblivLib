@@ -142,8 +142,12 @@ ORAM keys are int addresses in `[0, num_data)`; OMAP keys are `bytes` of at most
 plain bytes comparison (OMAPs only search, insert, and delete exact keys); values are `bytes` of at most
 `data_size`. Users serialize their own data. `contract.py` checks keys and values at every public entry
 point, before any state changes, and raises `ContractError` (a `ValueError`) prefixed with the scheme's
-identity. An ORAM address never written reads `b""`; `None` is not a value. Internal structured values
-(position-map blocks, composed-map roots and metadata, ODS nodes) are msgpack; the library never pickles.
+identity. Initial data gives each key at most once, in every ORAM and OMAP (and per tree in
+`init_mul_tree_server_storage`); a repeated key raises `ContractError` before anything is hosted.
+OMAP init checks all pairs up front (`contract.require_omap_init`); ORAM init checks while streaming
+(`TreeBaseOram._initial_blocks`), so a repeat stops the build partway. An ORAM address never written
+reads `b""`; `None` is not a value. Internal structured values (position-map blocks, composed-map roots
+and metadata, ODS nodes) are msgpack; the library never pickles.
 
 ### Blocks and codecs
 

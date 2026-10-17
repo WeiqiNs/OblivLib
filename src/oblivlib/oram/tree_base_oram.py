@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, override
 
-from oblivlib.dependency import UNSET, Data, InitData, OramConfig, PathRows, PosMap
+from oblivlib.dependency import UNSET, ContractError, Data, InitData, OramConfig, PathRows, PosMap
 from oblivlib.dependency.contract import require_oram_key, require_value
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
 
@@ -60,7 +60,7 @@ class TreeBaseOram[ConfigT: OramConfig](TreeStorageBase[ConfigT], ABC):
             require_oram_key(self._identity, key, self._num_data)
             require_value(self._identity, value, self._data_size)
             if supplied[key]:
-                raise ValueError(f"{self._identity}: initial key {key} is given twice.")
+                raise ContractError(f"{self._identity}: initial key {key} is given twice.")
             supplied[key] = 1
             yield Data(key=key, leaf=self._initial_leaf(key), value=value)
         for key in range(self._num_data):

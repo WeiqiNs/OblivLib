@@ -58,18 +58,18 @@ def test_init_accepts_one_shot_stream(make_oram, client, test_file, encryptor):
 
 
 @pytest.mark.parametrize(
-    ("pairs", "error", "match"),
+    ("pairs", "match"),
     [
-        ([(1, b"a"), (1, b"b")], ValueError, "given twice"),
-        ([(64, b"a")], ContractError, r"\[0, 64\)"),
-        ([(-1, b"a")], ContractError, r"\[0, 64\)"),
-        ([(1, "a")], ContractError, "must be bytes"),
-        ([(1, b"x" * 11)], ContractError, "data_size is 10"),
+        ([(1, b"a"), (1, b"b")], "given twice"),
+        ([(64, b"a")], r"\[0, 64\)"),
+        ([(-1, b"a")], r"\[0, 64\)"),
+        ([(1, "a")], "must be bytes"),
+        ([(1, b"x" * 11)], "data_size is 10"),
     ],
 )
-def test_init_rejects_duplicate_keys_and_contract_violations(client, pairs, error, match):
+def test_init_rejects_duplicate_keys_and_contract_violations(client, pairs, match):
     oram = PathOram(PathOramConfig(num_data=64, data_size=10, client=client))
-    with pytest.raises(error, match=match):
+    with pytest.raises(ContractError, match=match):
         oram.init_server_storage(data=iter(pairs))
 
 

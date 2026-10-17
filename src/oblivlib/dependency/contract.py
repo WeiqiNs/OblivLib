@@ -2,6 +2,7 @@
 ``[0, num_data)``, OMAP keys are ``bytes`` of at most ``key_size``, and values are ``bytes`` of at most
 ``data_size``. Each check raises ``ContractError`` prefixed with ``owner``, the scheme's identity."""
 
+from collections.abc import Iterable
 from typing import Any
 
 from oblivlib.dependency.errors import ContractError
@@ -27,3 +28,13 @@ def require_value(owner: str, value: Any, data_size: int) -> bytes:
     if len(value) > data_size:
         raise ContractError(f"{owner}: a value is {len(value)} bytes, data_size is {data_size}.")
     return value
+
+
+def require_omap_init(owner: str, pairs: Iterable[tuple[Any, Any]], *, key_size: int, data_size: int) -> None:
+    seen: set[bytes] = set()
+    for key, value in pairs:
+        require_omap_key(owner, key, key_size)
+        require_value(owner, value, data_size)
+        if key in seen:
+            raise ContractError(f"{owner}: initial key {key!r} is given twice.")
+        seen.add(key)

@@ -10,7 +10,7 @@ from typing import Any, cast, override
 
 from oblivlib.dependency import Data, KVPair
 from oblivlib.dependency.config import OmapConfig
-from oblivlib.dependency.contract import require_omap_key, require_value
+from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.tree_builder import TreeImage
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.omap.base_omap import BaseOmap
@@ -256,9 +256,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     @override
     def init_server_storage(self, data: KV_LIST | None = None) -> None:
-        for key, value in data or []:
-            require_omap_key(self._identity, key, self._key_size)
-            require_value(self._identity, value, self._data_size)
+        require_omap_init(self._identity, data or [], key_size=self._key_size, data_size=self._data_size)
         self._host_tree(self._init_ods_storage(data=data))
 
     def _init_mul_tree_ods_storage(self, data_list: list[KV_LIST] | None) -> tuple[TreeImage, list[ROOT | None]]:
@@ -277,6 +275,8 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     def init_mul_tree_server_storage(self, data_list: list[KV_LIST] | None = None) -> list[ROOT | None]:
         """Store an ODS holding multiple trees; return the list of their roots."""
+        for data in data_list or []:
+            require_omap_init(self._identity, data, key_size=self._key_size, data_size=self._data_size)
         tree, root_list = self._init_mul_tree_ods_storage(data_list=data_list)
         self._host_tree(tree)
         return root_list
