@@ -145,23 +145,32 @@ def handover_client(tmp_path):
 
 
 @pytest.fixture
-def assert_deferral_preserves_access(monkeypatch, recorded_client):
+def seeded_access(monkeypatch, recorded_client):
+    """Run ``workload(client)`` under seed 7 on a recording client; returns every batch's access shape and
+    the rounds the workload took before its final flush."""
+
+    def run(workload: Callable[[Client], None], *, defer_writes: bool = True) -> tuple[list[AccessShape], int]:
+        _seed(monkeypatch, 7)
+        client, recorder = recorded_client(defer_writes=defer_writes)
+        workload(client)
+        rounds = client.metrics.rounds
+        client.flush()
+        return [_access_shape(batch) for batch in recorder.batches], rounds
+
+    return run
+
+
+@pytest.fixture
+def assert_deferral_preserves_access(seeded_access):
     """Run ``workload(client)`` twice under the same seed, with write deferral off and on, and assert the
     deferred batches are exactly the undeferred ones coalesced. Returns the rounds each run took before
     its final flush, as ``(off, on)``."""
 
     def run(workload: Callable[[Client], None]) -> tuple[int, int]:
-        shapes: dict[bool, list[AccessShape]] = {}
-        rounds: dict[bool, int] = {}
-        for defer_writes in (False, True):
-            _seed(monkeypatch, 7)
-            client, recorder = recorded_client(defer_writes=defer_writes)
-            workload(client)
-            rounds[defer_writes] = client.metrics.rounds
-            client.flush()
-            shapes[defer_writes] = [_access_shape(batch) for batch in recorder.batches]
-        assert _coalesce(shapes[False]) == shapes[True]
-        return rounds[False], rounds[True]
+        shapes_off, rounds_off = seeded_access(workload, defer_writes=False)
+        shapes_on, rounds_on = seeded_access(workload)
+        assert _coalesce(shapes_off) == shapes_on
+        return rounds_off, rounds_on
 
     return run
 

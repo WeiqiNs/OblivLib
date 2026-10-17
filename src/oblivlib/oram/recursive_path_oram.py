@@ -1,11 +1,10 @@
 """Recursive Path ORAM.
 
-The large position map is compressed into a chain of smaller position-map orams (each storing
+The large position map is compressed into a chain of smaller position-map trees (each storing
 ``compression_ratio`` leaves per block); only a small top-level map is kept on the client.
 Call ``init_server_storage`` once, then use ``operate_on_key``.
 """
 
-import math
 import secrets
 from dataclasses import replace
 from functools import cached_property
@@ -14,106 +13,31 @@ from typing import Any, override
 from oblivlib.dependency import Data, InitData, PathRows, PosMap
 from oblivlib.dependency.codec import packed_size
 from oblivlib.dependency.config import RecursiveOramConfig
-from oblivlib.oram.tree_base_oram import TreeBaseOram
+from oblivlib.dependency.tree_storage_base import TreeStorageBase
+from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_keys, pos_map_level_count
 
 
-class RecursivePathOram(TreeBaseOram[RecursiveOramConfig]):
-    def __init__(self, config: RecursiveOramConfig, *, _is_pos_map: bool = False):
-        if not _is_pos_map:
-            if config.client is None:
-                raise ValueError("Client is required for main ORAM.")
-            if config.num_data <= config.on_chip_mem:
-                raise ValueError(
-                    f"num_data ({config.num_data}) must be greater than on_chip_mem ({config.on_chip_mem})."
+class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
+    def _build_and_host(self, child_leaves: list[int]) -> list[int]:
+        """Build and host this level over ``child_leaves`` (padding a short final block with random
+        leaves); returns this level's own leaves, one per block."""
+        leaves = [self._get_new_leaf() for _ in range(self._num_data)]
+        ratio = self._config.compression_ratio
+        tree = self._build_tree(
+            [
+                Data(
+                    key=key,
+                    leaf=leaf,
+                    value=[
+                        child_leaves[i] if i < len(child_leaves) else secrets.randbelow(self._num_data)
+                        for i in range(key * ratio, (key + 1) * ratio)
+                    ],
                 )
-
-        super().__init__(config)
-
-        self._pos_maps: list[RecursivePathOram] = []
-
-        self._tmp_leaf: int | None = None
-
-        self._init_pos_map()
-
-    @property
-    def _on_chip_mem(self) -> int:
-        return self._config.on_chip_mem
-
-    @property
-    def _compression_ratio(self) -> int:
-        return self._config.compression_ratio
-
-    @cached_property
-    def _num_oram_pos_map(self) -> int:
-        return math.ceil(math.log(self._num_data / self._on_chip_mem, self._compression_ratio))
-
-    @cached_property
-    def _pos_map_oram_dummy_size(self) -> int:
-        """Byte size bounding a position-map block's value, a list of ``compression_ratio`` leaves."""
-        return packed_size([self._leaf_range - 1] * self._compression_ratio)
-
-    def _get_pos_map_keys(self, key: int) -> list[tuple[int, int]]:
-        """For each position map (outermost first), the (block key, offset within block) for this key."""
-        pos_map_keys = []
-
-        for _ in range(self._num_oram_pos_map):
-            index = key % self._compression_ratio
-            key = key // self._compression_ratio
-            pos_map_keys.append((key, index))
-
-        pos_map_keys.reverse()
-
-        return pos_map_keys
-
-    def _compress_pos_map(self) -> None:
-        """Compress the flat position map into a chain of position-map orams, hosting each as it is built."""
-        last_pos_map: PosMap = self._pos_map
-        pos_map_size = self._num_data
-
-        for i in range(self._num_oram_pos_map):
-            last_pos_map_size = pos_map_size
-            pos_map_size = math.ceil(pos_map_size / self._compression_ratio)
-
-            pos_map_name = f"{self._name}_pos_map_{self._num_oram_pos_map - i - 1}"
-
-            cur_pos_map_oram = RecursivePathOram(
-                replace(
-                    self._config,
-                    num_data=pos_map_size,
-                    name=pos_map_name,
-                    data_size=self._pos_map_oram_dummy_size,
-                ),
-                _is_pos_map=True,
-            )
-
-            tree = cur_pos_map_oram._build_tree(
-                [
-                    Data(
-                        key=key,
-                        leaf=leaf,
-                        value=[
-                            last_pos_map[i] if i < last_pos_map_size else secrets.randbelow(pos_map_size)
-                            for i in range(key * self._compression_ratio, (key + 1) * self._compression_ratio)
-                        ],
-                    )
-                    for key, leaf in cur_pos_map_oram._pos_map.items()
-                ]
-            )
-
-            last_pos_map = cur_pos_map_oram._pos_map
-            cur_pos_map_oram._pos_map = {}
-
-            cur_pos_map_oram._host_tree(tree)
-            self._pos_maps.append(cur_pos_map_oram)
-
-        self._pos_map = last_pos_map
-
-        self._pos_maps.reverse()
-
-    @override
-    def init_server_storage(self, data: InitData | None = None) -> None:
-        self._host_tree(self._build_tree(self._initial_blocks(data)))
-        self._compress_pos_map()
+                for key, leaf in enumerate(leaves)
+            ]
+        )
+        self._host_tree(tree)
+        return leaves
 
     def _retrieve_pos_map_block(self, key: int, offset: int, new_leaf: int, value: int, path: PathRows) -> int:
         """Pull the path into the stash; read the leaf at offset for key, overwrite it with value, remap to new_leaf."""
@@ -148,86 +72,86 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig]):
 
         return next_leaf
 
+
+class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel]):
+    def __init__(self, config: RecursiveOramConfig):
+        if config.client is None:
+            raise ValueError("Client is required for main ORAM.")
+        if config.num_data <= config.on_chip_mem:
+            raise ValueError(f"num_data ({config.num_data}) must be greater than on_chip_mem ({config.on_chip_mem}).")
+
+        super().__init__(config)
+
+        self._pos_map: PosMap = {i: self._get_new_leaf() for i in range(self._num_data)}
+        self._levels = self._make_levels()
+
+    @property
+    def _on_chip_mem(self) -> int:
+        return self._config.on_chip_mem
+
+    @property
+    def _compression_ratio(self) -> int:
+        return self._config.compression_ratio
+
+    @cached_property
+    def _pos_map_oram_dummy_size(self) -> int:
+        """Byte size bounding a position-map block's value, a list of ``compression_ratio`` leaves."""
+        return packed_size([self._leaf_range - 1] * self._compression_ratio)
+
+    def _make_levels(self) -> list[RecursivePosMapLevel]:
+        """The position-map levels, smallest first; each block holds ``compression_ratio`` child leaves."""
+        levels = []
+        size = self._num_data
+        count = pos_map_level_count(num_data=self._num_data, on_chip=self._on_chip_mem, ratio=self._compression_ratio)
+        for i in range(count):
+            size = -(-size // self._compression_ratio)
+            levels.append(
+                RecursivePosMapLevel(
+                    replace(
+                        self._config,
+                        num_data=size,
+                        name=f"{self._name}_pos_map_{count - i - 1}",
+                        data_size=self._pos_map_oram_dummy_size,
+                    )
+                )
+            )
+        levels.reverse()
+        return levels
+
+    @override
+    def _initial_leaf(self, key: int) -> int:
+        return self._pos_map[key]
+
+    @override
+    def init_server_storage(self, data: InitData | None = None) -> None:
+        self._host_tree(self._build_tree(self._initial_blocks(data)))
+        leaves = list(self._pos_map.values())
+        for level in reversed(self._levels):
+            leaves = level._build_and_host(leaves)
+        self._pos_map = dict(enumerate(leaves))
+
     def _get_leaf_from_pos_map(self, key: int) -> tuple[int, int]:
         """Walk the position-map chain to find key's current leaf and assign its new leaf."""
-        cur_leaf: int | None = None
-        new_cur_leaf: int | None = None
+        keys = pos_map_keys(key, ratio=self._compression_ratio, count=len(self._levels))
+        top_key = keys[0][0]
+        cur_leaf, new_cur_leaf = self._pos_map[top_key], self._levels[0]._get_new_leaf()
+        self._pos_map[top_key] = new_cur_leaf
 
-        for pos_map_index, (cur_key, cur_index) in enumerate(self._get_pos_map_keys(key=key)):
-            if pos_map_index == 0:
-                cur_leaf = self._pos_map[cur_key]
-                new_cur_leaf = self._pos_maps[pos_map_index]._get_new_leaf()
-                self._pos_map[cur_key] = new_cur_leaf
-
-            new_next_leaf = (
-                self._pos_maps[pos_map_index + 1]._get_new_leaf()
-                if pos_map_index < self._num_oram_pos_map - 1
-                else self._get_new_leaf()
-            )
-
-            assert cur_leaf is not None and new_cur_leaf is not None
-
-            next_leaf = self._pos_maps[pos_map_index]._access_pos_map_level(
+        children: list[TreeStorageBase[RecursiveOramConfig]] = [*self._levels[1:], self]
+        for level, child, (cur_key, cur_index) in zip(self._levels, children, keys, strict=True):
+            new_next_leaf = child._get_new_leaf()
+            cur_leaf = level._access_pos_map_level(
                 cur_key=cur_key,
                 cur_index=cur_index,
                 cur_leaf=cur_leaf,
                 new_cur_leaf=new_cur_leaf,
                 new_next_leaf=new_next_leaf,
             )
+            new_cur_leaf = new_next_leaf
 
-            cur_leaf, new_cur_leaf = next_leaf, new_next_leaf
-
-        assert cur_leaf is not None and new_cur_leaf is not None
         return cur_leaf, new_cur_leaf
-
-    @override
-    def _operate_on_key(self, key: int, value: Any) -> Any:
-        leaf, new_leaf = self._get_leaf_from_pos_map(key=key)
-
-        self._client.add_read_path(label=self._name, leaves=[leaf])
-        result = self._client.execute()
-        path_data = result.require(self._name)
-
-        read_value = self._retrieve_data_block(key=key, path=path_data, value=value, new_leaf=new_leaf)
-
-        evicted_path = self._evict_stash(leaves=[leaf])
-
-        self._client.add_write_path(label=self._name, data=evicted_path)
-        self._client.execute()
-
-        return read_value
 
     @override
     def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
         leaf, new_leaf = self._get_leaf_from_pos_map(key=key)
-
-        self._client.add_read_path(label=self._name, leaves=[leaf])
-        result = self._client.execute()
-        path_data = result.require(self._name)
-
-        read_value = self._retrieve_data_block(key=key, path=path_data, value=value, new_leaf=new_leaf)
-
-        self._tmp_leaf = leaf
-
-        return read_value
-
-    @override
-    def _eviction_with_update_stash(self, key: int, value: Any, execute: bool) -> None:
-        found = False
-
-        for data in self._stash:
-            if data.key == key:
-                data.value = value
-                found = True
-
-        if not found:
-            raise KeyError(f"Key {key} not found.")
-
-        assert self._tmp_leaf is not None
-        evicted_path = self._evict_stash(leaves=[self._tmp_leaf])
-
-        self._client.add_write_path(label=self._name, data=evicted_path)
-        if execute:
-            self._client.execute()
-
-        self._tmp_leaf = None
+        return self._read_block(key, value, leaves=[leaf], new_leaf=new_leaf)

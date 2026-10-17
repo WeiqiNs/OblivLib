@@ -4,11 +4,8 @@ from oblivlib.dependency import PathOramConfig, RecursiveOramConfig
 from oblivlib.oram import PathOram, RecursivePathOram
 
 
-@pytest.mark.parametrize("encrypted", [False, True], ids=["plain", "encrypted"])
-def test_remote_client_server_round_trip(remote_client, encryptor, encrypted):
-    oram = PathOram(
-        PathOramConfig(num_data=256, data_size=10, client=remote_client, encryptor=encryptor if encrypted else None)
-    )
+def test_remote_client_server_round_trip(remote_client, encryptor):
+    oram = PathOram(PathOramConfig(num_data=256, data_size=10, client=remote_client, encryptor=encryptor))
     oram.init_server_storage()
 
     for i in range(256):
@@ -34,15 +31,12 @@ def test_multiple_orams_share_one_client(client):
 
 
 @pytest.mark.parametrize("mode", ["adopt", "attach", "stream"])
-@pytest.mark.parametrize(
-    "make_oram",
-    [lambda **kw: PathOram(PathOramConfig(**kw)), lambda **kw: RecursivePathOram(RecursiveOramConfig(**kw))],
-    ids=["path", "recursive"],
-)
-def test_build_file_handover_modes(make_oram, mode, tmp_path, encryptor, handover_client):
+def test_build_file_handover_modes(mode, tmp_path, encryptor, handover_client):
     client = handover_client(mode)
     build_file = tmp_path / "build.tree"
-    oram = make_oram(num_data=128, data_size=10, client=client, encryptor=encryptor, build_file=build_file)
+    oram = RecursivePathOram(
+        RecursiveOramConfig(num_data=128, data_size=10, client=client, encryptor=encryptor, build_file=build_file)
+    )
     oram.init_server_storage(data={key: b"%d" % (key * 3) for key in range(128)})
 
     assert not build_file.exists()

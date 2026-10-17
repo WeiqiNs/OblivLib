@@ -1,6 +1,6 @@
 """Freecursive ORAM.
 
-Like DAOram, the position map is compressed into a chain of position-map orams with PRF-derived
+Like DAOram, the position map is compressed into a chain of position-map trees with PRF-derived
 leaves, but counter resets are triggered probabilistically (``reset_method="prob"``) or on overflow
 (``reset_method="hard"``). Call ``init_server_storage`` once, then use ``operate_on_key``.
 """
@@ -9,12 +9,13 @@ import math
 import secrets
 from dataclasses import replace
 from functools import cached_property
-from typing import Any, NamedTuple, override
+from typing import Any, NamedTuple, Protocol, override
 
 from oblivlib.dependency import Blake2Prf, Data, InitData, PathRows
-from oblivlib.dependency.config import FreecursiveOramConfig
+from oblivlib.dependency.config import FreecursiveOramConfig, ResetMethod
+from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.oram.bit_string import binary_str_to_bytes, bytes_to_binary_str
-from oblivlib.oram.tree_base_oram import TreeBaseOram
+from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_keys, pos_map_level_count
 
 _CSPRNG = secrets.SystemRandom()
 
@@ -42,52 +43,45 @@ class ProcessedData(NamedTuple):
 
 
 class UnpackedReset(NamedTuple):
-    """A reset chunk flattened for the two-path access: the (<=2) entries' keys/leaves plus the
+    """A reset chunk flattened for the two-path access: the (<=2) entries' keys and new leaves plus the
     leaves list to read this round."""
 
     ck_a: int | None
-    cl_a: int
     nl_a: int | None
     ck_b: int | None
-    cl_b: int | None
     nl_b: int | None
     leaves: list[int]
 
 
-class FreecursiveOram(TreeBaseOram[FreecursiveOramConfig]):
-    def __init__(
-        self,
-        config: FreecursiveOramConfig,
-        *,
-        _is_pos_map: bool = False,
-        _last_oram_data: int | None = None,
-        _last_oram_level: int | None = None,
-    ):
-        if not _is_pos_map:
-            if config.client is None:
-                raise ValueError("Client is required for main ORAM.")
-            if config.num_data <= config.on_chip_size:
-                raise ValueError(
-                    f"num_data ({config.num_data}) must be greater than on_chip_size ({config.on_chip_size})."
-                )
+def _unpack_reset_leaves(cur_reset_leaves: ResetChunk) -> UnpackedReset:
+    """Unpack a 1- or 2-entry reset chunk into (ck_a, nl_a, ck_b, nl_b, leaves)."""
+    ck_a, cl_a, nl_a = cur_reset_leaves[0]
+    if len(cur_reset_leaves) == 2:
+        ck_b, cl_b, nl_b = cur_reset_leaves[1]
+        return UnpackedReset(ck_a, nl_a, ck_b, nl_b, [cl_a, cl_b])
+    return UnpackedReset(ck_a, nl_a, None, None, [cl_a])
 
-        super().__init__(config)
 
-        self._last_oram_data = _last_oram_data
-        self._last_oram_level = _last_oram_level
+def _pass_reset_chunk(storage: TreeStorageBase[FreecursiveOramConfig], chunk: ResetChunk) -> None:
+    """Read a reset chunk that does not hold the accessed key, remap its blocks, and write it back."""
+    ck_a, nl_a, ck_b, nl_b, leaves = _unpack_reset_leaves(chunk)
 
-        self._reset_prob = 1 / config.num_ic if config.reset_prob is None else config.reset_prob
+    storage._client.add_read_path(label=storage._name, leaves=leaves)
+    storage._absorb_path(storage._client.execute().require(storage._name))
+    storage._update_stash_leaf(key=ck_a, new_leaf=nl_a)
+    storage._update_stash_leaf(key=ck_b, new_leaf=nl_b)
 
-        self._tmp_leaf: int | None = None
-        self._tmp_leaves: list[int] | None = None
-        self._tmp_reset_leaves: ResetLeaves | None = None
+    storage._client.add_write_path(label=storage._name, data=storage._evict_stash(leaves=leaves))
+    storage._client.execute()
 
-        self._prf = Blake2Prf(key=config.prf_key)
 
-        self._on_chip_storage: list[bytes] = []
-        self._pos_maps: list[FreecursiveOram] = []
+class FreecursiveCounterMixin(Protocol):
+    """Counter layout, PRF leaves, and reset chunks shared by FreecursiveOram and its position-map levels."""
 
-        self._init_pos_map()
+    _config: FreecursiveOramConfig
+    _prf: Blake2Prf
+    _last_oram_data: int
+    _last_oram_level: int
 
     @property
     def _num_ic(self) -> int:
@@ -102,230 +96,71 @@ class FreecursiveOram(TreeBaseOram[FreecursiveOramConfig]):
         return self._config.gc_length
 
     @property
-    def _on_chip_size(self) -> int:
-        return self._config.on_chip_size
+    def _reset_method(self) -> ResetMethod:
+        return self._config.reset_method
 
     @property
-    def _reset_method(self) -> str:
-        return self._config.reset_method
+    def _reset_prob(self) -> float:
+        return 1 / self._num_ic if self._config.reset_prob is None else self._config.reset_prob
 
     @cached_property
     def _count_length(self) -> int:
         """Bit length of the counter value a position-map block stores."""
         return self._num_ic * self._ic_length + self._gc_length
 
-    @cached_property
-    def _num_oram_pos_map(self) -> int:
-        """Number of position-map orams needed; the last is kept on chip, hence the -1."""
-        return math.ceil(math.log(self._num_data / self._on_chip_size, self._num_ic)) - 1
+    @property
+    def _zero_counter(self) -> bytes:
+        return binary_str_to_bytes("0" * self._count_length)
 
-    @cached_property
-    def _pos_map_oram_dummy_size(self) -> int:
-        """Byte size of the dummy value stored in position maps."""
-        return math.ceil(self._count_length / 8)
-
-    @staticmethod
-    def _unpack_reset_leaves(cur_reset_leaves: ResetChunk) -> UnpackedReset:
-        """Unpack a 1- or 2-tuple reset chunk into (ck_a, cl_a, nl_a, ck_b, cl_b, nl_b, leaves)."""
-        ck_a, cl_a, nl_a = cur_reset_leaves[0]
-        if len(cur_reset_leaves) == 2:
-            ck_b, cl_b, nl_b = cur_reset_leaves[1]
-            leaves = [cl_a, cl_b]
-        else:
-            ck_b, cl_b, nl_b = None, None, None
-            leaves = [cl_a]
-        return UnpackedReset(ck_a, cl_a, nl_a, ck_b, cl_b, nl_b, leaves)
-
-    def _get_pos_map_keys(self, key: int) -> list[tuple[int, int]]:
-        """For each position map (outermost first), the (block key, offset within block) for this key."""
-        pos_map_keys = []
-
-        for _ in range(self._num_oram_pos_map + 1):
-            index = key % self._num_ic
-            key = key // self._num_ic
-            pos_map_keys.append((key, index))
-
-        pos_map_keys.reverse()
-
-        return pos_map_keys
-
-    def _get_leaf_from_prf(self, key: int, gc: int, ic: int) -> int:
-        """Leaf for (key, gc, ic) in this oram, computed as PRF(KEY||GC||IC) mod 2^L."""
+    def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int) -> int:
+        """Leaf for (key, gc, ic) in a tree of ``level`` levels, computed as PRF(KEY||GC||IC) mod 2^(level-1)."""
         return self._prf.digest_mod_n(
             binary_str_to_bytes(
-                bin(key)[2:].zfill(self._level - 1)
-                + bin(gc)[2:].zfill(self._gc_length)
-                + bin(ic)[2:].zfill(self._ic_length)
+                bin(key)[2:].zfill(level - 1) + bin(gc)[2:].zfill(self._gc_length) + bin(ic)[2:].zfill(self._ic_length)
             ),
-            pow(2, self._level - 1),
+            pow(2, level - 1),
         )
 
     def _get_previous_leaf_from_prf(self, key: int, gc: int, ic: int) -> int:
-        """Leaf for (key, gc, ic) in the previous (larger) oram, as PRF(KEY||GC||IC) mod 2^LAST_L."""
-        assert self._last_oram_level is not None
-        return self._prf.digest_mod_n(
-            binary_str_to_bytes(
-                bin(key)[2:].zfill(self._last_oram_level - 1)
-                + bin(gc)[2:].zfill(self._gc_length)
-                + bin(ic)[2:].zfill(self._ic_length)
-            ),
-            pow(2, self._last_oram_level - 1),
-        )
+        """Leaf for (key, gc, ic) in the previous (larger) oram."""
+        return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level)
 
-    @override
-    def _init_pos_map(self) -> None:
-        self._pos_map = {i: self._get_leaf_from_prf(key=i, gc=0, ic=0) for i in range(self._num_data)}
+    def _get_reset_leaves(self, key: int, data: str) -> ResetLeaves:
+        """On reset, return the (key, cur_leaf, new_leaf) entries for every count in the block, in chunks
+        of two; ``data`` is the gc/ic counter string before resetting."""
+        num_ic, ic_length, gc_length = self._num_ic, self._ic_length, self._gc_length
+        gc = int(data[:gc_length], 2)
+        ic_str = data[gc_length:]
+        ic = [int(ic_str[i * ic_length : (i + 1) * ic_length], 2) for i in range(num_ic)]
 
-    def _compress_pos_map(self) -> None:
-        """Compress the flat position map into a chain of position-map orams, hosting each as it is built."""
-        self._pos_map = {}
-
-        value = binary_str_to_bytes("0" * self._count_length)
-
-        last_oram_data = self._num_data
-        last_oram_level = self._level
-
-        for i in range(self._num_oram_pos_map):
-            pos_map_size = math.ceil(last_oram_data / self._num_ic)
-
-            pos_map_name = f"{self._name}_pos_map_{self._num_oram_pos_map - i - 1}"
-
-            cur_pos_map_oram = FreecursiveOram(
-                replace(
-                    self._config,
-                    prf_key=self._prf.key,
-                    num_data=pos_map_size,
-                    name=pos_map_name,
-                    data_size=self._pos_map_oram_dummy_size,
-                    reset_prob=self._reset_prob,
-                ),
-                _is_pos_map=True,
-                _last_oram_data=last_oram_data,
-                _last_oram_level=last_oram_level,
+        reset_leaves = [
+            ResetEntry(
+                key * num_ic + i,
+                self._get_previous_leaf_from_prf(key=key * num_ic + i, gc=gc, ic=ic[i]),
+                self._get_previous_leaf_from_prf(key=key * num_ic + i, gc=gc + 1, ic=0),
             )
+            if key * num_ic + i < self._last_oram_data
+            else ResetEntry(None, secrets.randbelow(pow(2, self._last_oram_level - 1)), None)
+            for i in range(num_ic)
+        ]
+        return [reset_leaves[i : i + 2] for i in range(0, len(reset_leaves), 2)]
 
-            tree = cur_pos_map_oram._build_tree(
-                [Data(key=key, leaf=leaf, value=value) for key, leaf in cur_pos_map_oram._pos_map.items()]
-            )
 
-            last_oram_data = pos_map_size
-            last_oram_level = cur_pos_map_oram._level
-
-            cur_pos_map_oram._host_tree(tree)
-
-            cur_pos_map_oram._pos_map = {}
-            self._pos_maps.append(cur_pos_map_oram)
-
+class FreecursivePosMapLevel(TreeStorageBase[FreecursiveOramConfig], FreecursiveCounterMixin):
+    def __init__(self, config: FreecursiveOramConfig, *, last_oram_data: int, last_oram_level: int):
+        super().__init__(config)
+        self._prf = Blake2Prf(key=config.prf_key)
         self._last_oram_data = last_oram_data
         self._last_oram_level = last_oram_level
 
-        self._on_chip_storage = [value for _ in range(math.ceil(last_oram_data / self._num_ic) + 1)]
-
-        self._pos_maps.reverse()
-
-    @override
-    def init_server_storage(self, data: InitData | None = None) -> None:
-        self._host_tree(self._build_tree(self._initial_blocks(data)))
-        self._compress_pos_map()
-
-    def _update_stash_leaf(self, key: int | None, new_leaf: int | None) -> None:
-        if key is None:
-            return
-
-        for data in self._stash:
-            if data.key == key:
-                data.leaf = new_leaf
-                return
-
-        raise KeyError(f"Key {key} not found.")
-
-    def _update_block_leaves(
-        self, key_a: int | None, key_b: int | None, n_leaf_a: int | None, n_leaf_b: int | None, path: PathRows
-    ) -> None:
-        """Pull the path into the stash and remap key_a and key_b (a null op that hides the access)."""
-        self._absorb_path(path=path)
-        self._update_stash_leaf(key=key_a, new_leaf=n_leaf_a)
-        self._update_stash_leaf(key=key_b, new_leaf=n_leaf_b)
-
-    def _get_reset_leaves(self, key: int, data: str, reset_size: int = 2) -> ResetLeaves:
-        """On reset, return the (key, cur_leaf, new_leaf) chunks for every count in the block.
-
-        :param data: The gc/ic counter string before resetting.
-        :param reset_size: Number of leaves grouped per reset chunk.
-        """
-        assert self._last_oram_data is not None and self._last_oram_level is not None
-        gc = int(data[: self._gc_length], 2)
-        ic_str = data[self._gc_length :]
-        ic = [int(ic_str[i * self._ic_length : (i + 1) * self._ic_length], 2) for i in range(self._num_ic)]
-
-        reset_leaves: list[ResetEntry]
-        if (key + 1) * self._num_ic > self._last_oram_data:
-            reset_leaves = [
-                ResetEntry(
-                    key * self._num_ic + i,
-                    self._get_previous_leaf_from_prf(key=key * self._num_ic + i, gc=gc, ic=ic[i]),
-                    self._get_previous_leaf_from_prf(key=key * self._num_ic + i, gc=gc + 1, ic=0),
-                )
-                if key * self._num_ic + i < self._last_oram_data
-                else ResetEntry(None, secrets.randbelow(pow(2, self._last_oram_level - 1)), None)
-                for i in range(self._num_ic)
-            ]
-        else:
-            reset_leaves = [
-                ResetEntry(
-                    key * self._num_ic + i,
-                    self._get_previous_leaf_from_prf(key=key * self._num_ic + i, gc=gc, ic=ic[i]),
-                    self._get_previous_leaf_from_prf(key=key * self._num_ic + i, gc=gc + 1, ic=0),
-                )
-                for i in range(self._num_ic)
-            ]
-
-        return [reset_leaves[i : i + reset_size] for i in range(0, len(reset_leaves), reset_size)]
-
-    def _update_on_chip_data(self, key: int, offset: int) -> ProcessedData:
-        """Advance the on-chip counter at offset; returns (cur_leaf, new_leaf, reset_leaves)."""
-        data = bytes_to_binary_str(self._on_chip_storage[key]).zfill(self._count_length)
-
-        gc = int(data[: self._gc_length], 2)
-
-        ic_start = self._gc_length + offset * self._ic_length
-        ic_end = self._gc_length + (offset + 1) * self._ic_length
-        ic = int(data[ic_start:ic_end], 2)
-
-        if self._reset_method == "prob":
-            if _CSPRNG.random() <= self._reset_prob:
-                reset_leaves = self._get_reset_leaves(key=key, data=data)
-                self._on_chip_storage[key] = binary_str_to_bytes(
-                    f"{bin(gc + 1)[2:].zfill(self._gc_length)}{'0' * self._ic_length * self._num_ic}"
-                )
-                return ProcessedData(None, None, reset_leaves)
-
-            if ic + 1 >= pow(2, self._ic_length):
-                raise ValueError("Overflow happened under probabilistic resets.")
-            self._on_chip_storage[key] = binary_str_to_bytes(
-                f"{data[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{data[ic_end:]}"
+    def _build_and_host(self) -> None:
+        zero_counter = self._zero_counter
+        self._host_tree(
+            self._build_tree(
+                Data(key=key, leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level), value=zero_counter)
+                for key in range(self._num_data)
             )
-            cur_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic)
-            new_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic + 1)
-            return ProcessedData(cur_leaf, new_leaf, None)
-
-        elif self._reset_method == "hard":
-            if ic + 1 >= pow(2, self._ic_length):
-                reset_leaves = self._get_reset_leaves(key=key, data=data)
-                self._on_chip_storage[key] = binary_str_to_bytes(
-                    f"{bin(gc + 1)[2:].zfill(self._gc_length)}{'0' * self._ic_length * self._num_ic}"
-                )
-                return ProcessedData(None, None, reset_leaves)
-
-            self._on_chip_storage[key] = binary_str_to_bytes(
-                f"{data[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{data[ic_end:]}"
-            )
-            cur_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic)
-            new_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic + 1)
-            return ProcessedData(cur_leaf, new_leaf, None)
-
-        else:
-            raise ValueError(f"Unrecognized reset method {self._reset_method}.")
+        )
 
     def _update_data_prob_reset(self, key: int, data: Data, offset: int) -> ProcessedData:
         """Probabilistic-reset counter update on a stored Data block; returns (cur_leaf, new_leaf, reset_leaves)."""
@@ -401,30 +236,23 @@ class FreecursiveOram(TreeBaseOram[FreecursiveOramConfig]):
         next_cur_leaf, next_new_leaf = None, None
 
         if reset_leaves is not None:
-            for cur_reset_leaves in reset_leaves:
-                ck_a, _cl_a, nl_a, ck_b, _cl_b, nl_b, leaves = self._unpack_reset_leaves(cur_reset_leaves)
+            for chunk in reset_leaves:
+                ck_a, nl_a, ck_b, nl_b, leaves = _unpack_reset_leaves(chunk)
+                if cur_key not in (ck_a, ck_b):
+                    _pass_reset_chunk(self, chunk)
+                    continue
 
+                chunk_new_leaf, partner, partner_leaf = (nl_a, ck_b, nl_b) if ck_a == cur_key else (nl_b, ck_a, nl_a)
+                assert chunk_new_leaf is not None
                 self._client.add_read_path(label=self._name, leaves=leaves)
-                result = self._client.execute()
-                path = result.require(self._name)
+                path = self._client.execute().require(self._name)
 
-                if ck_a == cur_key:
-                    assert ck_a is not None and nl_a is not None
-                    next_cur_leaf, next_new_leaf, reset_leaves = self._retrieve_pos_map_block(
-                        key=ck_a, offset=cur_index, new_leaf=nl_a, path=path
-                    )
-                    self._update_stash_leaf(key=ck_b, new_leaf=nl_b)
-                elif ck_b == cur_key:
-                    assert ck_b is not None and nl_b is not None
-                    next_cur_leaf, next_new_leaf, reset_leaves = self._retrieve_pos_map_block(
-                        key=ck_b, offset=cur_index, new_leaf=nl_b, path=path
-                    )
-                    self._update_stash_leaf(key=ck_a, new_leaf=nl_a)
-                else:
-                    self._update_block_leaves(key_a=ck_a, key_b=ck_b, n_leaf_a=nl_a, n_leaf_b=nl_b, path=path)
-                evicted_path = self._evict_stash(leaves=leaves)
+                next_cur_leaf, next_new_leaf, reset_leaves = self._retrieve_pos_map_block(
+                    key=cur_key, offset=cur_index, new_leaf=chunk_new_leaf, path=path
+                )
+                self._update_stash_leaf(key=partner, new_leaf=partner_leaf)
 
-                self._client.add_write_path(label=self._name, data=evicted_path)
+                self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=leaves))
                 self._client.execute()
 
         else:
@@ -444,14 +272,115 @@ class FreecursiveOram(TreeBaseOram[FreecursiveOramConfig]):
 
         return ProcessedData(next_cur_leaf, next_new_leaf, reset_leaves)
 
+
+class FreecursiveOram(TreeBaseOram[FreecursiveOramConfig, FreecursivePosMapLevel], FreecursiveCounterMixin):
+    def __init__(self, config: FreecursiveOramConfig):
+        if config.client is None:
+            raise ValueError("Client is required for main ORAM.")
+        if config.num_data <= config.on_chip_size:
+            raise ValueError(f"num_data ({config.num_data}) must be greater than on_chip_size ({config.on_chip_size}).")
+
+        super().__init__(config)
+
+        self._pending_reset_chunks: ResetLeaves = []
+
+        self._prf = Blake2Prf(key=config.prf_key)
+
+        self._levels = self._make_levels()
+        smallest = self._levels[0] if self._levels else self
+        self._last_oram_data, self._last_oram_level = smallest._num_data, smallest._level
+        self._on_chip_storage: list[bytes] = [self._zero_counter] * (-(-self._last_oram_data // self._num_ic) + 1)
+
+    @property
+    def _on_chip_size(self) -> int:
+        return self._config.on_chip_size
+
+    @cached_property
+    def _pos_map_oram_dummy_size(self) -> int:
+        """Byte size of the dummy value stored in position maps."""
+        return math.ceil(self._count_length / 8)
+
+    @override
+    def _initial_leaf(self, key: int) -> int:
+        return self._prf_leaf(key=key, gc=0, ic=0, level=self._level)
+
+    def _make_levels(self) -> list[FreecursivePosMapLevel]:
+        """The position-map levels, smallest first; each level's leaves derive from the shared PRF key."""
+        levels = []
+        last_oram_data, last_oram_level = self._num_data, self._level
+        count = pos_map_level_count(num_data=self._num_data, on_chip=self._on_chip_size, ratio=self._num_ic) - 1
+        for i in range(count):
+            level = FreecursivePosMapLevel(
+                replace(
+                    self._config,
+                    prf_key=self._prf.key,
+                    num_data=-(-last_oram_data // self._num_ic),
+                    name=f"{self._name}_pos_map_{count - i - 1}",
+                    data_size=self._pos_map_oram_dummy_size,
+                ),
+                last_oram_data=last_oram_data,
+                last_oram_level=last_oram_level,
+            )
+            levels.append(level)
+            last_oram_data, last_oram_level = level._num_data, level._level
+        levels.reverse()
+        return levels
+
+    @override
+    def init_server_storage(self, data: InitData | None = None) -> None:
+        self._host_tree(self._build_tree(self._initial_blocks(data)))
+        for level in reversed(self._levels):
+            level._build_and_host()
+
+    def _update_on_chip_data(self, key: int, offset: int) -> ProcessedData:
+        """Advance the on-chip counter at offset; returns (cur_leaf, new_leaf, reset_leaves)."""
+        data = bytes_to_binary_str(self._on_chip_storage[key]).zfill(self._count_length)
+
+        gc = int(data[: self._gc_length], 2)
+
+        ic_start = self._gc_length + offset * self._ic_length
+        ic_end = self._gc_length + (offset + 1) * self._ic_length
+        ic = int(data[ic_start:ic_end], 2)
+
+        if self._reset_method == "prob":
+            if _CSPRNG.random() <= self._reset_prob:
+                reset_leaves = self._get_reset_leaves(key=key, data=data)
+                self._on_chip_storage[key] = binary_str_to_bytes(
+                    f"{bin(gc + 1)[2:].zfill(self._gc_length)}{'0' * self._ic_length * self._num_ic}"
+                )
+                return ProcessedData(None, None, reset_leaves)
+
+            if ic + 1 >= pow(2, self._ic_length):
+                raise ValueError("Overflow happened under probabilistic resets.")
+            self._on_chip_storage[key] = binary_str_to_bytes(
+                f"{data[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{data[ic_end:]}"
+            )
+            cur_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic)
+            new_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic + 1)
+            return ProcessedData(cur_leaf, new_leaf, None)
+
+        if ic + 1 >= pow(2, self._ic_length):
+            reset_leaves = self._get_reset_leaves(key=key, data=data)
+            self._on_chip_storage[key] = binary_str_to_bytes(
+                f"{bin(gc + 1)[2:].zfill(self._gc_length)}{'0' * self._ic_length * self._num_ic}"
+            )
+            return ProcessedData(None, None, reset_leaves)
+
+        self._on_chip_storage[key] = binary_str_to_bytes(
+            f"{data[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{data[ic_end:]}"
+        )
+        cur_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic)
+        new_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic + 1)
+        return ProcessedData(cur_leaf, new_leaf, None)
+
     def _get_leaf_from_pos_map(self, key: int) -> ProcessedData:
         """Walk the position-map chain to find key's leaf and new leaf, handling resets along the way."""
-        pos_map_keys = self._get_pos_map_keys(key=key)
+        (chip_key, chip_offset), *level_keys = pos_map_keys(key, ratio=self._num_ic, count=len(self._levels) + 1)
 
-        cur_leaf, new_leaf, reset_leaves = self._update_on_chip_data(key=pos_map_keys[0][0], offset=pos_map_keys[0][1])
+        cur_leaf, new_leaf, reset_leaves = self._update_on_chip_data(key=chip_key, offset=chip_offset)
 
-        for pos_map_index, (cur_key, cur_index) in enumerate(pos_map_keys[1:]):
-            cur_leaf, new_leaf, reset_leaves = self._pos_maps[pos_map_index]._access_pos_map_level(
+        for level, (cur_key, cur_index) in zip(self._levels, level_keys, strict=True):
+            cur_leaf, new_leaf, reset_leaves = level._access_pos_map_level(
                 cur_key=cur_key,
                 cur_index=cur_index,
                 cur_leaf=cur_leaf,
@@ -462,154 +391,31 @@ class FreecursiveOram(TreeBaseOram[FreecursiveOramConfig]):
         return ProcessedData(cur_leaf, new_leaf, reset_leaves)
 
     @override
-    def _operate_on_key(self, key: int, value: Any) -> Any:
+    def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
+        """On a reset, the chunks before the key's are passed now, the key's chunk is read and left
+        pending, and the chunks after it wait in ``_pending_reset_chunks`` for ``_write_back``."""
         cur_leaf, next_leaf, reset_leaves = self._get_leaf_from_pos_map(key=key)
 
-        read_value = None
+        if not reset_leaves:
+            assert cur_leaf is not None and next_leaf is not None
+            return self._read_block(key, value, leaves=[cur_leaf], new_leaf=next_leaf)
 
-        if reset_leaves:
-            for cur_reset_leaves in reset_leaves:
-                ck_a, _cl_a, nl_a, ck_b, _cl_b, nl_b, leaves = self._unpack_reset_leaves(cur_reset_leaves)
+        for index, chunk in enumerate(reset_leaves):
+            ck_a, nl_a, ck_b, nl_b, leaves = _unpack_reset_leaves(chunk)
+            if key not in (ck_a, ck_b):
+                _pass_reset_chunk(self, chunk)
+                continue
 
-                self._client.add_read_path(label=self._name, leaves=leaves)
-                result = self._client.execute()
-                path = result.require(self._name)
-
-                if ck_a == key:
-                    assert ck_a is not None and nl_a is not None
-                    read_value = self._retrieve_data_block(key=ck_a, value=value, new_leaf=nl_a, path=path)
-                    self._update_stash_leaf(key=ck_b, new_leaf=nl_b)
-
-                elif ck_b == key:
-                    assert ck_b is not None and nl_b is not None
-                    read_value = self._retrieve_data_block(key=ck_b, value=value, new_leaf=nl_b, path=path)
-                    self._update_stash_leaf(key=ck_a, new_leaf=nl_a)
-
-                else:
-                    self._update_block_leaves(key_a=ck_a, key_b=ck_b, n_leaf_a=nl_a, n_leaf_b=nl_b, path=path)
-
-                evicted_path = self._evict_stash(leaves=leaves)
-
-                self._client.add_write_path(label=self._name, data=evicted_path)
-                self._client.execute()
-
+            new_leaf, partner, partner_leaf = (nl_a, ck_b, nl_b) if ck_a == key else (nl_b, ck_a, nl_a)
+            assert new_leaf is not None
+            read_value = self._read_block(key, value, leaves=leaves, new_leaf=new_leaf)
+            self._update_stash_leaf(key=partner, new_leaf=partner_leaf)
+            self._pending_reset_chunks = reset_leaves[index + 1 :]
             return read_value
 
-        assert cur_leaf is not None and next_leaf is not None
-        self._client.add_read_path(label=self._name, leaves=[cur_leaf])
-        result = self._client.execute()
-        path = result.require(self._name)
-
-        read_value = self._retrieve_data_block(key=key, value=value, new_leaf=next_leaf, path=path)
-
-        evicted_path = self._evict_stash(leaves=[cur_leaf])
-
-        self._client.add_write_path(label=self._name, data=evicted_path)
-        self._client.execute()
-
-        return read_value
-
     @override
-    def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
-        """Like operate_on_key but defers eviction to a later eviction_with_update_stash call.
-
-        On a reset, the key's own path is read and its eviction deferred; remaining reset paths are
-        stashed in _tmp_reset_leaves and finished during eviction.
-        """
-        cur_leaf, next_leaf, reset_leaves = self._get_leaf_from_pos_map(key=key)
-
-        if reset_leaves:
-            for index, cur_reset_leaves in enumerate(reset_leaves):
-                ck_a, _cl_a, nl_a, ck_b, _cl_b, nl_b, leaves = self._unpack_reset_leaves(cur_reset_leaves)
-
-                self._client.add_read_path(label=self._name, leaves=leaves)
-                result = self._client.execute()
-                path = result.require(self._name)
-
-                if ck_a == key:
-                    assert ck_a is not None and nl_a is not None
-                    read_value = self._retrieve_data_block(key=ck_a, value=value, new_leaf=nl_a, path=path)
-                    self._update_stash_leaf(key=ck_b, new_leaf=nl_b)
-
-                    self._tmp_leaves = leaves
-
-                    if index < len(reset_leaves) - 1:
-                        self._tmp_reset_leaves = reset_leaves[index + 1 :]
-
-                    return read_value
-
-                elif ck_b == key:
-                    assert ck_b is not None and nl_b is not None
-                    read_value = self._retrieve_data_block(key=ck_b, value=value, new_leaf=nl_b, path=path)
-                    self._update_stash_leaf(key=ck_a, new_leaf=nl_a)
-
-                    self._tmp_leaves = leaves
-
-                    if index < len(reset_leaves) - 1:
-                        self._tmp_reset_leaves = reset_leaves[index + 1 :]
-
-                    return read_value
-
-                self._update_block_leaves(key_a=ck_a, key_b=ck_b, n_leaf_a=nl_a, n_leaf_b=nl_b, path=path)
-
-                evicted_path = self._evict_stash(leaves=leaves)
-
-                self._client.add_write_path(label=self._name, data=evicted_path)
-                self._client.execute()
-
-            raise KeyError(f"Key {key} not found in reset leaves.")
-
-        assert cur_leaf is not None and next_leaf is not None
-        self._client.add_read_path(label=self._name, leaves=[cur_leaf])
-        result = self._client.execute()
-        path = result.require(self._name)
-
-        read_value = self._retrieve_data_block(key=key, value=value, new_leaf=next_leaf, path=path)
-
-        self._tmp_leaf = cur_leaf
-
-        return read_value
-
-    @override
-    def _eviction_with_update_stash(self, key: int, value: Any, execute: bool) -> None:
-        """Update key's block in the stash, then evict. If execute is False, queue the write for batching.
-
-        With reset leaves outstanding, internal executes are always performed regardless of execute.
-        """
-        found = False
-
-        for data in self._stash:
-            if data.key == key:
-                data.value = value
-                found = True
-
-        if not found:
-            raise KeyError(f"Key {key} not found.")
-
-        if self._tmp_leaf is not None:
-            evicted_path = self._evict_stash(leaves=[self._tmp_leaf])
-            self._client.add_write_path(label=self._name, data=evicted_path)
-            self._tmp_leaf = None
-        else:
-            assert self._tmp_leaves is not None
-            evicted_path = self._evict_stash(leaves=self._tmp_leaves)
-            self._client.add_write_path(label=self._name, data=evicted_path)
-            self._client.execute()
-            self._tmp_leaves = None
-            if self._tmp_reset_leaves is not None:
-                for cur_reset_leaves in self._tmp_reset_leaves:
-                    ck_a, _cl_a, nl_a, ck_b, _cl_b, nl_b, leaves = self._unpack_reset_leaves(cur_reset_leaves)
-
-                    self._client.add_read_path(label=self._name, leaves=leaves)
-                    result = self._client.execute()
-                    path = result.require(self._name)
-
-                    self._update_block_leaves(key_a=ck_a, key_b=ck_b, n_leaf_a=nl_a, n_leaf_b=nl_b, path=path)
-
-                    evicted_path = self._evict_stash(leaves=leaves)
-
-                    self._client.add_write_path(label=self._name, data=evicted_path)
-                self._tmp_reset_leaves = None
-
-        if execute:
-            self._client.execute()
+    def _write_back(self) -> None:
+        super()._write_back()
+        for chunk in self._pending_reset_chunks:
+            _pass_reset_chunk(self, chunk)
+        self._pending_reset_chunks = []

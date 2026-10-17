@@ -3,7 +3,6 @@ from typing import Literal
 import pytest
 
 from oblivlib.dependency import (
-    AesGcm,
     DaOramConfig,
     FreecursiveOramConfig,
     MulPathOramConfig,
@@ -52,13 +51,3 @@ ORAM_SPECS = [
 @pytest.fixture(params=ORAM_SPECS)
 def make_oram(request):
     return request.param
-
-
-@pytest.fixture(params=["memory", "memory_enc", "build_file_enc"])
-def storage_kwargs(request, test_file):
-    kwargs = {}
-    if "enc" in request.param:
-        kwargs["encryptor"] = AesGcm()
-    if "build_file" in request.param:
-        kwargs["build_file"] = test_file
-    return kwargs

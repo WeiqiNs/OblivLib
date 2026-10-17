@@ -93,8 +93,8 @@ writes stay pending and ride on the next batch, which applies them before its ow
 therefore sees the state it would have seen undeferred, and the batch sequence is exactly the
 undeferred one with each run of read-less batches folded into the next batch (leaves unioned per
 label); `assert_deferral_preserves_access` in `tests/conftest.py` checks this for every scheme family.
-For schemes whose operations alternate a read round and a write-back round (all of them today) the
-round count halves, the same for every key and value. `flush()` sends pending writes on their own,
+Every scheme's operations alternate a read round and a write-back round, Freecursive's reset chunks
+included, so the round count halves, the same for every key and value. `flush()` sends pending writes on their own,
 every lifecycle call flushes first, and `close()` flushes. An error from a deferred write surfaces on
 whichever call sends it. `defer_writes=False` sends every `execute()`.
 
@@ -209,9 +209,11 @@ A failed build leaves its partial `build_file`, which holds only sealed rows.
 `TreeBaseOram._initial_blocks` yields the supplied `(key, value)` pairs (a mapping or a one-shot
 iterator), tracking supplied keys in a `bytearray(num_data)` so a duplicate raises, then `b""` for every
 other address; `_initial_leaf` gives each address's leaf (`StaticOram` overrides it). The recursive
-schemes build and host each position-map tree with the child's own `_build_tree` and `_host_tree`, one at
-a time, so the children reuse the parent's `build_file` path in turn. The ODS init paths collect their
-blocks and build once.
+schemes host the main tree first, then each position-map level builds and hosts its own tree
+(`_build_and_host`, through the level's `_build_tree` and `_host_tree`), largest level first and one at a
+time, so the levels reuse the main ORAM's `build_file` path in turn. A Recursive level draws its own
+leaves, then its padding leaves, as it builds, so the seeded draw order is per level, largest first. The
+ODS init paths collect their blocks and build once.
 
 ### Server stores (`server_stores.py`)
 
@@ -240,11 +242,16 @@ once in `__init__` because they are hot. Objects that aren't configuration (`Sta
 `prf`, `GroupOmap`'s `upper_oram`, `OramOstOmap`'s `ost`/`oram`) are separate constructor arguments.
 Derive variants with `dataclasses.replace`.
 
-**Recursion plumbing stays out of the config.** `_is_pos_map`, `_last_oram_data`, and
-`_last_oram_level` are keyword-only private constructor arguments. A recursive scheme builds each
-position-map child with `replace(self._config, num_data=…, name=f"{name}_pos_map_{i}", …)`. The child
-shares the parent's client and owns that name, which is also its storage label. Each child drives its
-own per-level I/O (`_access_pos_map_level`); the parent only samples leaves and threads them down the chain.
+**Position-map levels are not ORAMs.** A recursive scheme's position map is a chain of level objects,
+`RecursivePosMapLevel`, `DaPosMapLevel`, and `FreecursivePosMapLevel`, each a `TreeStorageBase` rather
+than a `TreeBaseOram`. The main ORAM makes them in its constructor, each with
+`replace(self._config, num_data=…, name=f"{name}_pos_map_{i}", …)`; a counter level also takes the
+previous (larger) tree's size and level as required keyword ints (`last_oram_data`, `last_oram_level`),
+so the recursion plumbing stays out of the config. `_levels[0]` is the smallest level (`i = 0`, the
+outermost map), and levels are hosted largest first; both the labels and the hosting order show in the
+server's access trace. A level shares the main ORAM's client and owns its name, which is also its
+storage label. Each level drives its own per-level I/O (`_access_pos_map_level`); the main ORAM only
+samples leaves and threads them down the chain.
 
 ---
 
@@ -255,25 +262,45 @@ own per-level I/O (`_access_pos_map_level`); the parent only samples leaves and 
 `src/oblivlib/dependency/tree_storage_base.py`, generic over its config type. It is the shared core of
 `TreeBaseOram` and the ODS base `OstBaseOmap`: config accessors, level/leaf-range/stash-size math,
 block sizing (`_max_block_bytes`), `_get_new_leaf`, the stash with its capacity check (`_check_stash`,
-raising `StashOverflowError`, which is also a `MemoryError`), tree construction and hosting
+which records the peak stash size in `_max_stash` and then raises `StashOverflowError`, also a
+`MemoryError`, on overflow), the stash helpers (`_absorb_path`, `_require_in_stash`,
+`_update_stash_leaf`), tree construction and hosting
 (`_build_tree`, `_host_tree`), block-major eviction (`_evict_stash`, which returns sealed `PathRows`),
 and the scheme's `PathCipher` (`_cipher`, built from its `_codec`; §3, §6). It lives in `dependency/` so
 both higher layers depend downward on it rather than on each other.
 
 ### `TreeBaseOram` and the access protocol
 
-Adds the position map and eviction. The public `operate_on_key`, `operate_on_key_without_eviction`,
-and `eviction_with_update_stash` check the data contract and call the underscore methods each scheme
-implements. `operate_on_key(key, value=UNSET)` returns the value *before* any write:
+Adds eviction and one access template. The position map belongs to the schemes that keep one
+(`PathOram` and its subclasses, and `RecursivePathOram`'s on-chip map); DA and Freecursive derive leaves
+from a PRF. Each scheme implements a single hook, `_operate_on_key_without_eviction(key, value)`: it
+finds the key's leaves (and does any position-map level I/O), then calls `_read_block`, which reads those
+paths in one batch, pulls their real blocks into the stash, reads the key (optionally overwriting it),
+remaps it, and records the paths in `_pending_leaves`. `_write_back` evicts the stash onto the pending
+paths, stages the write, executes, and clears them. The public methods check the data contract and
+compose the two:
 
-1. Look up the key's leaf and remap it to a fresh random leaf.
-2. Read the old leaf's path (one batch).
-3. Pull the path's real blocks into the stash; find the key, read it, optionally overwrite, and remap it.
-4. Evict the stash onto the same path and stage the write-back. With write deferral (§2) it rides on the
-   next operation's read batch, so an access costs one round instead of two.
+- `operate_on_key(key, value=UNSET)` is the hook then `_write_back`, and returns the value *before*
+  any write. With write deferral (§2) the write-back rides on the next operation's read batch, so an
+  access costs one round instead of two.
+- `operate_on_key_without_eviction` is the hook alone, and `eviction_with_update_stash(key, value)` sets
+  the key's value in the stash, then calls `_write_back`. The split lets a caller (`OramOstOmap`,
+  `GroupOmap`) compute the new value between the read and the write-back; the server sees exactly the
+  fused access. An ORAM holds one pending access, so nothing else may run on the same instance between
+  the two halves (another access could evict the pending block, or drop the pending paths' write-back).
+  This is not enforced: `GroupOmap.insert` raises its full-bucket `MemoryError` between the halves (§8),
+  and the next access must still work. `eviction_with_update_stash` with no access pending raises a
+  `ValueError` before touching the stash.
 
-`operate_on_key_without_eviction` + `eviction_with_update_stash` split this so callers can defer or
-batch the write-back.
+Freecursive extends the template for its resets: chunks before the key's are read and written back in
+the hook (`_pass_reset_chunk`), the key's chunk is the pending read, and the chunks after it wait in
+`_pending_reset_chunks` until its `_write_back` override passes them after the key's own write-back.
+`MulPathOram`'s batch API uses the same pending paths: `_operate_on_keys_without_eviction` reads every
+key's path and records them, and `_eviction_for_mul_keys` applies updates and calls `_write_back`.
+
+`TreeBaseOram` is generic over its position-map level type. `_levels` lists a recursive scheme's levels,
+smallest first; the non-recursive schemes pass `Never` and keep it empty. `max_stash` is the main ORAM's
+peak stash plus every level's peak, an upper bound since the peaks need not coincide.
 
 **Eviction is block-major and that is deliberate.** Each stash block goes to its deepest legal bucket,
 bubbling up if full. This matches the textbook bucket-major sweep's overflow exactly (both are maximal
@@ -284,7 +311,7 @@ placements on a laminar matroid) and is ~15% faster at realistic stash sizes. Do
 | Scheme | Idea |
 |---|---|
 | `PathOram` | Random leaf reassignment on every access. |
-| `MulPathOram` | Reads/evicts several paths per batch (`operate_on_keys*`, `eviction_for_mul_keys`, each checking the contract before its underscore twin). `stash_scale_multiplier` is baked into `stash_scale` at construction. |
+| `MulPathOram` | Reads/evicts several paths per batch (`operate_on_keys*`, `eviction_for_mul_keys`, each checking the contract before its underscore twin). `stash_scale_multiplier` is baked into `stash_scale` at construction. A batch given explicit read paths (`key_path_map`) leaves the position map alone: the caller owns those keys' positions, so it should also pass `new_path_map`, or the random new leaves are recorded nowhere (`GroupOmap` passes both). |
 | `StaticOram` | Leaves fixed by `PRF(key)`: the "new" leaf equals the current one. |
 | `RecursivePathOram` | Position map compressed into a chain of smaller ORAMs, each block holding `compression_ratio` child leaves; only the smallest map (≤ `on_chip_mem`) stays on chip. A short final block is padded with random leaves. |
 | `DAOram`, `FreecursiveOram` | Leaves are `PRF(key ‖ GC ‖ IC)`; position-map blocks hold counters instead of leaves (below). |
@@ -299,8 +326,9 @@ would overflow, the block **resets**: GC increments, ICs zero, and every child's
   `reset_prob` (default `1/num_ic`, drawn from the OS CSPRNG) and treats an overflow as an error.
   `"hard"` resets only on overflow, which is the insecure original scheme. A reset fans out into chunks
   of two child paths read together. Slots past the end of the data read a random path so the data
-  boundary stays hidden. When a reset is outstanding, `eviction_with_update_stash(execute=False)` still
-  executes internally, because later reset chunks depend on the earlier write-backs.
+  boundary stays hidden. A split access finishes the reset chunks after the key's own chunk inside
+  `eviction_with_update_stash`, because later chunks depend on the earlier write-backs. Eviction always
+  executes: write deferral (§2) already holds back a write-only batch, so there is no flag to stage it.
 - **DAOram** layout is `GC ‖ IC×num_ic ‖ indicator×num_ic`. Instead of resetting all children at once,
   it de-amortizes: an indicator bit marks a child whose backup count is still pending, and each access
   carries at most one pending reset alongside it. A consumed backup clears only that indicator. An
@@ -308,7 +336,19 @@ would overflow, the block **resets**: GC increments, ICs zero, and every child's
   path and a reset path (random when none is due), so a reset is indistinguishable from no reset.
 
 The on-chip and in-ORAM variants of the counter update, and the prob/hard variants, are deliberately
-duplicated rather than shared: they differ in obliviousness-critical details. Reset state moves through
+duplicated rather than shared: they differ in obliviousness-critical details. The on-chip helpers
+(`_update_data_on_chip`, `_perform_reset_on_chip`, Freecursive's `_update_on_chip_data`) live on the main
+ORAM, and the stored-block helpers (`_update_data`, `_perform_reset`, `_update_data_prob_reset`,
+`_update_data_hard_reset`) on the level class. What both roles share lives on a per-scheme `Protocol`
+mixin, `DaCounterMixin` / `FreecursiveCounterMixin`: the counter layout (`_count_length`,
+`_zero_counter`), the PRF leaves (`_prf_leaf`, `_get_previous_leaf_from_prf`), and Freecursive's
+`_reset_prob` and `_get_reset_leaves`. The mixin only declares the attributes it reads (`_config`,
+`_prf`, `_last_oram_data`, `_last_oram_level`) and has no `__init__`, so the main ORAM and its level each
+list it after their `TreeStorageBase` base. A shared base deriving from `TreeStorageBase` would form a
+diamond with `TreeBaseOram`, which basedpyright's `reportUnsafeMultipleInheritance` rejects, and a plain
+mixin class with declared-but-unassigned attributes trips `reportUninitializedInstanceVariable`; a
+`Protocol` may declare them. Freecursive's `_unpack_reset_leaves` and `_pass_reset_chunk` are module
+functions both roles call. Reset state moves through
 `NamedTuple` records (`ResetLeaf`, `ProcessedData`, `ResetEntry`, `UnpackedReset`). `ResetLeaf`'s field
 is `offset` because a NamedTuple field cannot shadow `tuple.index`.
 
@@ -435,7 +475,16 @@ disk.
 
 - A block mapped to leaf `x` is on the root→`x` path or in the stash.
 - Recursive schemes require `num_data` > on-chip size (`on_chip_mem` for DA/Recursive, `on_chip_size`
-  for Freecursive); the constructor raises otherwise.
+  for Freecursive); the constructor raises otherwise. The number of position-map levels is exact: the
+  fewest `L` with `on_chip * ratio**L >= num_data`, in integer arithmetic (`pos_map_level_count` in
+  `tree_base_oram.py`; DA and Freecursive keep the last level on chip, so they use one fewer). A ratio
+  below 2 cannot compress and raises.
+- `max_stash` is the main ORAM's peak stash plus every position-map level's peak; each peak is recorded
+  in `_check_stash`, so it includes build overflow.
+- A `MulPathOram` batch with explicit read paths (`key_path_map`) leaves the position map unchanged
+  (§4).
+- `FreecursiveOramConfig.reset_method` is one of `ResetMethod` (`config.py`); anything else raises
+  `ValueError` at config construction.
 - Keys and values obey the data contract (§3); a violation raises `ContractError` before any client
   state changes or any round is spent.
 - The accessed-path sequence and the round count depend only on the sequence of calls, never on keys or
@@ -469,7 +518,9 @@ disk.
   `write_path` calls.
 - **Type checking:** basedpyright `recommended` is clean across `dependency`/`oram`/`omap` with no
   `type: ignore`. `OstBaseOmap` is generic over its `LocalNodes` container rather than narrowing a base
-  attribute. msgpack ships no stubs, so `typings/msgpack/__init__.pyi` declares the calls the library
+  attribute, and `TreeBaseOram` is generic over its position-map level type the same way (a mutable
+  `_levels` attribute is invariant, so a subclass could not narrow a base `list[TreeStorageBase]`).
+  msgpack ships no stubs, so `typings/msgpack/__init__.pyi` declares the calls the library
   makes.
 - **GroupOmap leaks bucket occupancy:** a search reads one lower path per key in the bucket, so the
   number of lower paths depends on how full the bucket is.
@@ -489,8 +540,9 @@ disk.
   which avoids needing a rootdir `pytest_addoption`), `client` (`Client.local()`), `remote_client` (a
   `Client` over `TransportBackend(LoopbackTransport(StorageServer()))`, the full wire path in process),
   `recorded_client` (a factory for a client over a `RecordingBackend` that records every message),
-  `assert_deferral_preserves_access` (runs a seeded workload with deferral off and on and compares the
-  batches), `encryptor`, and `test_file`.
+  `seeded_access` (runs a workload under a fixed seed on a recording client and returns its batches'
+  access shapes and rounds), `assert_deferral_preserves_access` (built on `seeded_access`: runs a
+  workload with deferral off and on and compares the batches), `encryptor`, and `test_file`.
 - `tests/dependency/`: `make_search_tree` parametrizes one behavioural suite
   (`test_search_tree_common.py`) over AVL and B+. Per-tree files hold the structural invariant validators
   and recursive/iterative and batched/sequential cross-checks. The protocol, server, client, transport,
@@ -499,10 +551,14 @@ disk.
   storage-specific code. Test order mirrors source order. Trivial helpers covered transitively get no
   dedicated test. Code whose public behavior the ORAM/OMAP layers own (`contract.py`,
   `TreeStorageBase`, the composed maps' key hashing, `max_bucket_load`) is tested there, not here.
-- `tests/oram/`: `make_oram` parametrizes over `ORAM_SPECS` (Freecursive twice, prob/hard) and
-  `storage_kwargs` over plaintext memory, encrypted memory, and an encrypted `build_file`. Adding one
-  `ORAM_SPECS` line enrols a scheme in the whole common suite. `MulPathOram`'s batch API, edge cases,
-  and the remote protocol and handover modes have their own files.
+- `tests/oram/`: `make_oram` parametrizes over `ORAM_SPECS` (Freecursive twice, prob/hard). Adding one
+  `ORAM_SPECS` line enrols a scheme in the whole common suite, which checks every scheme against a dict
+  model and checks that a split access (`operate_on_key_without_eviction` + `eviction_with_update_stash`)
+  reaches the server exactly as the fused one does; DA and Freecursive repeat that check through counter
+  resets, with write deferral on and off. The recursive schemes also check `max_stash` against
+  their levels' peaks, and the edge cases pin the exact position-map level count at float-boundary
+  sizes. `MulPathOram`'s batch API, edge cases, and the remote protocol and handover modes have their own
+  files.
 - `tests/omap/`: `omap_spec` parametrizes over `OMAP_SPECS`, each entry declaring its guarantees
   (`per_op_oblivious`, `delete_oblivious`, …). The obliviousness tests draw from filtered fixtures, so
   they are *collected* only for variants that claim the property, and count path reads through a

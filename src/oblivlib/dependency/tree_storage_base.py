@@ -23,6 +23,7 @@ class TreeStorageBase[ConfigT: OramConfig]:
         self._stash_capacity: int = config.stash_scale * max(1, self._level - 1)
 
         self._stash: list = []
+        self._max_stash: int = 0
 
     @property
     def _name(self) -> str:
@@ -70,11 +71,34 @@ class TreeStorageBase[ConfigT: OramConfig]:
         return secrets.randbelow(self._leaf_range)
 
     def _check_stash(self) -> None:
+        self._max_stash = max(self._max_stash, self.stash_size)
         if len(self._stash) > self._stash_capacity:
             raise StashOverflowError(
                 f"{type(self).__name__} {self._name!r}: stash holds {len(self._stash)} blocks, "
                 + f"capacity {self._stash_capacity}"
             )
+
+    def _absorb_path(self, path: PathRows) -> None:
+        for bucket in self._cipher.open_path(path).values():
+            self._stash.extend(data for data in bucket if data.key is not None)
+        self._check_stash()
+
+    def _require_in_stash(self, key: int) -> Data:
+        for data in self._stash:
+            if data.key == key:
+                return data
+        raise KeyError(f"Key {key} not found.")
+
+    def _update_stash_leaf(self, key: int | None, new_leaf: int | None) -> None:
+        if key is None:
+            return
+
+        for data in self._stash:
+            if data.key == key:
+                data.leaf = new_leaf
+                return
+
+        raise KeyError(f"Key {key} not found.")
 
     def _evict_stash(self, leaves: list[int]) -> PathRows:
         path = empty_path(level=self._level, leaves=leaves)

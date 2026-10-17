@@ -4,21 +4,19 @@ Defaults live here — one place per scheme — instead of being repeated across
 signature. The config hierarchy mirrors the scheme hierarchy: shared defaults are inherited and
 scheme-specific defaults override them. All configs are frozen and keyword-only; derive a variant
 with `dataclasses.replace(cfg, num_data=...)`.
-
-Note: the internal recursion plumbing of the position-map schemes (`is_pos_map`, `last_oram_data`,
-`last_oram_level`) is deliberately NOT here — those are not user knobs. They are passed as
-keyword-only internal arguments when a scheme builds its own position-map children.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
     from oblivlib.dependency.client import Client
     from oblivlib.dependency.crypto import Encryptor
+
+ResetMethod = Literal["prob", "hard"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -145,13 +143,15 @@ class FreecursiveOramConfig(CounterOramConfig):
     ic_length: int = 10
     gc_length: int = 32
     on_chip_size: int = 10
-    reset_method: Literal["prob", "hard"] = "prob"
+    reset_method: ResetMethod = "prob"
     reset_prob: float | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.on_chip_size < 1:
             raise ValueError(f"on_chip_size must be >= 1, got {self.on_chip_size}.")
+        if self.reset_method not in get_args(ResetMethod):
+            raise ValueError(f"reset_method must be one of {get_args(ResetMethod)}, got {self.reset_method!r}.")
         if self.reset_prob is not None and not 0.0 < self.reset_prob <= 1.0:
             raise ValueError(f"reset_prob must be in (0, 1], got {self.reset_prob}.")
 

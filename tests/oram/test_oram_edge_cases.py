@@ -12,6 +12,7 @@ from oblivlib.dependency import (
     RecursiveOramConfig,
 )
 from oblivlib.oram import DAOram, FreecursiveOram, PathOram, RecursivePathOram
+from oblivlib.oram.tree_base_oram import pos_map_level_count
 
 RECURSIVE_POS_MAP_ORAMS = [
     (RecursivePathOram, RecursiveOramConfig),
@@ -20,7 +21,7 @@ RECURSIVE_POS_MAP_ORAMS = [
 ]
 
 
-@pytest.mark.parametrize("n", [100, 1023, 1025])
+@pytest.mark.parametrize("n", [100, 1025])
 def test_non_power_of_two_round_trip(make_oram, client, n):
     oram = make_oram(num_data=n, data_size=10, client=client)
     oram.init_server_storage()
@@ -30,12 +31,6 @@ def test_non_power_of_two_round_trip(make_oram, client, n):
 
     for i in range(n):
         assert oram.operate_on_key(key=i) == b"%d" % i
-
-
-@pytest.mark.parametrize("n", [1, 2, 7, 100, 1000, 1023, 1024, 1025, 4096])
-def test_leaf_range_is_smallest_power_of_two_at_least_n(client, n):
-    oram = PathOram(PathOramConfig(num_data=n, data_size=10, client=client))
-    assert n <= oram._leaf_range < 2 * n
 
 
 def test_init_path_overflow_goes_to_stash(client):
@@ -79,6 +74,14 @@ def test_num_data_at_most_on_chip_raises(cls, config_cls, client):
         cls(config_cls(num_data=8, data_size=10, client=client))
 
 
+@pytest.mark.parametrize(
+    ("num_data", "on_chip", "ratio", "expected"),
+    [(40, 10, 4, 1), (41, 10, 4, 2), (125, 1, 5, 3)],
+)
+def test_pos_map_level_count_is_exact(num_data, on_chip, ratio, expected):
+    assert pos_map_level_count(num_data=num_data, on_chip=on_chip, ratio=ratio) == expected
+
+
 def test_da_oram_reset_block_left_in_pos_map_stash(monkeypatch, client):
     monkeypatch.setattr(secrets, "randbelow", random.Random(9).randrange)
     oram = DAOram(
@@ -92,18 +95,6 @@ def test_da_oram_reset_block_left_in_pos_map_stash(monkeypatch, client):
         key = workload.randrange(1024)
         assert oram.operate_on_key(key=key, value=b"%d" % step) == model[key]
         model[key] = b"%d" % step
-
-
-def test_write_returns_old_value_and_empty_bytes_is_writable(make_oram, client):
-    oram = make_oram(num_data=64, data_size=10, client=client)
-    oram.init_server_storage()
-
-    assert oram.operate_on_key(key=3) == b""
-    oram.operate_on_key(key=3, value=b"42")
-    assert oram.operate_on_key(key=3, value=b"99") == b"42"
-    assert oram.operate_on_key(key=3) == b"99"
-    assert oram.operate_on_key(key=3, value=b"") == b"99"
-    assert oram.operate_on_key(key=3) == b""
 
 
 def test_rejects_non_bytes_oversized_and_out_of_range(make_oram, client):

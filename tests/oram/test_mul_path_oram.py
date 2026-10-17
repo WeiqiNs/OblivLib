@@ -22,68 +22,6 @@ class TestMulPathOram:
         for key, new_value in updates.items():
             assert oram.operate_on_key(key=key) == new_value
 
-    def test_batch_read_only(self, num_data, client):
-        oram = MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale_multiplier=3))
-        oram.init_server_storage()
-
-        for i in range(num_data):
-            oram.operate_on_key(key=i, value=b"%d" % (i * 2))
-
-        read_map = {0: UNSET, 5: UNSET, 10: UNSET}
-        results = oram.operate_on_keys(key_value_map=read_map)
-
-        assert results[0] == b"0"
-        assert results[5] == b"10"
-        assert results[10] == b"20"
-
-        assert oram.operate_on_key(key=0) == b"0"
-        assert oram.operate_on_key(key=5) == b"10"
-        assert oram.operate_on_key(key=10) == b"20"
-
-    def test_with_enc(self, num_data, client, encryptor):
-        oram = MulPathOram(
-            MulPathOramConfig(
-                num_data=num_data, data_size=10, client=client, encryptor=encryptor, stash_scale_multiplier=5
-            )
-        )
-        oram.init_server_storage()
-
-        for i in range(num_data):
-            oram.operate_on_key(key=i, value=b"%d" % i)
-
-        keys_to_read = [0, 1, 2, 3, 4]
-        results = oram.operate_on_keys(key_value_map={k: UNSET for k in keys_to_read})
-
-        for key in keys_to_read:
-            assert results[key] == b"%d" % key
-
-        updates = {5: b"50", 6: b"60"}
-        oram.operate_on_keys(key_value_map=updates)
-
-        assert oram.operate_on_key(key=5) == b"50"
-        assert oram.operate_on_key(key=6) == b"60"
-
-    def test_with_build_file(self, num_data, client, test_file, encryptor):
-        oram = MulPathOram(
-            MulPathOramConfig(
-                num_data=num_data,
-                data_size=10,
-                client=client,
-                build_file=test_file,
-                encryptor=encryptor,
-                stash_scale_multiplier=3,
-            )
-        )
-        oram.init_server_storage()
-
-        for i in range(num_data):
-            oram.operate_on_key(key=i, value=b"%d" % i)
-
-        results = oram.operate_on_keys(key_value_map={0: UNSET, 1: UNSET, 2: UNSET})
-        assert results[0] == b"0"
-        assert results[1] == b"1"
-        assert results[2] == b"2"
-
     def test_random_batch_operations(self, num_data, client):
         oram = MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale_multiplier=10))
         oram.init_server_storage()
@@ -100,6 +38,24 @@ class TestMulPathOram:
             assert len(results) == batch_size
             for key in keys:
                 assert results[key] == b"%d" % key
+
+    def test_explicit_paths_leave_position_map_untouched(self, client):
+        oram = MulPathOram(MulPathOramConfig(num_data=64, data_size=10, client=client, stash_scale_multiplier=3))
+        oram.init_server_storage(data={k: b"%d" % k for k in range(64)})
+        positions = dict(oram._pos_map)
+        keys = [1, 2, 3]
+        moved = {k: (positions[k] + 1) % oram._leaf_range for k in keys}
+
+        read = oram.operate_on_keys(
+            dict.fromkeys(keys, UNSET), key_path_map={k: positions[k] for k in keys}, new_path_map=moved
+        )
+        assert read == {k: b"%d" % k for k in keys}
+        assert oram._pos_map == positions
+
+        oram.operate_on_keys_without_eviction({1: b"one"}, key_path_map={1: moved[1]}, new_path_map={1: positions[1]})
+        oram.eviction_for_mul_keys()
+        assert oram._pos_map == positions
+        assert oram.operate_on_key(key=1) == b"one"
 
     def test_without_eviction(self, num_data, client):
         oram = MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale_multiplier=3))

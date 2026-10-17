@@ -31,6 +31,7 @@ _OMAP = {**_ORAM, "key_size": 4}
         (FreecursiveOramConfig, _ORAM, {"on_chip_size": 0}, "on_chip_size"),
         (FreecursiveOramConfig, _ORAM, {"reset_prob": 0.0}, "reset_prob"),
         (FreecursiveOramConfig, _ORAM, {"reset_prob": 1.5}, "reset_prob"),
+        (FreecursiveOramConfig, _ORAM, {"reset_method": "soft"}, "reset_method"),
         (AvlOmapConfig, _OMAP, {"key_size": 0}, "key_size"),
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"order": 2}, "order"),
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
