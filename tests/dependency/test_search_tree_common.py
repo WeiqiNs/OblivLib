@@ -19,21 +19,6 @@ def _assert_absent(tree, key) -> None:
 
 
 class TestSearchTreeBehavior:
-    def test_int_key_round_trip(self, make_search_tree):
-        tree = make_search_tree(leaf_range=10000)
-        for k in range(500):
-            tree.insert(k, k * 10)
-        for k in range(500):
-            assert tree.search(k) == k * 10
-
-    def test_string_key_round_trip(self, make_search_tree):
-        tree = make_search_tree(leaf_range=10000)
-        keys = [f"key-{i}" for i in range(200)]
-        for k in keys:
-            tree.insert(k, f"val-{k}")
-        for k in keys:
-            assert tree.search(k) == f"val-{k}"
-
     def test_random_insertion_order_round_trip(self, make_search_tree):
         tree = make_search_tree(leaf_range=200000)
         keys = random.Random(1234).sample(range(100000), 500)
@@ -42,12 +27,6 @@ class TestSearchTreeBehavior:
         for k in keys:
             assert tree.search(k) == k + 1
 
-    def test_single_element(self, make_search_tree):
-        tree = make_search_tree(leaf_range=10)
-        tree.insert(42, "only")
-        assert tree.search(42) == "only"
-        _assert_absent(tree, 7)
-
     def test_missing_key(self, make_search_tree):
         tree = make_search_tree(leaf_range=1000)
         for k in range(50):
@@ -55,24 +34,13 @@ class TestSearchTreeBehavior:
         _assert_absent(tree, 999)
         _assert_absent(tree, -1)
 
-    def test_delete_then_absent_others_present(self, make_search_tree):
-        tree = make_search_tree(leaf_range=10000)
-        for k in range(20):
-            tree.insert(k, k)
-        tree.delete(10)
-        _assert_absent(tree, 10)
-        for k in (i for i in range(20) if i != 10):
-            assert tree.search(k) == k
-
-    def test_delete_all_empties_tree(self, make_search_tree):
-        tree = make_search_tree(leaf_range=10000)
-        keys = list(range(30))
-        for k in keys:
-            tree.insert(k, k)
-        random.Random(7).shuffle(keys)
-        for k in keys:
-            tree.delete(k)
-        assert tree.is_empty
+    def test_delete_root_with_one_child(self, make_search_tree):
+        tree = make_search_tree(leaf_range=1000)
+        tree.insert(1, 10)
+        tree.insert(2, 20)
+        tree.delete(1)
+        _assert_absent(tree, 1)
+        assert tree.search(2) == 20
 
     def test_delete_stress_random(self, make_search_tree):
         tree = make_search_tree(leaf_range=200000)

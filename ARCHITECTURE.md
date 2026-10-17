@@ -488,15 +488,17 @@ disk.
 - `tests/conftest.py`: the `num_data` fixture (default `2**12`, overridable via the `NUM_DATA` env var,
   which avoids needing a rootdir `pytest_addoption`), `client` (`Client.local()`), `remote_client` (a
   `Client` over `TransportBackend(LoopbackTransport(StorageServer()))`, the full wire path in process),
-  `recorded_client` (a factory for a client over a `RecordingBackend` that records every batch),
+  `recorded_client` (a factory for a client over a `RecordingBackend` that records every message),
   `assert_deferral_preserves_access` (runs a seeded workload with deferral off and on and compares the
   batches), `encryptor`, and `test_file`.
 - `tests/dependency/`: `make_search_tree` parametrizes one behavioural suite
   (`test_search_tree_common.py`) over AVL and B+. Per-tree files hold the structural invariant validators
   and recursive/iterative and batched/sequential cross-checks. The protocol, server, client, transport,
-  cipher, and builder each have their own file; `FlexibleBinaryTree` runs over memory-plain,
-  memory-encrypted, disk-encrypted, and loopback-encrypted servers. Test order mirrors source order.
-  Trivial helpers covered transitively get no dedicated test.
+  cipher, builder, and configs each have their own file (`test_config.py` holds one table covering every
+  config check); `FlexibleBinaryTree` runs over memory-plain and memory-encrypted trees, since it has no
+  storage-specific code. Test order mirrors source order. Trivial helpers covered transitively get no
+  dedicated test. Code whose public behavior the ORAM/OMAP layers own (`contract.py`,
+  `TreeStorageBase`, the composed maps' key hashing, `max_bucket_load`) is tested there, not here.
 - `tests/oram/`: `make_oram` parametrizes over `ORAM_SPECS` (Freecursive twice, prob/hard) and
   `storage_kwargs` over plaintext memory, encrypted memory, and an encrypted `build_file`. Adding one
   `ORAM_SPECS` line enrols a scheme in the whole common suite. `MulPathOram`'s batch API, edge cases,

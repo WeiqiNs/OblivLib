@@ -97,7 +97,8 @@ def test_timeout_raises_transport_error():
 def test_simulated_network_models_rtt_and_bandwidth():
     network = SimulatedNetwork(LoopbackTransport(StorageServer()), rtt_s=0.01, bytes_per_s=1000)
     backend = TransportBackend(network)
-    _workload(Client(backend))
+    with Client(backend) as client:
+        _workload(client)
     assert network.request_count > 0
     assert network.modeled_seconds == pytest.approx(network.request_count * 0.01 + backend.wire_bytes / 1000)
 

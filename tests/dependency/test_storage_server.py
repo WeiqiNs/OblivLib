@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from oblivlib.dependency import (
@@ -68,6 +70,13 @@ def test_hello_opens_sessions_and_checks_version(server):
         _ok(server.handle(CreateList(session="nope", label="l")))
 
 
+def test_create_tree_checks_shape(server):
+    session = _open(server)
+    for level, row_bytes in [(0, ROW), (3, 0)]:
+        with pytest.raises(ProtocolError, match="must be >= 1"):
+            _ok(server.handle(CreateTree(session=session, label="t", level=level, row_bytes=row_bytes)))
+
+
 def test_write_range_then_read_path_root_first_deduped(server):
     session = _open(server)
     _ok(server.handle(CreateTree(session=session, label="t", level=3, row_bytes=ROW)))
@@ -96,6 +105,7 @@ def test_batch_is_validated_before_any_write(server):
         ([ListOps(label="l", ops=[ListPopBack()])], [], ProtocolError),
         ([ListOps(label="l", ops=[ListPushFront(b"a")])], [ReadList(label="l", indices=[1])], ProtocolError),
         ([], [ReadPath(label="t", leaves=[-1])], ProtocolError),
+        ([], [ReadList(label="missing", indices=None)], UnknownLabelError),
     ]
     for writes, reads, error in cases:
         with pytest.raises(error):
@@ -127,6 +137,7 @@ def test_variable_rows_are_memory_only(tmp_path):
     write = WritePath(label="t", leaves=[1], rows=[b"root bucket", b"x"])
     expect_reply(memory.handle(Batch(session=session, writes=[write], reads=[])), BatchReply)
     assert _read(memory, session, ReadPath(label="t", leaves=[0, 1])) == [[b"root bucket", b"", b"x"]]
+    _ok(memory.handle(Close(session=session)))
 
     disk = StorageServer(tmp_path)
     with pytest.raises(ProtocolError, match="fixed-size"):
@@ -162,6 +173,10 @@ def test_attach_adopts_file_and_rejects_unsafe_names(tmp_path):
     for name in ("../image.tree", str(image), "a/image.tree", "..", "", session, "missing.tree"):
         with pytest.raises((ProtocolError, StorageError)):
             _ok(server.handle(AttachTree(session=session, label="t", filename=name, level=2, row_bytes=ROW)))
+    open_fds = len(os.listdir("/proc/self/fd"))
+    with pytest.raises(StorageError):
+        _ok(server.handle(AttachTree(session=session, label="t" * 200, filename="image.tree", level=2, row_bytes=ROW)))
+    assert image.exists() and len(os.listdir("/proc/self/fd")) == open_fds
 
     _ok(server.handle(AttachTree(session=session, label="t", filename="image.tree", level=2, row_bytes=ROW)))
     assert not image.exists()

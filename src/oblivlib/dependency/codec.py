@@ -22,12 +22,10 @@ class BlockCodec(ABC):
         return self._max_block_bytes
 
     @abstractmethod
-    def pack(self, data: Data) -> list[Any]:
-        raise NotImplementedError
+    def pack(self, data: Data) -> list[Any]: ...
 
     @abstractmethod
-    def unpack(self, fields: list[Any]) -> Data:
-        raise NotImplementedError
+    def unpack(self, fields: list[Any]) -> Data: ...
 
 
 class DefaultCodec(BlockCodec):

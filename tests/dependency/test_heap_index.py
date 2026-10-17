@@ -1,26 +1,19 @@
-import pytest
-
 from oblivlib.dependency import Data
 from oblivlib.dependency.heap_index import (
     compute_level,
     empty_path,
     fill_data_to_path,
     leaf_lca,
-    parent,
     path_indices,
     path_to_root,
 )
 
 
-@pytest.mark.parametrize("p", list(range(0, 32)))
-def test_compute_level_exact_at_powers_of_two(p):
-    n = pow(2, p)
-    assert pow(2, compute_level(n) - 1) == n
-    assert compute_level(n + 1) == compute_level(n) + 1
-
-
-def test_parent():
-    assert [parent(index) for index in (1, 2, 3, 4, 1023, 1024)] == [0, 0, 1, 1, 511, 511]
+def test_compute_level_exact_at_powers_of_two():
+    for p in range(32):
+        n = pow(2, p)
+        assert pow(2, compute_level(n) - 1) == n
+        assert compute_level(n + 1) == compute_level(n) + 1
 
 
 def test_path_to_root():
@@ -36,13 +29,7 @@ def test_path_indices_dedup_root_first():
     assert path_indices([], level=11) == []
 
 
-def test_leaf_lca_known_values():
-    level = 11
-    assert leaf_lca(0, 512, level) == 0
-    assert leaf_lca(0, 511, level) == 1
-    assert leaf_lca(10, 10, level) == 1023 + 10
-    assert leaf_lca(3, 700, level) == leaf_lca(700, 3, level)
-
+def test_leaf_lca_matches_parent_walk():
     level = 6
     first_leaf = (1 << (level - 1)) - 1
     for leaf_a in range(1 << (level - 1)):
@@ -51,12 +38,6 @@ def test_leaf_lca_known_values():
             while a != b:
                 a, b = (a - 1) // 2, (b - 1) // 2
             assert leaf_lca(leaf_a, leaf_b, level) == a
-
-
-def test_empty_path():
-    path = empty_path(level=11, leaves=[0, 2])
-    assert list(path) == [0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 512, 1023, 1025]
-    assert all(bucket == [] for bucket in path.values())
 
 
 def test_fill_data_to_path_places_at_deepest_legal_bucket():

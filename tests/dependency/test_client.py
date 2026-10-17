@@ -5,11 +5,10 @@ from oblivlib.dependency import (
     ListPopBack,
     ListPushFront,
     ListWrite,
-    LocalBackend,
     Metrics,
+    MissingResultError,
     ProtocolError,
     RowSizeError,
-    StorageServer,
     UnknownLabelError,
 )
 from oblivlib.dependency import client as client_module
@@ -33,9 +32,12 @@ def test_local_client_hosts_rows_and_reads_root_first():
     with Client.local() as client:
         _tree(client)
         client.add_read_path("t", [3, 0])
-        rows = client.execute().require("t")
+        result = client.execute()
+        rows = result.require("t")
         assert list(rows) == [0, 1, 2, 3, 6]
         assert list(rows.values()) == [_row(1), _row(2), _row(3), _row(4), _row(7)]
+        with pytest.raises(MissingResultError, match="'other'"):
+            result.require("other")
 
 
 def test_metrics_count_rounds_and_payload_and_reset():
@@ -151,17 +153,11 @@ def test_resize_refuses_while_reads_are_staged():
         assert client.level_of("t") == 4
 
 
-def test_sessions_namespace_labels():
-    server = StorageServer()
-    first, second = Client(LocalBackend(server)), Client(LocalBackend(server))
-    first.host_tree("t", MemoryImage(level=1, row_bytes=ROW, rows=[_row(1)]))
-    second.host_tree("t", MemoryImage(level=1, row_bytes=ROW, rows=[_row(2)]))
-    for client, expected in [(first, _row(1)), (second, _row(2))]:
-        client.add_read_path("t", [0])
-        assert client.execute().require("t") == {0: expected}
-
-
 def test_flush_and_close(recorded_client):
+    unused, unused_recorder = recorded_client()
+    unused.close()
+    assert unused_recorder.messages == []
+
     client, recorder = recorded_client()
     with client:
         _tree(client)

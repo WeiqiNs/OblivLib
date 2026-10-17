@@ -43,14 +43,13 @@ class TestAVLTree:
             assert results[k] == AVLTree.search(key=k, root=root)
 
     def test_recursive_insert_matches_iterative(self):
-        for keys in (list(range(500)), [f"{i}" for i in range(500)]):
-            tree = AVLTree(leaf_range=1000)
-            root_it = root_rec = None
-            for k in keys:
-                root_it = tree.insert(root=root_it, kv_pair=KVPair(key=k, value=k))
-                root_rec = tree.recursive_insert(root=root_rec, kv_pair=KVPair(key=k, value=k))
-            _invariants(root_it)
-            assert _shape(root_it) == _shape(root_rec)
+        tree = AVLTree(leaf_range=1000)
+        root_it = root_rec = None
+        for k in random.Random(5).sample(range(10000), 500):
+            root_it = tree.insert(root=root_it, kv_pair=KVPair(key=k, value=k))
+            root_rec = tree.recursive_insert(root=root_rec, kv_pair=KVPair(key=k, value=k))
+        _invariants(root_it)
+        assert _shape(root_it) == _shape(root_rec)
 
     def test_insert_into_local_rejects_unfetched_node(self):
         tree = AVLTree(leaf_range=100)
@@ -96,7 +95,7 @@ class TestAVLTree:
             root_rec = tree.insert(root=root_rec, kv_pair=KVPair(key=k, value=k))
 
         random.Random(0).shuffle(keys)
-        for k in keys:
+        for k in [-1, *keys, -1]:
             root_it = tree.delete(root=root_it, key=k)
             root_rec = tree.recursive_delete(root=root_rec, key=k)
             _invariants(root_it)

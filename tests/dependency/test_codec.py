@@ -5,20 +5,7 @@ import pytest
 
 import oblivlib
 from oblivlib.dependency import AVLData, BPlusData, Data
-from oblivlib.dependency.codec import DefaultCodec, NodeCodec
-
-
-def _through_msgpack(fields: list) -> list:
-    return msgpack.unpackb(msgpack.packb(fields))
-
-
-def test_default_codec_round_trips_through_msgpack():
-    block = Data(key=3, leaf=7, value=b"v")
-    codec = DefaultCodec(max_block_bytes=64)
-
-    assert codec.pack(block) == [3, 7, b"v"]
-    assert codec.unpack(_through_msgpack(codec.pack(block))) == block
-
+from oblivlib.dependency.codec import NodeCodec
 
 _NODE_CASES = [
     pytest.param(
@@ -44,7 +31,7 @@ def test_node_codec_round_trips_without_mutating(value_cls, value, expected):
     block = Data(key=b"k", leaf=4, value=value)
     codec = NodeCodec(max_block_bytes=256, value_cls=value_cls)
 
-    loaded = codec.unpack(_through_msgpack(codec.pack(block)))
+    loaded = codec.unpack(msgpack.unpackb(msgpack.packb(codec.pack(block))))
 
     assert block.value is value
     assert loaded == Data(key=b"k", leaf=4, value=expected)

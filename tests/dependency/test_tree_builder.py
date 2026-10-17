@@ -40,6 +40,11 @@ def test_build_places_blocks_deepest_first_and_reports_overflow(mode, tmp_path):
         assert {len(row) for row in _rows(result.image)} == {cipher.row_bytes}
 
 
+def test_build_file_needs_fixed_size_rows(tmp_path):
+    with pytest.raises(ValueError, match="fixed-size"):
+        build_tree([], level=2, bucket_size=1, cipher=make_path_cipher(_CODEC, None, 1), build_file=tmp_path / "b")
+
+
 def test_three_handovers_produce_identical_server_state(tmp_path, handover_client):
     cipher = make_path_cipher(_CODEC, AesGcm(), bucket_size=2)
     blocks = [Data(key=key, leaf=key % 8, value=bytes([key]) * 4) for key in range(12)]

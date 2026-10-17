@@ -102,7 +102,7 @@ class TestBPlusTree:
                 root_rec = tree.insert(root=root_rec, kv_pair=KVPair(key=k, value=k))
 
             random.Random(order).shuffle(keys)
-            for k in keys:
+            for k in [-1, *keys, -1]:
                 root_it = tree.delete(root=root_it, key=k)
                 root_rec = tree.recursive_delete(root=root_rec, key=k)
                 if root_it is not None:

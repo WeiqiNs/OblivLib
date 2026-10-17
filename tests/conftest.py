@@ -17,7 +17,7 @@ from oblivlib.dependency import (
     StorageServer,
     TransportBackend,
 )
-from oblivlib.dependency.protocol import Batch, ReadPath, Reply, Request, WritePath, WriteRange
+from oblivlib.dependency.protocol import Batch, ReadPath, Reply, Request, WritePath
 from oblivlib.oram import freecursive_oram
 
 DEFAULT_NUM_DATA = 2**12
@@ -26,16 +26,15 @@ AccessShape = tuple[dict[str, frozenset[int]], dict[str, tuple[int, ...]]]
 
 
 class RecordingBackend(Backend):
-    """Delegates to ``inner`` and records every ``Batch`` and ``WriteRange`` it forwards."""
+    """Delegates to ``inner`` and records every message it forwards."""
 
     def __init__(self, inner: Backend):
         self._inner = inner
-        self.messages: list[Batch | WriteRange] = []
+        self.messages: list[Request] = []
 
     @override
     def call(self, message: Request) -> Reply:
-        if isinstance(message, Batch | WriteRange):
-            self.messages.append(message)
+        self.messages.append(message)
         return self._inner.call(message)
 
     @property

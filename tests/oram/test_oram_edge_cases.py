@@ -94,31 +94,6 @@ def test_da_oram_reset_block_left_in_pos_map_stash(monkeypatch, client):
         model[key] = b"%d" % step
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"num_data": 0, "data_size": 10},
-        {"num_data": 16, "data_size": 0},
-        {"num_data": 16, "data_size": 10, "bucket_size": 0},
-        {"num_data": 16, "data_size": 10, "stash_scale": 0},
-    ],
-)
-def test_config_rejects_invalid_numeric_fields(kwargs):
-    with pytest.raises(ValueError):
-        PathOramConfig(**kwargs)
-
-
-def test_config_rejects_plaintext_build_file(test_file):
-    with pytest.raises(ValueError, match="build_file requires an encryptor"):
-        PathOramConfig(num_data=16, data_size=10, build_file=test_file)
-
-
-@pytest.mark.parametrize("reset_prob", [0.0, -0.1, 1.5])
-def test_freecursive_config_rejects_bad_reset_prob(reset_prob):
-    with pytest.raises(ValueError):
-        FreecursiveOramConfig(num_data=64, data_size=10, reset_prob=reset_prob)
-
-
 def test_write_returns_old_value_and_empty_bytes_is_writable(make_oram, client):
     oram = make_oram(num_data=64, data_size=10, client=client)
     oram.init_server_storage()

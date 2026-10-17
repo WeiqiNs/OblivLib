@@ -7,8 +7,6 @@ def max_bucket_load(num_bins: int, security_bits: int = 128) -> int:
 
 
 def lambert_w(x: float, tol: float = 1e-10, max_iter: int = 100) -> float:
-    if x == 0:
-        return 0.0
     if x < -math.exp(-1):
         raise ValueError("lambert_w(x) is not defined for x < -1/e.")
 

@@ -15,22 +15,14 @@ class Encryptor(ABC):
     storage sizes its fixed rows from it, and a longer ciphertext is rejected.
     """
 
-    @property
     @abstractmethod
-    def key(self) -> bytes:
-        pass
+    def ciphertext_length(self, plaintext_length: int) -> int: ...
 
     @abstractmethod
-    def ciphertext_length(self, plaintext_length: int) -> int:
-        pass
+    def enc(self, plaintext: bytes) -> bytes: ...
 
     @abstractmethod
-    def enc(self, plaintext: bytes) -> bytes:
-        pass
-
-    @abstractmethod
-    def dec(self, ciphertext: bytes) -> bytes:
-        pass
+    def dec(self, ciphertext: bytes) -> bytes: ...
 
 
 class AesGcm(Encryptor):
@@ -45,13 +37,7 @@ class AesGcm(Encryptor):
         if key_byte_length not in [16, 24, 32]:
             raise ValueError("The AES key length must be 16, 24, or 32 bytes.")
 
-        self._key = os.urandom(key_byte_length) if key is None else key
-        self._aes_gcm = AESGCM(self._key)
-
-    @property
-    @override
-    def key(self) -> bytes:
-        return self._key
+        self._aes_gcm = AESGCM(os.urandom(key_byte_length) if key is None else key)
 
     @override
     def ciphertext_length(self, plaintext_length: int) -> int:
@@ -73,18 +59,11 @@ class AesGcm(Encryptor):
 
 
 class PseudoRandomFunction(ABC):
-    @property
     @abstractmethod
-    def key(self) -> bytes:
-        pass
+    def digest(self, message: bytes) -> bytes: ...
 
     @abstractmethod
-    def digest(self, message: bytes) -> bytes:
-        pass
-
-    @abstractmethod
-    def digest_mod_n(self, message: bytes, mod: int) -> int:
-        pass
+    def digest_mod_n(self, message: bytes, mod: int) -> int: ...
 
 
 class Blake2Prf(PseudoRandomFunction):
@@ -101,7 +80,6 @@ class Blake2Prf(PseudoRandomFunction):
         self._key = os.urandom(self.KEY_SIZE) if key is None else key
 
     @property
-    @override
     def key(self) -> bytes:
         return self._key
 
@@ -128,23 +106,11 @@ def hash_data_to_map(
 
 
 class PseudoRandomPermutation(ABC):
-    @property
     @abstractmethod
-    def key(self) -> bytes:
-        pass
-
-    @property
-    @abstractmethod
-    def domain_size(self) -> int:
-        pass
+    def permute(self, x: int) -> int: ...
 
     @abstractmethod
-    def permute(self, x: int) -> int:
-        pass
-
-    @abstractmethod
-    def inverse(self, y: int) -> int:
-        pass
+    def inverse(self, y: int) -> int: ...
 
 
 class FeistelPrp(PseudoRandomPermutation):
@@ -159,7 +125,6 @@ class FeistelPrp(PseudoRandomPermutation):
         if key is not None and len(key) < self.KEY_SIZE:
             raise ValueError(f"Key should be at least {self.KEY_SIZE} bytes.")
 
-        self._key = os.urandom(self.KEY_SIZE) if key is None else key
         self._domain_size = domain_size
 
         raw_bits = (domain_size - 1).bit_length()
@@ -168,18 +133,8 @@ class FeistelPrp(PseudoRandomPermutation):
         self._half = self._bit_length // 2
         self._half_mask = (1 << self._half) - 1
         self._full_mask = (1 << self._bit_length) - 1
-        self._base_hash = hashlib.sha256(self._key)
+        self._base_hash = hashlib.sha256(os.urandom(self.KEY_SIZE) if key is None else key)
         self._round_bytes = [r.to_bytes(1, "big") for r in range(self.NUM_ROUNDS)]
-
-    @property
-    @override
-    def key(self) -> bytes:
-        return self._key
-
-    @property
-    @override
-    def domain_size(self) -> int:
-        return self._domain_size
 
     def _round_function(self, round_num: int, value: int, output_bits: int) -> int:
         value_bytes = value.to_bytes((value.bit_length() + 7) // 8 or 1, "big")
