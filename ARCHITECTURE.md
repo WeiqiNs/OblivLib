@@ -44,21 +44,25 @@ until it has answered a `Shutdown`. A client is not thread-safe: use one per thr
 
 Every message is a frozen, slotted dataclass in `protocol.py`, framed as the msgpack array
 `[ClassName, *fields in declaration order]`; nested ops are framed the same way. Fields hold only ints,
-str, bytes, None, lists, and nested ops. Decoding (`decode_request`, `decode_reply`) is the trust
-boundary: it checks the tag against the direction's union, the arity, and every field's type against
-the dataclass annotations (an int never accepts a bool), and raises `ProtocolError` for anything else,
-including a pickle payload. Nothing is ever unpickled. The message set is the `Request`, `Reply`,
-`WriteOp`, and `ReadOp` unions in `protocol.py`; read those for the current members. `PROTOCOL_VERSION`
-is checked by `Hello`.
+str, bytes, None, lists, and nested ops. Both ends are this library (research code, trusted peers), so
+decoding (`decode_request`, `decode_reply`) only rebuilds the dataclasses: a list whose first element
+is a string is a tagged message, an unknown tag or a wrong field count raises, and field types are not
+checked. No field is a list of strings, which keeps that rule unambiguous. `decode_request` also
+rejects anything that is not a `Request` (a reply, a nested op, a bare value), and `handle_wire` turns
+any decode failure into an `ErrorReply`, so only requests reach `_dispatch`, which answers `Ok()` for
+every request it does not otherwise answer. Nothing is ever unpickled. The message set is the
+`Request`, `Reply`, `WriteOp`, and `ReadOp` unions in `protocol.py`; read those for the current members.
+`PROTOCOL_VERSION` is checked by `Hello`.
 
 ### Sessions and store lifecycle
 
 Every request except `Hello` and `Shutdown` carries its session first. The client sends `Hello` lazily,
-on its first request; the reply carries the session id (`secrets.token_hex(16)`) and the server's
-`max_message_bytes`. Labels are namespaced per session. `CreateTree(level, row_bytes)` makes a tree of
-`2**level - 1` rows: fixed-size rows when `row_bytes` is an int, variable-size (plaintext) rows when it
-is `None`, which a disk-backed server refuses. `Resize` grows or shrinks a tree in place, refusing to
-drop a present row (`ScaleDownError`). `WriteRange(start, rows)` writes consecutive rows (bulk
+on its first request; the reply carries the session id (`secrets.token_hex(16)`). Labels are namespaced
+per session. `CreateTree(level, row_bytes)` makes a tree of `2**level - 1` rows: fixed-size rows when
+`row_bytes` is an int, variable-size (plaintext) rows when it is `None`, which a disk-backed server
+refuses. `Resize` grows or shrinks a tree in place, refusing to
+drop a present row (`ScaleDownError`); `Client.resize` refuses while reads of that label are staged,
+since they name leaves of the old level. `WriteRange(start, rows)` writes consecutive rows (bulk
 hosting). `Close` releases the session and deletes its files; `StorageServer.close()` closes every
 session. A disk server keeps a tree at `storage_dir/<session>/<label as hex>.tree` and reads and writes
 it with `os.pread`/`os.pwrite`.
@@ -101,19 +105,19 @@ A failure comes back as `ErrorReply(kind, message)`; `handle` never raises. `ERR
 `StorageError` and anything unexpected to `ServerError`; `expect_reply` raises the mapped class and
 turns an unknown kind or the wrong reply type into `ProtocolError`. `Client.execute()` raises;
 `ExecuteResult` holds only results, and `require(label)` raises `MissingResultError` for a label with
-no result. A timeout or disconnect raises `TransportError`; `ZmqTransport` then recreates its `REQ`
-socket so it stays usable, and never resends the lost request.
+no result. A request with no reply within `DEFAULT_TIMEOUT_MS` (`transport.py`) raises
+`TransportError`; the `REQ` socket is then unusable (any later request, including `close()`'s, raises
+`TransportError` at once) and nothing is resent, so start a new client.
 
 ### Limits and metrics
 
-`DEFAULT_MAX_MESSAGE_BYTES`, `WRITE_RANGE_CHUNK_BYTES`, and `DEFAULT_TIMEOUT_MS` live in
-`protocol.py`. `handle_wire` answers an oversized message with `ErrorReply(ProtocolError)`, so a `REQ`
-peer never hangs, and the client chunks `WriteRange` by bytes at
-`min(WRITE_RANGE_CHUNK_BYTES, max_message_bytes // 2)`. `client.metrics` counts `rounds` (batches sent, empty ones
-included), `payload_bytes` (row and list-value bytes written and read, `WriteRange` included), and
-`wire_bytes` (encoded request and reply bytes, counted by `TransportBackend`; zero in process). Local
-and loopback clients report identical rounds and payload. `SimulatedNetwork` wraps a transport and
-accumulates modeled time, a round-trip time plus bytes over bandwidth per request, without sleeping.
+There is no message-size limit. The client streams a tree in `WriteRange` chunks of at most
+`WRITE_RANGE_CHUNK_BYTES` (`client.py`) so no single message holds the whole tree. `client.metrics`
+counts `rounds` (batches sent, empty ones included), `payload_bytes` (row and list-value bytes written
+and read, `WriteRange` included), and `wire_bytes` (encoded request and reply bytes, counted by
+`TransportBackend`; zero in process). Local and loopback clients report identical rounds and payload.
+`SimulatedNetwork` wraps a transport and accumulates modeled time, a round-trip time plus bytes over
+bandwidth per request, without sleeping.
 
 ### Hosting a built tree
 
@@ -121,10 +125,12 @@ accumulates modeled time, a round-trip time plus bytes over bandwidth per reques
 created and streamed with `WriteRange`. A `FileImage` already has the server's on-disk format, so it
 can move without re-encryption: placed out of band by the client's `ship_file` (which returns its name
 inside the server's storage directory) and then attached, adopted in place when the backend exposes the
-server's `storage_dir` (the file is moved there and attached), or else streamed row by row. The local
-build file is gone afterwards in every case. `AttachTree` accepts only a plain file name directly in
+server's `storage_dir` (the file is moved there and attached), or else streamed row by row. A
+successful hand-over leaves no local build file. `AttachTree` accepts only a plain file name directly in
 `storage_dir` (no separators, no `..`, not absolute), requires the exact size, and moves the file into
-the session's directory; an in-memory server refuses it.
+the session's directory; an in-memory server refuses it. A failed hand-over or attach leaves the file
+where it was; it holds only sealed rows, and a file shipped into `storage_dir` can be attached again
+by the name `ship_file` returned (an adopted file keeps its generated `adopt-*.tree` name).
 
 ---
 
@@ -192,6 +198,7 @@ bucket on its leaf's path and seals every bucket. Without a `build_file` the res
 `heap_index.compute_level`). With one it is a `FileImage` in the server's format: the file is truncated,
 every row pre-sealed empty, and each placement reads, opens, appends, seals, and writes its row in
 place, so the file never holds plaintext. Blocks whose whole path is full come back as `overflow`.
+A failed build leaves its partial `build_file`, which holds only sealed rows.
 
 `TreeStorageBase._build_tree` is the one construction path: it builds with the scheme's cipher and
 `build_file`, puts the overflow in the stash (as in Path ORAM), and checks the stash. Blocks stream in:

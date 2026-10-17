@@ -60,7 +60,7 @@ def _row(tag: int) -> bytes:
 
 def test_hello_opens_sessions_and_checks_version(server):
     reply = expect_reply(server.handle(Hello(version=1)), HelloReply)
-    assert len(reply.session) == 32 and reply.max_message_bytes == server.max_message_bytes
+    assert len(reply.session) == 32
 
     with pytest.raises(ProtocolError, match="version 2"):
         expect_reply(server.handle(Hello(version=2)), HelloReply)

@@ -12,6 +12,7 @@ from oblivlib.dependency import (
     StorageServer,
     UnknownLabelError,
 )
+from oblivlib.dependency import client as client_module
 from oblivlib.dependency.protocol import WriteRange
 from oblivlib.dependency.tree_builder import MemoryImage
 
@@ -123,9 +124,10 @@ def test_deferred_write_error_surfaces_on_next_call():
         assert client.execute().require("t") == {0: _row(1), 1: _row(2)}
 
 
-def test_host_tree_streams_byte_bounded_chunks(recorded_client):
+def test_host_tree_streams_byte_bounded_chunks(recorded_client, monkeypatch):
+    monkeypatch.setattr(client_module, "WRITE_RANGE_CHUNK_BYTES", 2048)
     rows = [bytes([i + 1]) * 100 for i in range(100)]
-    client, recorder = recorded_client(server=StorageServer(max_message_bytes=4096))
+    client, recorder = recorded_client()
     client.host_tree("t", MemoryImage(level=7, row_bytes=100, rows=rows))
 
     chunks = [message for message in recorder.messages if isinstance(message, WriteRange)]
@@ -134,6 +136,19 @@ def test_host_tree_streams_byte_bounded_chunks(recorded_client):
     stored = client.execute().require("t")
     assert [stored[i] for i in range(100)] == rows
     assert stored[100] == b""
+
+
+def test_resize_refuses_while_reads_are_staged():
+    with Client.local() as client:
+        _tree(client)
+        client.add_read_path("t", [0])
+        with pytest.raises(ValueError, match="'t'"):
+            client.resize("t", level=4)
+        assert client.level_of("t") == 3
+
+        assert client.execute().require("t")[0] == _row(1)
+        client.resize("t", level=4)
+        assert client.level_of("t") == 4
 
 
 def test_sessions_namespace_labels():

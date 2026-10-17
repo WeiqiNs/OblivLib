@@ -7,7 +7,6 @@ from pathlib import Path
 from oblivlib.dependency.errors import DuplicateLabelError, ProtocolError, StorageError, UnknownLabelError
 from oblivlib.dependency.heap_index import path_indices
 from oblivlib.dependency.protocol import (
-    DEFAULT_MAX_MESSAGE_BYTES,
     PROTOCOL_VERSION,
     AttachTree,
     Batch,
@@ -15,7 +14,6 @@ from oblivlib.dependency.protocol import (
     Close,
     CreateList,
     CreateTree,
-    DropTree,
     Hello,
     HelloReply,
     ListOps,
@@ -61,13 +59,6 @@ class _Session:
 
     def tree_path(self, label: str) -> Path | None:
         return None if self.directory is None else self.directory / f"{label.encode().hex()}.tree"
-
-    def drop_tree(self, label: str) -> None:
-        self.require_tree(label).close()
-        del self.trees[label]
-        path = self.tree_path(label)
-        if path is not None:
-            path.unlink(missing_ok=True)
 
     def close(self) -> None:
         for tree in self.trees.values():
@@ -151,18 +142,13 @@ class StorageServer:
     an ``ErrorReply``.
     """
 
-    def __init__(self, storage_dir: str | Path | None = None, *, max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES):
+    def __init__(self, storage_dir: str | Path | None = None):
         self._storage_dir = None if storage_dir is None else Path(storage_dir)
-        self._max_message_bytes = max_message_bytes
         self._sessions: dict[str, _Session] = {}
 
     @property
     def storage_dir(self) -> Path | None:
         return self._storage_dir
-
-    @property
-    def max_message_bytes(self) -> int:
-        return self._max_message_bytes
 
     def handle(self, message: Request) -> Reply:
         try:
@@ -190,7 +176,7 @@ class StorageServer:
         if directory is not None:
             directory.mkdir(parents=True)
         self._sessions[session_id] = _Session(directory=directory)
-        return HelloReply(session=session_id, max_message_bytes=self._max_message_bytes)
+        return HelloReply(session=session_id)
 
     def _create_tree(self, session: _Session, label: str, level: int, row_bytes: int | None) -> None:
         session.require_new_label(label)
@@ -258,8 +244,6 @@ class StorageServer:
                 session.lists[label] = ListStore()
             case AttachTree(session=session_id):
                 self._attach_tree(self._require_session(session_id), message)
-            case DropTree(session=session_id, label=label):
-                self._require_session(session_id).drop_tree(label)
             case Resize(session=session_id, label=label, level=level):
                 self._require_session(session_id).require_tree(label).resize(level)
             case WriteRange(session=session_id):

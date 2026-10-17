@@ -1,6 +1,3 @@
-import pickle
-
-import msgpack
 import pytest
 
 from oblivlib.dependency import (
@@ -20,7 +17,6 @@ from oblivlib.dependency.protocol import (
     Close,
     CreateList,
     CreateTree,
-    DropTree,
     ErrorReply,
     Hello,
     HelloReply,
@@ -47,7 +43,6 @@ def test_every_message_round_trips():
         CreateTree(session="s", label="t", level=3, row_bytes=None),
         CreateList(session="s", label="l"),
         AttachTree(session="s", label="t", filename="f.tree", level=2, row_bytes=8),
-        DropTree(session="s", label="t"),
         Resize(session="s", label="t", level=4),
         WriteRange(session="s", label="t", start=5, rows=[b"a", b""]),
         Batch(
@@ -67,7 +62,7 @@ def test_every_message_round_trips():
         Shutdown(),
     ]
     replies = [
-        HelloReply(session="s", max_message_bytes=1024),
+        HelloReply(session="s"),
         Ok(),
         BatchReply(results=[[b"r", b""], []]),
         ErrorReply(kind="RowSizeError", message="m"),
@@ -76,28 +71,6 @@ def test_every_message_round_trips():
         assert decode_request(encode(request)) == request
     for reply in replies:
         assert decode_reply(encode(reply)) == reply
-
-
-def test_decode_rejects_malformed_payloads():
-    valid = msgpack.packb(["CreateList", "s", "l"])
-    assert decode_request(valid) == CreateList(session="s", label="l")
-
-    cases = [
-        msgpack.packb(["NoSuchMessage", "s"]),
-        msgpack.packb(["CreateList", "s"]),
-        msgpack.packb(["CreateList", "s", "l", "extra"]),
-        msgpack.packb(["Resize", "s", "t", True]),
-        msgpack.packb(["WriteRange", "s", "t", 0, ["not bytes"]]),
-        msgpack.packb(["Batch", "s", [["ReadPath", "t", [0]]], []]),
-        msgpack.packb(["Batch", "s", [["ListOps", "l", [["ListWrite", -1, b"v"]]]], []]),
-        msgpack.packb(["Ok"]),
-        msgpack.packb({"tag": "CreateList"}),
-        pickle.dumps(("execute", {})),
-        valid[:-1],
-    ]
-    for payload in cases:
-        with pytest.raises(ProtocolError):
-            decode_request(payload)
 
 
 def test_error_replies_map_to_error_classes():

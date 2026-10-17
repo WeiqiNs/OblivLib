@@ -1,8 +1,6 @@
-import os
-import pickle
 import threading
-from typing import override
 
+import msgpack
 import pytest
 
 from oblivlib.dependency import (
@@ -11,6 +9,7 @@ from oblivlib.dependency import (
     LoopbackTransport,
     ProtocolError,
     RowSizeError,
+    ServerError,
     SimulatedNetwork,
     StorageServer,
     TransportBackend,
@@ -19,7 +18,7 @@ from oblivlib.dependency import (
     ZmqTransport,
     serve,
 )
-from oblivlib.dependency.protocol import ErrorReply, Hello, HelloReply, Ok, Shutdown, decode_reply, encode, expect_reply
+from oblivlib.dependency.protocol import Hello, Ok, Shutdown, decode_reply, encode, expect_reply
 from oblivlib.dependency.tree_builder import MemoryImage
 
 ROW = 4
@@ -52,6 +51,14 @@ def _shutdown(endpoint: str, thread: threading.Thread) -> None:
     assert not thread.is_alive()
 
 
+def test_non_requests_get_error_replies():
+    transport = LoopbackTransport(StorageServer())
+    with pytest.raises(ServerError, match="NoSuchMessage"):
+        expect_reply(decode_reply(transport.request(msgpack.packb(["NoSuchMessage", "s"]))), Ok)
+    with pytest.raises(ProtocolError, match="expected a request, got Ok"):
+        expect_reply(decode_reply(transport.request(encode(Ok()))), Ok)
+
+
 def test_error_replies_raise_mapped_errors_over_zmq():
     listener = ZmqListener("tcp://127.0.0.1:*")
     thread = _serve_in_thread(listener, StorageServer())
@@ -76,38 +83,15 @@ def test_error_replies_raise_mapped_errors_over_zmq():
     listener.close()
 
 
-def test_timeout_raises_transport_error_then_recovers():
+def test_timeout_raises_transport_error():
     listener = ZmqListener("tcp://127.0.0.1:*")
     transport = ZmqTransport(listener.endpoint, timeout_ms=100)
     with pytest.raises(TransportError, match="within 100 ms"):
         transport.request(encode(Hello(version=1)))
-
-    thread = _serve_in_thread(listener, StorageServer())
-    assert isinstance(decode_reply(transport.request(encode(Hello(version=1)))), HelloReply)
+    with pytest.raises(TransportError, match="failed"):
+        transport.request(encode(Hello(version=1)))
     transport.close()
-    _shutdown(listener.endpoint, thread)
     listener.close()
-
-
-class _MakesDirectoryOnUnpickle:
-    def __init__(self, path: str):
-        self._path = path
-
-    @override
-    def __reduce__(self):
-        return (os.mkdir, (self._path,))
-
-
-def test_server_never_unpickles_and_bounds_message_size(tmp_path):
-    marker = tmp_path / "unpickled"
-    transport = LoopbackTransport(StorageServer(max_message_bytes=64))
-
-    reply = decode_reply(transport.request(pickle.dumps(_MakesDirectoryOnUnpickle(str(marker)))))
-    assert isinstance(reply, ErrorReply) and reply.kind == "ProtocolError"
-    assert not marker.exists()
-
-    with pytest.raises(ProtocolError, match="exceeds the 64-byte limit"):
-        expect_reply(decode_reply(transport.request(encode(Hello(version=1)) + bytes(64))), HelloReply)
 
 
 def test_simulated_network_models_rtt_and_bandwidth():

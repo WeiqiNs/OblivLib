@@ -10,17 +10,13 @@ from typing import Any, Self, override
 from oblivlib.dependency.errors import MissingResultError, UnknownLabelError
 from oblivlib.dependency.heap_index import leaf_index, path_indices
 from oblivlib.dependency.protocol import (
-    DEFAULT_MAX_MESSAGE_BYTES,
-    DEFAULT_TIMEOUT_MS,
     PROTOCOL_VERSION,
-    WRITE_RANGE_CHUNK_BYTES,
     AttachTree,
     Batch,
     BatchReply,
     Close,
     CreateList,
     CreateTree,
-    DropTree,
     Hello,
     HelloReply,
     ListOps,
@@ -39,9 +35,11 @@ from oblivlib.dependency.protocol import (
     expect_reply,
 )
 from oblivlib.dependency.storage_server import StorageServer
-from oblivlib.dependency.transport import Transport, ZmqTransport
+from oblivlib.dependency.transport import DEFAULT_TIMEOUT_MS, Transport, ZmqTransport
 from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage
 from oblivlib.dependency.types import ListOp, ListPopBack, PathRows
+
+WRITE_RANGE_CHUNK_BYTES = 32 * 2**20
 
 
 @dataclass(frozen=True)
@@ -164,7 +162,8 @@ class Client:
 
     ``host_tree`` hands a built tree to the server: a file image is adopted in place when the server's
     storage directory is local, placed out of band by ``ship_file`` (which returns its name inside the
-    server's storage directory) and attached, or else streamed; the local build file is gone afterwards.
+    server's storage directory) and attached, or else streamed; a successful hand-over leaves no local build
+    file.
 
     A client is not thread-safe: use one per thread.
     """
@@ -181,7 +180,6 @@ class Client:
         self._ship_file = ship_file
 
         self._session: str | None = None
-        self._max_message_bytes = DEFAULT_MAX_MESSAGE_BYTES
         self._levels: dict[str, int] = {}
         self._lists: set[str] = set()
 
@@ -287,13 +285,9 @@ class Client:
         self._expect_ok(CreateList(session=self._require_session(), label=label))
         self._lists.add(label)
 
-    def drop_tree(self, label: str) -> None:
-        self.flush()
-        self.level_of(label)
-        self._expect_ok(DropTree(session=self._require_session(), label=label))
-        del self._levels[label]
-
     def resize(self, label: str, *, level: int) -> None:
+        if label in self._read_paths:
+            raise ValueError(f"Client: cannot resize {label!r} while reads of it are staged.")
         self.flush()
         self.level_of(label)
         self._expect_ok(Resize(session=self._require_session(), label=label, level=level))
@@ -314,9 +308,7 @@ class Client:
 
     def _require_session(self) -> str:
         if self._session is None:
-            reply = expect_reply(self._backend.call(Hello(version=PROTOCOL_VERSION)), HelloReply)
-            self._session = reply.session
-            self._max_message_bytes = reply.max_message_bytes
+            self._session = expect_reply(self._backend.call(Hello(version=PROTOCOL_VERSION)), HelloReply).session
         return self._session
 
     def _expect_ok(self, message: Request) -> None:
@@ -350,12 +342,11 @@ class Client:
         return filename
 
     def _stream_rows(self, label: str, rows: Iterable[bytes]) -> None:
-        chunk_bytes = min(WRITE_RANGE_CHUNK_BYTES, self._max_message_bytes // 2)
         start = 0
         chunk: list[bytes] = []
         size = 0
         for row in rows:
-            if chunk and size + len(row) > chunk_bytes:
+            if chunk and size + len(row) > WRITE_RANGE_CHUNK_BYTES:
                 self._write_range(label, start, chunk)
                 start += len(chunk)
                 chunk, size = [], 0

@@ -3,9 +3,11 @@ from typing import override
 
 import zmq
 
-from oblivlib.dependency.errors import ProtocolError, TransportError
-from oblivlib.dependency.protocol import DEFAULT_TIMEOUT_MS, Shutdown, decode_request, encode, error_reply
+from oblivlib.dependency.errors import TransportError
+from oblivlib.dependency.protocol import Shutdown, decode_request, encode, error_reply
 from oblivlib.dependency.storage_server import StorageServer
+
+DEFAULT_TIMEOUT_MS = 30_000
 
 
 class Transport(ABC):
@@ -20,12 +22,9 @@ class Transport(ABC):
 
 def handle_wire(server: StorageServer, data: bytes) -> tuple[bytes, bool]:
     """Answer one encoded request; the flag is whether it was a ``Shutdown``. Never raises on bad input."""
-    if len(data) > server.max_message_bytes:
-        error = ProtocolError(f"message of {len(data)} bytes exceeds the {server.max_message_bytes}-byte limit.")
-        return encode(error_reply(error)), False
     try:
         message = decode_request(data)
-    except ProtocolError as exc:
+    except Exception as exc:
         return encode(error_reply(exc)), False
     return encode(server.handle(message)), isinstance(message, Shutdown)
 
@@ -45,34 +44,27 @@ class LoopbackTransport(Transport):
 
 class ZmqTransport(Transport):
     """A ZeroMQ ``REQ`` socket. A request that gets no reply within ``timeout_ms`` raises
-    ``TransportError`` and recreates the socket, so the transport stays usable."""
+    ``TransportError``; the socket is then unusable (later requests raise ``TransportError`` at once), so
+    start a new client."""
 
     def __init__(self, endpoint: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS):
         self._endpoint = endpoint
         self._timeout_ms = timeout_ms
         self._context = zmq.Context()
-        self._socket = self._connect()
-
-    def _connect(self) -> zmq.Socket[bytes]:
-        socket = self._context.socket(zmq.REQ)
-        socket.setsockopt(zmq.RCVTIMEO, self._timeout_ms)
-        socket.setsockopt(zmq.SNDTIMEO, self._timeout_ms)
-        socket.setsockopt(zmq.LINGER, 0)
-        socket.connect(self._endpoint)
-        return socket
+        self._socket = self._context.socket(zmq.REQ)
+        self._socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
+        self._socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
+        self._socket.setsockopt(zmq.LINGER, 0)
+        self._socket.connect(endpoint)
 
     @override
     def request(self, data: bytes) -> bytes:
         try:
             self._socket.send(data)
             return self._socket.recv()
+        except zmq.Again as exc:
+            raise TransportError(f"ZmqTransport: no reply from {self._endpoint} within {self._timeout_ms} ms.") from exc
         except zmq.ZMQError as exc:
-            self._socket.close()
-            self._socket = self._connect()
-            if isinstance(exc, zmq.Again):
-                raise TransportError(
-                    f"ZmqTransport: no reply from {self._endpoint} within {self._timeout_ms} ms."
-                ) from exc
             raise TransportError(f"ZmqTransport: request to {self._endpoint} failed: {exc}") from exc
 
     @override
