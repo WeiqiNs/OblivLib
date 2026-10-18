@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,17 +23,9 @@ class BPlusTreeNode:
         self.is_leaf: bool = True
 
     def add_kv_pair(self, kv_pair: KVPair):
-        key, value = kv_pair.key, kv_pair.value
-
-        if self.keys:
-            for index, each_key in enumerate(self.keys):
-                if key < each_key:
-                    self.keys = self.keys[:index] + [key] + self.keys[index:]
-                    self.values = self.values[:index] + [value] + self.values[index:]
-                    return
-
-        self.keys.append(key)
-        self.values.append(value)
+        index = bisect_right(self.keys, kv_pair.key)
+        self.keys.insert(index, kv_pair.key)
+        self.values.insert(index, kv_pair.value)
 
 
 class BPlusTree:
@@ -115,15 +108,9 @@ class BPlusTree:
         insert_key = child_node.keys[self._mid]
         right_node = self._split_node(node=child_node)
 
-        for index, each_key in enumerate(parent_node.keys):
-            if insert_key < each_key:
-                parent_node.keys = parent_node.keys[:index] + [insert_key] + parent_node.keys[index:]
-                parent_node.values = parent_node.values[: index + 1] + [right_node] + parent_node.values[index + 1 :]
-                return
-            elif index + 1 == len(parent_node.keys):
-                parent_node.keys.append(insert_key)
-                parent_node.values.append(right_node)
-                return
+        index = bisect_right(parent_node.keys, insert_key)
+        parent_node.keys.insert(index, insert_key)
+        parent_node.values.insert(index + 1, right_node)
 
     def _create_parent(self, child_node: BPlusTreeNode) -> BPlusTreeNode:
         insert_key = child_node.keys[self._mid]
@@ -141,7 +128,7 @@ class BPlusTree:
         leaves[-1].add_kv_pair(kv_pair=kv_pair)
 
         index = len(leaves) - 1
-        while index >= 0:
+        while True:
             if len(leaves[index].keys) >= self._order:
                 if index > 0:
                     self._insert_in_parent(child_node=leaves[index], parent_node=leaves[index - 1])
@@ -211,7 +198,7 @@ class BPlusTree:
         leaves[-1].add_kv_pair(kv_pair=kv_pair)
 
         index = len(leaves) - 1
-        while index >= 0:
+        while True:
             if len(leaves[index].keys) >= self._order:
                 if index > 0:
                     self._split_and_promote_local(child=leaves[index], parent=leaves[index - 1], local=local)

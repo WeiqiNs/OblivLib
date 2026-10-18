@@ -362,25 +362,28 @@ class Client:
     def _has_pending_writes(self) -> bool:
         return bool(self._write_paths or self._write_lists)
 
+    def _write_path_op(self, label: str, data: PathRows) -> WritePath:
+        level = self._levels[label]
+        leaves = _path_leaves(data, level)
+        return WritePath(label=label, leaves=leaves, rows=[data[i] for i in path_indices(leaves, level)])
+
     def _take_writes(self) -> list[WriteOp]:
-        writes: list[WriteOp] = []
-        for label, data in self._write_paths.items():
-            level = self._levels[label]
-            leaves = _path_leaves(data, level)
-            writes.append(WritePath(label=label, leaves=leaves, rows=[data[i] for i in path_indices(leaves, level)]))
-        writes.extend(ListOps(label=label, ops=ops) for label, ops in self._write_lists.items())
+        writes: list[WriteOp] = [
+            *(self._write_path_op(label, data) for label, data in self._write_paths.items()),
+            *(ListOps(label=label, ops=ops) for label, ops in self._write_lists.items()),
+        ]
         self._write_paths = {}
         self._write_lists = {}
         return writes
 
     def _take_reads(self) -> list[ReadOp]:
         reads: list[ReadOp] = [
-            ReadPath(label=label, leaves=sorted(leaves)) for label, leaves in self._read_paths.items()
+            *(ReadPath(label=label, leaves=sorted(leaves)) for label, leaves in self._read_paths.items()),
+            *(
+                ReadList(label=label, indices=None if indices is None else sorted(indices))
+                for label, indices in self._read_lists.items()
+            ),
         ]
-        reads.extend(
-            ReadList(label=label, indices=None if indices is None else sorted(indices))
-            for label, indices in self._read_lists.items()
-        )
         self._read_paths = {}
         self._read_lists = {}
         return reads

@@ -19,6 +19,7 @@ from oblivlib.dependency.protocol import (
     ListOps,
     Ok,
     ReadList,
+    ReadOp,
     ReadPath,
     Reply,
     Request,
@@ -121,15 +122,16 @@ def _apply_batch(session: _Session, batch: Batch) -> BatchReply:
                 for list_op in ops:
                     session.lists[label].apply(list_op)
 
-    results: list[list[bytes]] = []
-    for op in batch.reads:
-        match op:
-            case ReadPath(label=label, leaves=leaves):
-                tree = session.trees[label]
-                results.append(tree.read_rows(path_indices(leaves, tree.level)))
-            case ReadList(label=label, indices=indices):
-                results.append(session.lists[label].read(indices))
-    return BatchReply(results=results)
+    return BatchReply(results=[_answer_read(session, op) for op in batch.reads])
+
+
+def _answer_read(session: _Session, op: ReadOp) -> list[bytes]:
+    match op:
+        case ReadPath(label=label, leaves=leaves):
+            tree = session.trees[label]
+            return tree.read_rows(path_indices(leaves, tree.level))
+        case ReadList(label=label, indices=indices):
+            return session.lists[label].read(indices)
 
 
 class StorageServer:

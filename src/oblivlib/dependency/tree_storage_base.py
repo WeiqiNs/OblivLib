@@ -90,23 +90,16 @@ class TreeStorageBase[ConfigT: OramConfig]:
         raise KeyError(f"Key {key} not found.")
 
     def _update_stash_leaf(self, key: int | None, new_leaf: int | None) -> None:
-        if key is None:
-            return
-
-        for data in self._stash:
-            if data.key == key:
-                data.leaf = new_leaf
-                return
-
-        raise KeyError(f"Key {key} not found.")
+        if key is not None:
+            self._require_in_stash(key).leaf = new_leaf
 
     def _evict_stash(self, leaves: list[int]) -> PathRows:
         path = empty_path(level=self._level, leaves=leaves)
-        remaining = []
-        for data in self._stash:
-            if not fill_data_to_path(data, path, leaves=leaves, level=self._level, bucket_size=self._bucket_size):
-                remaining.append(data)
-        self._stash = remaining
+        self._stash = [
+            data
+            for data in self._stash
+            if not fill_data_to_path(data, path, leaves=leaves, level=self._level, bucket_size=self._bucket_size)
+        ]
         return self._cipher.seal_path(path)
 
     @property

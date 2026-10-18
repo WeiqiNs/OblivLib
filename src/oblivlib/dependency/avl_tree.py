@@ -129,7 +129,7 @@ class AVLTree:
         stack = []
         node = root
 
-        while node:
+        while True:
             stack.append(node)
             if kv_pair.key < node.key:
                 if not node.left_node:
@@ -144,20 +144,17 @@ class AVLTree:
                     break
                 node = node.right_node
 
-        while stack:
+        while True:
             node = stack.pop()
             balanced_node = self._balance(node)
 
-            if stack:
-                parent = stack[-1]
-                if parent.left_node == node:
-                    parent.left_node = balanced_node
-                else:
-                    parent.right_node = balanced_node
-            else:
+            if not stack:
                 return balanced_node
-
-        raise ValueError("The node was not successfully inserted.")
+            parent = stack[-1]
+            if parent.left_node == node:
+                parent.left_node = balanced_node
+            else:
+                parent.right_node = balanced_node
 
     def recursive_insert(self, root: AVLTreeNode | None, kv_pair: KVPair) -> AVLTreeNode:
         if root is None:
@@ -194,7 +191,7 @@ class AVLTree:
 
         stack = []
         node = root
-        while node:
+        while True:
             if node not in local:
                 raise ValueError("multi_insert stepped onto an unfetched node; the batched paths were incomplete.")
             stack.append(node)
@@ -213,19 +210,16 @@ class AVLTree:
                     break
                 node = node.right_node
 
-        while stack:
+        while True:
             node = stack.pop()
             balanced_node = self._balance(node)
-            if stack:
-                parent = stack[-1]
-                if parent.left_node == node:
-                    parent.left_node = balanced_node
-                else:
-                    parent.right_node = balanced_node
-            else:
+            if not stack:
                 return balanced_node
-
-        raise ValueError("The node was not successfully inserted.")
+            parent = stack[-1]
+            if parent.left_node == node:
+                parent.left_node = balanced_node
+            else:
+                parent.right_node = balanced_node
 
     def multi_insert(self, root: AVLTreeNode | None, kv_pairs: list[KVPair]) -> AVLTreeNode | None:
         local = self._collect_insert_paths(root=root, keys=[kv_pair.key for kv_pair in kv_pairs])

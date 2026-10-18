@@ -18,18 +18,12 @@ def parent(index: int) -> int:
 
 
 def path_to_root(index: int) -> list[int]:
-    path = []
-    while index >= 0:
-        path.append(index)
-        index = parent(index)
-    return path
+    node = index + 1
+    return [(node >> shift) - 1 for shift in range(node.bit_length())]
 
 
 def path_indices(leaves: list[int], level: int) -> list[int]:
-    nodes: set[int] = set()
-    for leaf in leaves:
-        nodes.update(path_to_root(leaf_index(leaf, level)))
-    return sorted(nodes)
+    return sorted({index for leaf in leaves for index in path_to_root(leaf_index(leaf, level))})
 
 
 def leaf_lca(leaf_a: int, leaf_b: int, level: int) -> int:
