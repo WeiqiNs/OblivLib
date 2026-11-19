@@ -28,14 +28,12 @@ class GroupOmap(BaseOmap):
     def __init__(self, config: GroupOmapConfig, upper_oram: TreeBaseOram[Any, Any]):
         self._config: GroupOmapConfig = config
 
-        self._num_buckets = config.num_data
-
         self._upper_oram = upper_oram
 
         self._bucket_prf = Blake2Prf()
         self._leaf_prf = Blake2Prf()
 
-        self._upper_bound = self._bucket_upper_bound(self._num_buckets)
+        self._upper_bound = self._bucket_upper_bound(config.num_data)
 
         required = self.upper_oram_data_size(config.num_data, config.key_size)
         if self._upper_oram._data_size < required:
@@ -87,32 +85,20 @@ class GroupOmap(BaseOmap):
     def _data_size(self) -> int:
         return self._config.data_size
 
-    @property
-    def _bucket_size(self) -> int:
-        return self._config.bucket_size
-
-    @property
-    def _stash_scale(self) -> int:
-        return self._config.stash_scale
-
-    @property
-    def _encryptor(self):
-        return self._config.encryptor
-
     def _compute_path(self, seed: bytes, key: bytes) -> int:
-        return self._leaf_prf.digest_mod_n(message=seed + key, mod=self._num_data)
+        return self._leaf_prf.digest_mod_n(message=seed + key, mod=self._lower_oram._leaf_range)
 
     def _hash_key_to_bucket(self, key: bytes) -> int:
-        return self._bucket_prf.digest_mod_n(message=key, mod=self._num_buckets)
+        return self._bucket_prf.digest_mod_n(message=key, mod=self._num_data)
 
     @override
     def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
         require_omap_init(self._identity, data or [], key_size=self._key_size, data_size=self._data_size)
-        data_map = hash_data_to_map(prf=self._bucket_prf, data=data or [], map_size=self._num_buckets)
+        data_map = hash_data_to_map(prf=self._bucket_prf, data=data or [], map_size=self._num_data)
 
         upper_data: dict[int, bytes] = {}
         lower_blocks: list[Data] = []
-        for bucket_id in range(self._num_buckets):
+        for bucket_id in range(self._num_data):
             bucket_items = data_map.get(bucket_id, [])
             if len(bucket_items) > self._upper_bound:
                 raise MemoryError(

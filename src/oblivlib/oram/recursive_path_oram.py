@@ -3,7 +3,7 @@ from dataclasses import replace
 from functools import cached_property
 from typing import Any, override
 
-from oblivlib.dependency import Data, InitData, PathRows, PosMap
+from oblivlib.dependency import Data, InitData, PosMap
 from oblivlib.dependency.codec import packed_size
 from oblivlib.dependency.config import RecursiveOramConfig
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
@@ -30,30 +30,15 @@ class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
         self._host_tree(tree)
         return leaves
 
-    def _retrieve_pos_map_block(self, key: int, offset: int, new_leaf: int, value: int, path: PathRows) -> int:
-        self._absorb_path(path=path)
-        data = self._require_in_stash(key=key)
-        read_value = data.value[offset]
-        data.value[offset] = value
-        data.leaf = new_leaf
-        return read_value
-
     def _access_pos_map_level(
         self, cur_key: int, cur_index: int, cur_leaf: int, new_cur_leaf: int, new_next_leaf: int
     ) -> int:
-        self._client.add_read_path(label=self._name, leaves=[cur_leaf])
-        result = self._client.execute()
-        path_data = result.require(self._name)
-
-        next_leaf = self._retrieve_pos_map_block(
-            key=cur_key, offset=cur_index, path=path_data, new_leaf=new_cur_leaf, value=new_next_leaf
-        )
-
-        evicted_path = self._evict_stash(leaves=[cur_leaf])
-
-        self._client.add_write_path(label=self._name, data=evicted_path)
-        self._client.execute()
-
+        self._read_paths([cur_leaf])
+        data = self._require_in_stash(key=cur_key)
+        next_leaf = data.value[cur_index]
+        data.value[cur_index] = new_next_leaf
+        data.leaf = new_cur_leaf
+        self._write_paths([cur_leaf])
         return next_leaf
 
 

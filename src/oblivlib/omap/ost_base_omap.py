@@ -132,8 +132,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         assert leaf is not None
         self._move_node_to_local_without_eviction(key=key, leaf=leaf, parent_key=parent_key, child_index=child_index)
 
-        self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=[leaf]))
-        self._client.execute()
+        self._write_paths([leaf])
 
     def _move_node_to_local_without_eviction(
         self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
@@ -174,18 +173,8 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         for _ in range(num_round):
             leaf = self._get_new_leaf()
 
-            self._client.add_read_path(label=self._name, leaves=[leaf])
-            result = self._client.execute()
-            path = self._cipher.open_path(result.require(self._name))
-
-            for bucket in path.values():
-                for data in bucket:
-                    self._stash.append(data)
-
-            self._check_stash()
-
-            self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=[leaf]))
-            self._client.execute()
+            self._read_paths([leaf])
+            self._write_paths([leaf])
 
     def _short_circuit_read(self, key: Any, num_round: int) -> bool:
         if key is None or self.root is None:

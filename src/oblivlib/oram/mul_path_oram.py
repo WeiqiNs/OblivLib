@@ -64,8 +64,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
                 self._pos_map[key] = new_leaf
             key_leaf_map[key] = new_leaf
 
-        self._client.add_read_path(label=self._name, leaves=old_leaves)
-        self._absorb_path(path=self._client.execute().require(self._name))
+        self._read_paths(old_leaves)
         read_values: dict[Any, Any] = {}
         for key, value in key_value_map.items():
             data = self._require_in_stash(key=key)
@@ -95,9 +94,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
     def _insert_block(self, block: Data) -> None:
         self._require_no_pending()
         leaf = self._get_new_leaf()
-        self._client.add_read_path(label=self._name, leaves=[leaf])
-        self._absorb_path(self._client.execute().require(self._name))
+        self._read_paths([leaf])
         self._stash.append(block)
         self._check_stash()
-        self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=[leaf]))
-        self._client.execute()
+        self._write_paths([leaf])

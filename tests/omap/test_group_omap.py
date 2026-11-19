@@ -141,3 +141,12 @@ def test_full_bucket_insert_leaves_the_map_usable(client):
         assert omap.search(key) == value
     omap.insert(b"new0", b"x")
     assert omap.search(b"new0") == b"x"
+
+
+def test_lower_paths_cover_the_whole_leaf_range(client):
+    omap = _make_omap(client, n=100)
+    leaf_range = omap._lower_oram._leaf_range
+    leaves = {omap._compute_path(bytes([i % 256, i // 256]) * 16, b"key") for i in range(4000)}
+    assert leaf_range > 100
+    assert max(leaves) >= 100
+    assert leaves <= set(range(leaf_range))

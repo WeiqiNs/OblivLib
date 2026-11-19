@@ -51,7 +51,7 @@ def _make_omap(ods_kind, oram_kind, client, n=64):
 
 class TestOramOstOmapOracle:
     """Model oracle over ODS x ORAM: the composition must match a plain dict under interleaved
-    insert / search, including searches of keys whose hash bucket is still empty."""
+    insert / search / delete, including searches of keys whose hash bucket is still empty."""
 
     @pytest.mark.parametrize("ods_kind", ["avl", "avl_cached", "bplus", "bplus_cached"])
     @pytest.mark.parametrize("oram_kind", ["da", "path", "recursive"])
@@ -65,11 +65,13 @@ class TestOramOstOmapOracle:
         for _ in range(n * 4):
             key = rng.choice(keyspace)
             roll = rng.random()
-            if roll < 0.5:
+            if roll < 0.45:
                 if key not in model:
                     value = b"v%d" % rng.randint(0, 10**6)
                     omap.insert(key=key, value=value)
                     model[key] = value
+            elif roll < 0.6:
+                assert omap.delete(key=key) == model.pop(key, None)
             else:
                 assert omap.search(key=key) == model.get(key)
         for key in keyspace:

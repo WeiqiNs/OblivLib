@@ -12,7 +12,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Literal, get_args, override
 
 if TYPE_CHECKING:
     from oblivlib.dependency.client import Client
@@ -115,6 +115,14 @@ class CounterOramConfig(OramConfig):
     gc_length: int = 64
     prf_key: bytes | None = None
 
+    @property
+    def on_chip(self) -> int:
+        raise NotImplementedError
+
+    @property
+    def count_length(self) -> int:
+        raise NotImplementedError
+
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.num_ic < 1:
@@ -131,6 +139,16 @@ class DaOramConfig(CounterOramConfig):
 
     name: str = field(default_factory=unique_name("da"))
     on_chip_mem: int = 10
+
+    @property
+    @override
+    def on_chip(self) -> int:
+        return self.on_chip_mem
+
+    @property
+    @override
+    def count_length(self) -> int:
+        return self.gc_length + (self.ic_length + 1) * self.num_ic
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -157,6 +175,16 @@ class FreecursiveOramConfig(CounterOramConfig):
     on_chip_size: int = 10
     reset_method: ResetMethod = "prob"
     reset_prob: float | None = None
+
+    @property
+    @override
+    def on_chip(self) -> int:
+        return self.on_chip_size
+
+    @property
+    @override
+    def count_length(self) -> int:
+        return self.gc_length + self.ic_length * self.num_ic
 
     def __post_init__(self) -> None:
         super().__post_init__()

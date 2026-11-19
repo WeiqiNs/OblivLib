@@ -1,4 +1,3 @@
-import copy
 import math
 from collections.abc import Callable
 from functools import cached_property
@@ -401,23 +400,21 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
             if next_key is None:
                 break
 
-            node_to_return = copy.deepcopy(current)
-            node_to_return.leaf = child_leaf
-            child_leaf = self._get_new_leaf()
-            if go_right:
-                node_to_return.value.r_leaf = child_leaf
-            else:
-                node_to_return.value.l_leaf = child_leaf
-
-            self._stash.append(node_to_return)
-            self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=[old_child_path]))
-            self._client.execute()
-
             next_leaf = current.value.r_leaf if go_right else current.value.l_leaf
             assert next_leaf is not None
+            current.leaf = child_leaf
+            child_leaf = self._get_new_leaf()
+            if go_right:
+                current.value.r_leaf = child_leaf
+            else:
+                current.value.l_leaf = child_leaf
+
+            self._local.remove(current_key)
+            self._stash.append(current)
+            self._write_paths([old_child_path])
+
             self._move_node_to_local_without_eviction(key=next_key, leaf=next_leaf, parent_key=current_key)
             old_child_path = next_leaf
-            self._local.remove(current_key)
             current_key = next_key
             current = self._local.require(current_key)
 
@@ -425,12 +422,10 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if value is not None and current.key == key:
             current.value.value = value
 
-        node_to_return = copy.deepcopy(current)
-        node_to_return.leaf = child_leaf
-        self._stash.append(node_to_return)
+        current.leaf = child_leaf
         self._local.clear()
-        self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=[old_child_path]))
-        self._client.execute()
+        self._stash.append(current)
+        self._write_paths([old_child_path])
 
         self._pad_to(budget)
         return search_value

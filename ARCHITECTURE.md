@@ -267,6 +267,8 @@ which records the peak stash size in `_max_stash` and then raises `StashOverflow
 `MemoryError`, on overflow), the stash helpers (`_absorb_path`, `_require_in_stash`,
 `_update_stash_leaf`), tree construction and hosting
 (`_build_tree`, `_host_tree`), block-major eviction (`_evict_stash`, which returns sealed `PathRows`),
+the round helpers `_read_paths(leaves)` (stage, execute, absorb) and `_write_paths(leaves)` (evict,
+stage, execute) that every scheme's plain read and write-back go through,
 and the scheme's `PathCipher` (`_cipher`, built from its `_codec`; §3, §6). It lives in `dependency/` so
 both higher layers depend downward on it rather than on each other.
 
@@ -297,6 +299,8 @@ compose the two:
 Freecursive extends the template for its resets: chunks before the key's are read and written back in
 the hook (`_pass_reset_chunk`), the key's chunk is the pending read, and the chunks after it wait in
 `_pending_reset_chunks` until its `_write_back` override passes them after the key's own write-back.
+A counter update always returns reset chunks: a plain increment is one single-entry chunk for the
+child, so the level and the main ORAM share one walk (`_split_at_key`) with no separate no-reset branch.
 `MulPathOram`'s batch API uses the same pending paths: `_operate_on_keys_without_eviction` reads every
 key's path and records them, and `_eviction_for_mul_keys` applies updates and calls `_write_back`.
 
@@ -347,18 +351,22 @@ The on-chip and in-ORAM variants of the counter update, and the prob/hard varian
 duplicated rather than shared: they differ in obliviousness-critical details. The on-chip helpers
 (`_update_data_on_chip`, `_perform_reset_on_chip`, Freecursive's `_update_on_chip_data`) live on the main
 ORAM, and the stored-block helpers (`_update_data`, `_perform_reset`, `_update_data_prob_reset`,
-`_update_data_hard_reset`) on the level class. What both roles share lives on a per-scheme `Protocol`
-mixin, `DaCounterMixin` / `FreecursiveCounterMixin`: the counter layout (`_count_length`,
-`_zero_counter`), the PRF leaves (`_prf_leaf`, `_get_previous_leaf_from_prf`), and Freecursive's
-`_reset_prob` and `_get_reset_leaves`. The mixin only declares the attributes it reads (`_config`,
-`_prf`, `_last_oram_data`, `_last_oram_level`) and has no `__init__`, so the main ORAM and its level each
-list it after their `TreeStorageBase` base. A shared base deriving from `TreeStorageBase` would form a
-diamond with `TreeBaseOram`, which basedpyright's `reportUnsafeMultipleInheritance` rejects, and a plain
-mixin class with declared-but-unassigned attributes trips `reportUninitializedInstanceVariable`; a
-`Protocol` may declare them. Freecursive's `_unpack_reset_leaves` and `_pass_reset_chunk` are module
-functions both roles call. Reset state moves through
-`NamedTuple` records (`ResetLeaf`, `ProcessedData`, `ResetEntry`, `UnpackedReset`). `ResetLeaf`'s field
-is `offset` because a NamedTuple field cannot shadow `tuple.index`.
+`_update_data_hard_reset`) on the level class.
+
+Everything else lives once in `oram/counter_oram.py`. `CounterMixin` is a `Protocol` holding the
+counter widths, `_zero_counter`, and the PRF leaves (`_prf_leaf`, `_get_previous_leaf_from_prf`); the
+layout's total width is the config's `count_length`, and `on_chip` names the config's on-chip size
+(`on_chip_mem` / `on_chip_size`). `CounterPosMapLevel` (a `TreeStorageBase`) is the level constructor
+and `_build_and_host`. `CounterOram` (a `TreeBaseOram`) is the main ORAM's constructor, on-chip
+storage, `_initial_leaf`, `_make_levels` (through the scheme's `_new_level` factory), and
+`init_server_storage`. Freecursive adds `FreecursiveCounterMixin` for `_reset_prob`,
+`_get_reset_leaves`, and `_single_entry`. The mixins are `Protocol`s because they only declare the
+attributes they read (`_config`, `_prf`, `_last_oram_data`, `_last_oram_level`): a plain mixin with
+declared-but-unassigned attributes trips `reportUninitializedInstanceVariable`, and a shared base
+deriving from `TreeStorageBase` under both roles would form a diamond with `TreeBaseOram`, which
+`reportUnsafeMultipleInheritance` rejects. Reset state moves through `NamedTuple` records (`ResetLeaf`,
+`DaStep`, `ResetEntry`). `ResetLeaf`'s field is `offset` because a NamedTuple field cannot shadow
+`tuple.index`.
 
 ---
 
@@ -376,11 +384,13 @@ is `offset` because a NamedTuple field cannot shadow `tuple.index`.
 - **Composed maps.** `OramOstOmap` (VLDB 2025) hashes each key with a PRF into an ORAM slot that stores
   the root of that slot's ODS tree, as `msgpack([key, leaf])` (`b""` for an empty tree). An op fetches
   the root, runs the ODS op, and writes the root back. It works with any `TreeBaseOram` × `OstBaseOmap`,
-  and calls `update_mul_tree_height` so the ODS sizes its budgets for one small tree per slot. The ORAM
-  must be at least `OramOstOmap.oram_data_size(key_size)` wide; construction checks this.
+  and calls `update_mul_tree_height` so the ODS sizes its budgets for one small tree per slot. `search`,
+  `insert`, and `delete` share that fetch-run-write-back sequence (`_on_slot`). The ORAM must be at
+  least `OramOstOmap.oram_data_size(key_size)` wide; construction checks this.
 - **`GroupOmap`** hashes keys into buckets. An upper ORAM stores per-bucket metadata
   `msgpack([seed, keys])`, and a lower `MulPathOram` stores each value in a block **named by its key**,
-  on the path `PRF(seed ‖ key)`. A search reads every block of the key's bucket in one batch and
+  on the path `PRF(seed ‖ key) mod leaf_range` of the lower tree (not `num_data`, so search paths cover
+  the same range as an insert's uniformly random path). A search reads every block of the key's bucket in one batch and
   reshuffles them under a new seed. An insert stashes a new block on its path through
   `MulPathOram._insert_block`, which reads and evicts one uniformly random path, so the server sees the
   same single-path access as before. GroupOmap drives the lower ORAM through its underscore
@@ -422,7 +432,8 @@ then applies the same height bound. The AVL bound is safe but runs 1–2 levels 
 earlier ops without a server round, keep the visited path in `local` until the next op, and pad to
 `h` rounds (`2h` for AVL delete), never padding below zero when an op loaded more nodes. They are meant for use inside a larger oblivious composition.
 `BPlusOmapCached.delete` reads each level's child and sibling in one batched round (`h` rounds, same
-bandwidth as `2h−1` paths).
+bandwidth as `2h−1` paths). Both B+ deletes run one walk (`_find_path_with_siblings`); they differ only in
+`_fetch_nodes`, one round per node for `BPlusOmap` and one batched round per level for the cached map.
 
 ### Plaintext reference trees (`dependency/avl_tree.py`, `bplus_tree.py`)
 

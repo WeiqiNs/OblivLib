@@ -101,6 +101,14 @@ class TreeStorageBase[ConfigT: OramConfig]:
         ]
         return self._cipher.seal_path(path)
 
+    def _read_paths(self, leaves: list[int]) -> None:
+        self._client.add_read_path(label=self._name, leaves=leaves)
+        self._absorb_path(self._client.execute().require(self._name))
+
+    def _write_paths(self, leaves: list[int]) -> None:
+        self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=leaves))
+        self._client.execute()
+
     @property
     def _codec(self) -> BlockCodec:
         return DefaultCodec(self._max_block_bytes)

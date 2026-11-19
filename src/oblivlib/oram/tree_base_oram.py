@@ -62,8 +62,7 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
                 yield Data(key=key, leaf=self._initial_leaf(key), value=b"")
 
     def _read_block(self, key: int, value: Any, *, leaves: list[int], new_leaf: int) -> Any:
-        self._client.add_read_path(label=self._name, leaves=leaves)
-        self._absorb_path(path=self._client.execute().require(self._name))
+        self._read_paths(leaves)
         data = self._require_in_stash(key=key)
         read_value = data.value
         if value is not UNSET:
@@ -73,8 +72,7 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
         return read_value
 
     def _write_back(self) -> None:
-        self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=self._pending_leaves))
-        self._client.execute()
+        self._write_paths(self._pending_leaves)
         self._pending_leaves = []
 
     @abstractmethod

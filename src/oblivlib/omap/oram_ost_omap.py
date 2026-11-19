@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any, override
 
 import msgpack
@@ -59,22 +60,26 @@ class OramOstOmap(BaseOmap):
         roots = self._ost.init_mul_tree_server_storage(data_list=data_list)
         self._oram.init_server_storage((key, self._encode_root(root)) for key, root in enumerate(roots))
 
+    def _on_slot[T](self, key: bytes, op: Callable[[], T]) -> T:
+        oram_key = hash_data_to_leaf(prf=self._prf, data=key, map_size=self._num_data)
+        self._ost.root = self._decode_root(self._oram.operate_on_key_without_eviction(key=oram_key))
+        result = op()
+        self._oram.eviction_with_update_stash(key=oram_key, value=self._encode_root(self._ost.root))
+        return result
+
     @override
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
         require_omap_key(self._identity, key, self._ost._key_size)
         if value is not None:
             require_value(self._identity, value, self._ost._data_size)
-        oram_key = hash_data_to_leaf(prf=self._prf, data=key, map_size=self._num_data)
-        self._ost.root = self._decode_root(self._oram.operate_on_key_without_eviction(key=oram_key))
-        old_value = self._ost._search(key, value)
-        self._oram.eviction_with_update_stash(key=oram_key, value=self._encode_root(self._ost.root))
-        return old_value
+        return self._on_slot(key, lambda: self._ost._search(key, value))
 
     @override
     def insert(self, key: bytes, value: bytes) -> None:
         require_omap_key(self._identity, key, self._ost._key_size)
         require_value(self._identity, value, self._ost._data_size)
-        oram_key = hash_data_to_leaf(prf=self._prf, data=key, map_size=self._num_data)
-        self._ost.root = self._decode_root(self._oram.operate_on_key_without_eviction(key=oram_key))
-        self._ost._insert(key, value)
-        self._oram.eviction_with_update_stash(key=oram_key, value=self._encode_root(self._ost.root))
+        self._on_slot(key, lambda: self._ost._insert(key, value))
+
+    def delete(self, key: bytes) -> bytes | None:
+        require_omap_key(self._identity, key, self._ost._key_size)
+        return self._on_slot(key, lambda: self._ost._delete(key))

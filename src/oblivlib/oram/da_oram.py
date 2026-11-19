@@ -1,14 +1,11 @@
-import math
 import secrets
-from dataclasses import replace
-from functools import cached_property
-from typing import Any, NamedTuple, Protocol, override
+from typing import Any, NamedTuple, override
 
-from oblivlib.dependency import Blake2Prf, Data, InitData, PathRows
+from oblivlib.dependency import Data
 from oblivlib.dependency.config import DaOramConfig
 from oblivlib.dependency.helpers import binary_str_to_bytes, bytes_to_binary_str
-from oblivlib.dependency.tree_storage_base import TreeStorageBase
-from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_keys, pos_map_level_count
+from oblivlib.oram.counter_oram import CounterOram, CounterPosMapLevel
+from oblivlib.oram.tree_base_oram import pos_map_keys
 
 
 class ResetLeaf(NamedTuple):
@@ -17,7 +14,7 @@ class ResetLeaf(NamedTuple):
     new_leaf: int | None
 
 
-class ProcessedData(NamedTuple):
+class DaStep(NamedTuple):
     cur_leaf: int
     new_leaf: int
     r_index: int
@@ -25,65 +22,7 @@ class ProcessedData(NamedTuple):
     r_new_leaf: int | None
 
 
-class DaCounterMixin(Protocol):
-    _config: DaOramConfig
-    _prf: Blake2Prf
-    _last_oram_data: int
-    _last_oram_level: int
-
-    @property
-    def _num_ic(self) -> int:
-        return self._config.num_ic
-
-    @property
-    def _ic_length(self) -> int:
-        return self._config.ic_length
-
-    @property
-    def _gc_length(self) -> int:
-        return self._config.gc_length
-
-    @cached_property
-    def _count_length(self) -> int:
-        return self._gc_length + (self._ic_length + 1) * self._num_ic
-
-    @property
-    def _zero_counter(self) -> bytes:
-        return binary_str_to_bytes("0" * self._count_length)
-
-    def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int, num_data: int) -> int:
-        message = (
-            num_data.to_bytes(8, "big")
-            + key.to_bytes(8, "big")
-            + gc.to_bytes(-(-self._gc_length // 8), "big")
-            + ic.to_bytes(-(-self._ic_length // 8), "big")
-        )
-        return self._prf.digest_mod_n(message, pow(2, level - 1))
-
-    def _get_previous_leaf_from_prf(self, key: int, gc: int, ic: int) -> int:
-        return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level, num_data=self._last_oram_data)
-
-
-class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
-    def __init__(self, config: DaOramConfig, *, last_oram_data: int, last_oram_level: int):
-        super().__init__(config)
-        self._prf = Blake2Prf(key=config.prf_key)
-        self._last_oram_data = last_oram_data
-        self._last_oram_level = last_oram_level
-
-    def _build_and_host(self) -> None:
-        zero_counter = self._zero_counter
-        self._host_tree(
-            self._build_tree(
-                Data(
-                    key=key,
-                    leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data),
-                    value=zero_counter,
-                )
-                for key in range(self._num_data)
-            )
-        )
-
+class DaPosMapLevel(CounterPosMapLevel[DaOramConfig]):
     def _perform_reset(self, key: int, data: Data) -> ResetLeaf:
         data.value = bytes_to_binary_str(data.value).zfill(self._count_length)
 
@@ -141,91 +80,25 @@ class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
 
         return cur_leaf, new_leaf
 
-    def _retrieve_pos_map_block_with_reset(
-        self, key: int, offset: int, new_leaf: int, r_key: int | None, r_new_leaf: int | None, path: PathRows
-    ) -> ProcessedData:
-        self._absorb_path(path=path)
-
-        data = self._require_in_stash(key=key)
-        next_cur_leaf, next_new_leaf = self._update_data(key=key, data=data, offset=offset)
-        r_index, r_next_cur_leaf, r_next_new_leaf = self._perform_reset(key=key, data=data)
-        data.leaf = new_leaf
-
-        self._update_stash_leaf(key=r_key, new_leaf=r_new_leaf)
-
-        return ProcessedData(next_cur_leaf, next_new_leaf, r_index, r_next_cur_leaf, r_next_new_leaf)
-
     def _access_pos_map_level(
         self, cur_key: int, cur_index: int, new_leaf: int, r_key: int | None, r_new_leaf: int | None, leaves: list[int]
-    ) -> ProcessedData:
-        self._client.add_read_path(label=self._name, leaves=leaves)
-        result = self._client.execute()
-        path = result.require(self._name)
+    ) -> DaStep:
+        self._read_paths(leaves)
 
-        next_cur_leaf, next_new_leaf, r_index, r_cur_leaf, r_new_leaf = self._retrieve_pos_map_block_with_reset(
-            key=cur_key, r_key=r_key, offset=cur_index, new_leaf=new_leaf, r_new_leaf=r_new_leaf, path=path
-        )
+        data = self._require_in_stash(key=cur_key)
+        next_cur_leaf, next_new_leaf = self._update_data(key=cur_key, data=data, offset=cur_index)
+        reset = self._perform_reset(key=cur_key, data=data)
+        data.leaf = new_leaf
+        self._update_stash_leaf(key=r_key, new_leaf=r_new_leaf)
 
-        evicted_path = self._evict_stash(leaves=leaves)
-
-        self._client.add_write_path(label=self._name, data=evicted_path)
-        self._client.execute()
-
-        return ProcessedData(next_cur_leaf, next_new_leaf, r_index, r_cur_leaf, r_new_leaf)
+        self._write_paths(leaves)
+        return DaStep(next_cur_leaf, next_new_leaf, *reset)
 
 
-class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
-    def __init__(self, config: DaOramConfig):
-        if config.num_data <= config.on_chip_mem:
-            raise ValueError(f"num_data ({config.num_data}) must be greater than on_chip_mem ({config.on_chip_mem}).")
-
-        super().__init__(config)
-
-        self._prf = Blake2Prf(key=config.prf_key)
-
-        self._levels = self._make_levels()
-        smallest = self._levels[0] if self._levels else self
-        self._last_oram_data, self._last_oram_level = smallest._num_data, smallest._level
-        self._on_chip_storage: list[bytes] = [self._zero_counter] * (-(-self._last_oram_data // self._num_ic) + 1)
-
-    @property
-    def _on_chip_mem(self) -> int:
-        return self._config.on_chip_mem
-
-    @cached_property
-    def _pos_map_oram_dummy_size(self) -> int:
-        return math.ceil(self._count_length / 8)
-
+class DAOram(CounterOram[DaOramConfig, DaPosMapLevel]):
     @override
-    def _initial_leaf(self, key: int) -> int:
-        return self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data)
-
-    def _make_levels(self) -> list[DaPosMapLevel]:
-        levels = []
-        last_oram_data, last_oram_level = self._num_data, self._level
-        count = pos_map_level_count(num_data=self._num_data, on_chip=self._on_chip_mem, ratio=self._num_ic) - 1
-        for i in range(count):
-            level = DaPosMapLevel(
-                replace(
-                    self._config,
-                    prf_key=self._prf.key,
-                    num_data=-(-last_oram_data // self._num_ic),
-                    name=f"{self._name}_pos_map_{count - i - 1}",
-                    data_size=self._pos_map_oram_dummy_size,
-                ),
-                last_oram_data=last_oram_data,
-                last_oram_level=last_oram_level,
-            )
-            levels.append(level)
-            last_oram_data, last_oram_level = level._num_data, level._level
-        levels.reverse()
-        return levels
-
-    @override
-    def init_server_storage(self, data: InitData | None = None) -> None:
-        self._host_tree(self._build_tree(self._initial_blocks(data)))
-        for level in reversed(self._levels):
-            level._build_and_host()
+    def _new_level(self, config: DaOramConfig, *, last_oram_data: int, last_oram_level: int) -> DaPosMapLevel:
+        return DaPosMapLevel(config, last_oram_data=last_oram_data, last_oram_level=last_oram_level)
 
     def _perform_reset_on_chip(self, key: int) -> ResetLeaf:
         data = bytes_to_binary_str(self._on_chip_storage[key]).zfill(self._count_length)
@@ -282,30 +155,24 @@ class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
 
         return cur_leaf, new_leaf
 
-    def _get_leaf_from_pos_map(self, key: int) -> ProcessedData:
+    def _get_leaf_from_pos_map(self, key: int) -> DaStep:
         (chip_key, chip_offset), *level_keys = pos_map_keys(key, ratio=self._num_ic, count=len(self._levels) + 1)
 
         cur_leaf, new_leaf = self._update_data_on_chip(key=chip_key, offset=chip_offset)
-
         r_index, r_cur_leaf, r_new_leaf = self._perform_reset_on_chip(key=chip_key)
 
         for level, (cur_key, cur_index) in zip(self._levels, level_keys, strict=True):
             r_key = None if r_index == -1 else cur_key // self._num_ic * self._num_ic + r_index
-
-            leaves = [cur_leaf, r_cur_leaf]
-
-            next_cur_leaf, next_new_leaf, r_index, r_cur_leaf, r_new_leaf = level._access_pos_map_level(
+            cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf = level._access_pos_map_level(
                 cur_key=cur_key,
                 cur_index=cur_index,
                 new_leaf=new_leaf,
                 r_key=r_key,
                 r_new_leaf=r_new_leaf,
-                leaves=leaves,
+                leaves=[cur_leaf, r_cur_leaf],
             )
 
-            cur_leaf, new_leaf = next_cur_leaf, next_new_leaf
-
-        return ProcessedData(cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf)
+        return DaStep(cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf)
 
     @override
     def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
