@@ -124,3 +124,20 @@ class TestGroupOmap:
 
         rounds_off, rounds_on = assert_deferral_preserves_access(workload)
         assert rounds_on * 2 == rounds_off
+
+
+def test_full_bucket_insert_leaves_the_map_usable(client):
+    omap = _make_omap(client, n=64)
+    pairs = [(b"key%d" % i, b"value%d" % i) for i in range(20)]
+    omap.init_server_storage(pairs)
+    bound = omap._upper_bound
+    omap._upper_bound = 0
+    for i in range(5):
+        with pytest.raises(MemoryError, match="is full"):
+            omap.insert(b"new%d" % i, b"x")
+        assert not omap._upper_oram._pending_leaves
+    omap._upper_bound = bound
+    for key, value in pairs:
+        assert omap.search(key) == value
+    omap.insert(b"new0", b"x")
+    assert omap.search(b"new0") == b"x"

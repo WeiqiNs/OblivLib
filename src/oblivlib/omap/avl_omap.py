@@ -30,14 +30,18 @@ class LocalNodes(LocalNodesBase[AVLNode]):
             self.path[idx_a], self.path[idx_b] = self.path[idx_b], self.path[idx_a]
 
     def update_all_leaves(self, get_new_leaf: Callable[[], int]) -> None:
-        for key, node in self.nodes.items():
-            node.leaf = get_new_leaf()
-            parent = self.get_parent(key)
-            if parent:
-                if parent.value.l_key == key:
-                    parent.value.l_leaf = node.leaf
-                elif parent.value.r_key == key:
-                    parent.value.r_leaf = node.leaf
+        for key in self.nodes:
+            self.refresh_leaf(key, get_new_leaf)
+
+    def refresh_leaf(self, key: Any, get_new_leaf: Callable[[], int]) -> None:
+        node = self.nodes[key]
+        node.leaf = get_new_leaf()
+        parent = self.get_parent(key)
+        if parent:
+            if parent.value.l_key == key:
+                parent.value.l_leaf = node.leaf
+            elif parent.value.r_key == key:
+                parent.value.r_leaf = node.leaf
 
     def update_child_in_parent(
         self, parent_key: Any, old_child_key: Any, new_key: Any, new_leaf: Any, new_height: int
@@ -168,6 +172,10 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         new_height = 1 + max(pivot.value.l_height, pivot.value.r_height)
         return pivot.key, pivot.leaf, new_height
 
+    def _fetch_for_rebalance(self, key: Any, leaf: int | None, parent_key: Any) -> None:
+        self._move_node_to_local(key=key, leaf=leaf, parent_key=parent_key)
+        self._local.refresh_leaf(key, self._get_new_leaf)
+
     def _balance_node(self, node_key: Any, is_delete: bool = False) -> tuple[Any, int, int]:
         node = self._local.require(node_key)
         balance = node.value.l_height - node.value.r_height
@@ -175,13 +183,13 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if balance > 1:
             child_key = node.value.l_key
             if is_delete and not self._local.get(child_key):
-                self._move_node_to_local(key=child_key, leaf=node.value.l_leaf, parent_key=node_key)
+                self._fetch_for_rebalance(key=child_key, leaf=node.value.l_leaf, parent_key=node_key)
 
             child_node = self._local.require(child_key)
             if child_node.value.l_height - child_node.value.r_height < 0:
                 grandchild_key = child_node.value.r_key
                 if is_delete and not self._local.get(grandchild_key):
-                    self._move_node_to_local(key=grandchild_key, leaf=child_node.value.r_leaf, parent_key=child_key)
+                    self._fetch_for_rebalance(key=grandchild_key, leaf=child_node.value.r_leaf, parent_key=child_key)
 
                 key, leaf, height = self._rotate_node(child_key, rotate_left=True)
                 node.value.l_key, node.value.l_leaf, node.value.l_height = key, leaf, height
@@ -191,13 +199,13 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if balance < -1:
             child_key = node.value.r_key
             if is_delete and not self._local.get(child_key):
-                self._move_node_to_local(key=child_key, leaf=node.value.r_leaf, parent_key=node_key)
+                self._fetch_for_rebalance(key=child_key, leaf=node.value.r_leaf, parent_key=node_key)
 
             child_node = self._local.require(child_key)
             if child_node.value.l_height - child_node.value.r_height > 0:
                 grandchild_key = child_node.value.l_key
                 if is_delete and not self._local.get(grandchild_key):
-                    self._move_node_to_local(key=grandchild_key, leaf=child_node.value.l_leaf, parent_key=child_key)
+                    self._fetch_for_rebalance(key=grandchild_key, leaf=child_node.value.l_leaf, parent_key=child_key)
 
                 key, leaf, height = self._rotate_node(child_key, rotate_left=False)
                 node.value.r_key, node.value.r_leaf, node.value.r_height = key, leaf, height
@@ -346,7 +354,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
             child_leaf = replacement_node.value.l_leaf if use_predecessor else replacement_node.value.r_leaf
             child_height = (
                 (replacement_node.value.l_height if use_predecessor else replacement_node.value.r_height)
-                if child_key
+                if child_key is not None
                 else 0
             )
             self._local.update_child_in_parent(
@@ -463,6 +471,9 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         node = self._local.require(current_key)
 
         if node.key != key:
+            self._local.update_all_leaves(self._get_new_leaf)
+            root_node = self._local.require_root()
+            self.root = (root_node.key, root_node.leaf)
             self._flush_local_to_stash()
             self._pad_to(budget)
             return None

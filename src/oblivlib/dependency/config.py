@@ -136,6 +136,11 @@ class DaOramConfig(CounterOramConfig):
         super().__post_init__()
         if self.on_chip_mem < 1:
             raise ValueError(f"on_chip_mem must be >= 1, got {self.on_chip_mem}.")
+        if self.num_ic > 2**self.ic_length:
+            raise ValueError(
+                f"num_ic ({self.num_ic}) must be at most 2**ic_length ({2**self.ic_length}) so every pending reset "
+                + "clears before the block can overflow again."
+            )
 
 
 @dataclass(frozen=True, kw_only=True)

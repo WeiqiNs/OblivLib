@@ -28,6 +28,7 @@ _OMAP = {**_ORAM, "key_size": 4}
         (DaOramConfig, _ORAM, {"ic_length": 0}, "ic_length"),
         (DaOramConfig, _ORAM, {"gc_length": 0}, "gc_length"),
         (DaOramConfig, _ORAM, {"on_chip_mem": 0}, "on_chip_mem"),
+        (DaOramConfig, _ORAM, {"num_ic": 8, "ic_length": 2}, r"2\*\*ic_length"),
         (FreecursiveOramConfig, _ORAM, {"on_chip_size": 0}, "on_chip_size"),
         (FreecursiveOramConfig, _ORAM, {"reset_prob": 0.0}, "reset_prob"),
         (FreecursiveOramConfig, _ORAM, {"reset_prob": 1.5}, "reset_prob"),

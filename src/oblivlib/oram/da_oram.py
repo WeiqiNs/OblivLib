@@ -51,16 +51,17 @@ class DaCounterMixin(Protocol):
     def _zero_counter(self) -> bytes:
         return binary_str_to_bytes("0" * self._count_length)
 
-    def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int) -> int:
-        return self._prf.digest_mod_n(
-            binary_str_to_bytes(
-                bin(key)[2:].zfill(level - 1) + bin(gc)[2:].zfill(self._gc_length) + bin(ic)[2:].zfill(self._ic_length)
-            ),
-            pow(2, level - 1),
+    def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int, num_data: int) -> int:
+        message = (
+            num_data.to_bytes(8, "big")
+            + key.to_bytes(8, "big")
+            + gc.to_bytes(-(-self._gc_length // 8), "big")
+            + ic.to_bytes(-(-self._ic_length // 8), "big")
         )
+        return self._prf.digest_mod_n(message, pow(2, level - 1))
 
     def _get_previous_leaf_from_prf(self, key: int, gc: int, ic: int) -> int:
-        return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level)
+        return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level, num_data=self._last_oram_data)
 
 
 class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
@@ -74,7 +75,11 @@ class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
         zero_counter = self._zero_counter
         self._host_tree(
             self._build_tree(
-                Data(key=key, leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level), value=zero_counter)
+                Data(
+                    key=key,
+                    leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data),
+                    value=zero_counter,
+                )
                 for key in range(self._num_data)
             )
         )
@@ -193,7 +198,7 @@ class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
 
     @override
     def _initial_leaf(self, key: int) -> int:
-        return self._prf_leaf(key=key, gc=0, ic=0, level=self._level)
+        return self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data)
 
     def _make_levels(self) -> list[DaPosMapLevel]:
         levels = []

@@ -118,3 +118,29 @@ def test_rejects_non_bytes_oversized_and_out_of_range(make_oram, client):
 
     assert client.metrics.rounds == rounds
     assert oram.operate_on_key(key=5) == b"kept"
+
+
+def test_new_access_while_one_is_pending_raises(make_oram, client):
+    oram = make_oram(num_data=64, data_size=10, client=client)
+    oram.init_server_storage({3: b"three"})
+    assert oram.operate_on_key_without_eviction(3) == b"three"
+    with pytest.raises(ValueError, match="still waiting for its eviction"):
+        oram.operate_on_key(4)
+    with pytest.raises(ValueError, match="still waiting for its eviction"):
+        oram.operate_on_key_without_eviction(4)
+    oram.eviction_with_update_stash(3, b"tres")
+    assert oram.operate_on_key(3) == b"tres"
+
+
+@pytest.mark.parametrize(("cls", "config_cls"), [(DAOram, DaOramConfig), (FreecursiveOram, FreecursiveOramConfig)])
+@pytest.mark.parametrize("num_data", [4096, 100_000])
+def test_position_map_leaves_are_independent_of_data_leaves(cls, config_cls, num_data, client):
+    oram = cls(config_cls(num_data=num_data, data_size=10, client=client))
+    level = oram._levels[-1]
+    leaf_range = 2 ** (level._level - 1)
+    matches = sum(
+        level._prf_leaf(key=key, gc=0, ic=0, level=level._level, num_data=level._num_data)
+        == oram._prf_leaf(key=key, gc=0, ic=0, level=oram._level, num_data=oram._num_data) % leaf_range
+        for key in range(level._num_data)
+    )
+    assert matches <= max(3, 3 * level._num_data // leaf_range)

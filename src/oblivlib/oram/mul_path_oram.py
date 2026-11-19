@@ -53,6 +53,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
     ) -> dict[Any, Any]:
         if not key_value_map:
             return {}
+        self._require_no_pending()
 
         old_leaves: list[int] = []
         key_leaf_map: dict[Any, int] = {}
@@ -92,6 +93,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         self._write_back()
 
     def _insert_block(self, block: Data) -> None:
+        self._require_no_pending()
         leaf = self._get_new_leaf()
         self._client.add_read_path(label=self._name, leaves=[leaf])
         self._absorb_path(self._client.execute().require(self._name))

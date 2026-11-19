@@ -91,16 +91,17 @@ class FreecursiveCounterMixin(Protocol):
     def _zero_counter(self) -> bytes:
         return binary_str_to_bytes("0" * self._count_length)
 
-    def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int) -> int:
-        return self._prf.digest_mod_n(
-            binary_str_to_bytes(
-                bin(key)[2:].zfill(level - 1) + bin(gc)[2:].zfill(self._gc_length) + bin(ic)[2:].zfill(self._ic_length)
-            ),
-            pow(2, level - 1),
+    def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int, num_data: int) -> int:
+        message = (
+            num_data.to_bytes(8, "big")
+            + key.to_bytes(8, "big")
+            + gc.to_bytes(-(-self._gc_length // 8), "big")
+            + ic.to_bytes(-(-self._ic_length // 8), "big")
         )
+        return self._prf.digest_mod_n(message, pow(2, level - 1))
 
     def _get_previous_leaf_from_prf(self, key: int, gc: int, ic: int) -> int:
-        return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level)
+        return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level, num_data=self._last_oram_data)
 
     def _get_reset_leaves(self, key: int, data: str) -> ResetLeaves:
         num_ic, ic_length, gc_length = self._num_ic, self._ic_length, self._gc_length
@@ -132,22 +133,26 @@ class FreecursivePosMapLevel(TreeStorageBase[FreecursiveOramConfig], Freecursive
         zero_counter = self._zero_counter
         self._host_tree(
             self._build_tree(
-                Data(key=key, leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level), value=zero_counter)
+                Data(
+                    key=key,
+                    leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data),
+                    value=zero_counter,
+                )
                 for key in range(self._num_data)
             )
         )
 
     def _update_data_prob_reset(self, key: int, data: Data, offset: int) -> ProcessedData:
-        data.value = bytes_to_binary_str(data.value).zfill(self._count_length)
+        bits = bytes_to_binary_str(data.value).zfill(self._count_length)
 
-        gc = int(data.value[: self._gc_length], 2)
+        gc = int(bits[: self._gc_length], 2)
 
         ic_start = self._gc_length + offset * self._ic_length
         ic_end = self._gc_length + (offset + 1) * self._ic_length
-        ic = int(data.value[ic_start:ic_end], 2)
+        ic = int(bits[ic_start:ic_end], 2)
 
         if _CSPRNG.random() <= self._reset_prob:
-            reset_leaves = self._get_reset_leaves(key=key, data=data.value)
+            reset_leaves = self._get_reset_leaves(key=key, data=bits)
             data.value = binary_str_to_bytes(
                 f"{bin(gc + 1)[2:].zfill(self._gc_length)}{'0' * self._ic_length * self._num_ic}"
             )
@@ -155,32 +160,28 @@ class FreecursivePosMapLevel(TreeStorageBase[FreecursiveOramConfig], Freecursive
 
         if ic + 1 >= pow(2, self._ic_length):
             raise ValueError("Overflow happened under probabilistic resets.")
-        data.value = binary_str_to_bytes(
-            f"{data.value[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{data.value[ic_end:]}"
-        )
+        data.value = binary_str_to_bytes(f"{bits[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{bits[ic_end:]}")
         cur_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic)
         new_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic + 1)
         return ProcessedData(cur_leaf, new_leaf, None)
 
     def _update_data_hard_reset(self, key: int, data: Data, offset: int) -> ProcessedData:
-        data.value = bytes_to_binary_str(data.value).zfill(self._count_length)
+        bits = bytes_to_binary_str(data.value).zfill(self._count_length)
 
-        gc = int(data.value[: self._gc_length], 2)
+        gc = int(bits[: self._gc_length], 2)
 
         ic_start = self._gc_length + offset * self._ic_length
         ic_end = self._gc_length + (offset + 1) * self._ic_length
-        ic = int(data.value[ic_start:ic_end], 2)
+        ic = int(bits[ic_start:ic_end], 2)
 
         if ic + 1 >= pow(2, self._ic_length):
-            reset_leaves = self._get_reset_leaves(key=key, data=data.value)
+            reset_leaves = self._get_reset_leaves(key=key, data=bits)
             data.value = binary_str_to_bytes(
                 f"{bin(gc + 1)[2:].zfill(self._gc_length)}{'0' * self._ic_length * self._num_ic}"
             )
             return ProcessedData(None, None, reset_leaves)
 
-        data.value = binary_str_to_bytes(
-            f"{data.value[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{data.value[ic_end:]}"
-        )
+        data.value = binary_str_to_bytes(f"{bits[:ic_start]}{bin(ic + 1)[2:].zfill(self._ic_length)}{bits[ic_end:]}")
         cur_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic)
         new_leaf = self._get_previous_leaf_from_prf(key=key * self._num_ic + offset, gc=gc, ic=ic + 1)
         return ProcessedData(cur_leaf, new_leaf, None)
@@ -265,7 +266,7 @@ class FreecursiveOram(TreeBaseOram[FreecursiveOramConfig, FreecursivePosMapLevel
 
     @override
     def _initial_leaf(self, key: int) -> int:
-        return self._prf_leaf(key=key, gc=0, ic=0, level=self._level)
+        return self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data)
 
     def _make_levels(self) -> list[FreecursivePosMapLevel]:
         levels = []

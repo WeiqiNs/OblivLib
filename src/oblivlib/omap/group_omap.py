@@ -165,6 +165,7 @@ class GroupOmap(BaseOmap):
         seed, bucket_keys = _decode_metadata(self._upper_oram.operate_on_key_without_eviction(key=bucket_id))
 
         if len(bucket_keys) >= self._upper_bound:
+            self._upper_oram.eviction_with_update_stash(key=bucket_id, value=_encode_metadata(seed, bucket_keys))
             raise MemoryError(f"Bucket {bucket_id} is full ({len(bucket_keys)} items), cannot insert")
 
         self._lower_oram._insert_block(Data(key=key, leaf=self._compute_path(seed, key), value=value))

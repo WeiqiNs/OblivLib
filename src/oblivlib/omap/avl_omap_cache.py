@@ -37,7 +37,7 @@ class AVLOmapCached(AVLOmap):
         self.root = (root_node.key, root_node.leaf)
 
         num_retrieved = len(self._local)
-        self._perform_dummy_operation(num_round=self._max_height - num_retrieved)
+        self._perform_dummy_operation(num_round=max(0, self._max_height - num_retrieved))
 
         return search_value
 
@@ -61,7 +61,7 @@ class AVLOmapCached(AVLOmap):
         self._post_op_fixup()
 
         num_retrieved = len(self._local)
-        self._perform_dummy_operation(num_round=self._max_height - num_retrieved)
+        self._perform_dummy_operation(num_round=max(0, self._max_height - num_retrieved))
 
     @override
     def _delete(self, key: Any) -> Any:
@@ -77,7 +77,7 @@ class AVLOmapCached(AVLOmap):
             root_node = self._local.require_root()
             self.root = (root_node.key, root_node.leaf)
             num_retrieved = len(self._local)
-            self._perform_dummy_operation(num_round=2 * self._max_height - num_retrieved)
+            self._perform_dummy_operation(num_round=max(0, 2 * self._max_height - num_retrieved))
             return None
 
         deleted_value, done = self._delete_at_node(node_key=current_key)
@@ -88,6 +88,6 @@ class AVLOmapCached(AVLOmap):
         self._post_op_fixup(is_delete=True)
 
         num_retrieved = len(self._local)
-        self._perform_dummy_operation(num_round=2 * self._max_height - num_retrieved)
+        self._perform_dummy_operation(num_round=max(0, 2 * self._max_height - num_retrieved))
 
         return deleted_value

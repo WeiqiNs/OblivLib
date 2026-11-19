@@ -289,8 +289,9 @@ compose the two:
   `GroupOmap`) compute the new value between the read and the write-back; the server sees exactly the
   fused access. An ORAM holds one pending access, so nothing else may run on the same instance between
   the two halves (another access could evict the pending block, or drop the pending paths' write-back).
-  This is not enforced: `GroupOmap.insert` raises its full-bucket `MemoryError` between the halves (§8),
-  and the next access must still work. `eviction_with_update_stash` with no access pending raises a
+  Starting another access while one is pending raises a `ValueError` before any I/O, and
+  `GroupOmap.insert` finishes its upper access before raising its full-bucket `MemoryError`.
+  `eviction_with_update_stash` with no access pending raises a
   `ValueError` before touching the stash.
 
 Freecursive extends the template for its resets: chunks before the key's are read and written back in
@@ -315,9 +316,15 @@ placements on a laminar matroid) and is ~15% faster at realistic stash sizes. Do
 | `MulPathOram` | Reads/evicts several paths per batch (`operate_on_keys*`, `eviction_for_mul_keys`, each checking the contract before its underscore twin). `stash_scale_multiplier` is baked into `stash_scale` at construction. A batch given explicit read paths (`key_path_map`) leaves the position map alone: the caller owns those keys' positions, so it should also pass `new_path_map`, or the random new leaves are recorded nowhere (`GroupOmap` passes both). |
 | `StaticOram` | Leaves fixed by `PRF(key)`: the "new" leaf equals the current one. |
 | `RecursivePathOram` | Position map compressed into a chain of smaller ORAMs, each block holding `compression_ratio` child leaves; only the smallest map (≤ `on_chip_mem`) stays on chip. A short final block is padded with random leaves. |
-| `DAOram`, `FreecursiveOram` | Leaves are `PRF(key ‖ GC ‖ IC)`; position-map blocks hold counters instead of leaves (below). |
+| `DAOram`, `FreecursiveOram` | Leaves are `PRF(num_data ‖ key ‖ GC ‖ IC) mod leaf_range`, with fixed-width big-endian fields and `num_data` the size of the tree whose leaf it is; position-map blocks hold counters instead of leaves (below). |
 
 ### Counter blocks (DA / Freecursive)
+
+**PRF domain separation.** Every tree in the chain shares one PRF key, so the message names its tree:
+`num_data` strictly decreases along the chain (the compression ratio is at least 2), and every field has
+a fixed width. Without the tag, a position-map block and the data block with the same number, at the
+same counters, hashed the same message, and their leaves agreed modulo the smaller range, which linked
+accesses across trees.
 
 A position-map block covers `num_ic` children and stores a group counter (GC) plus one individual
 counter (IC) per child. An access bumps the child's IC and recomputes its leaf from the PRF. When ICs
@@ -413,7 +420,7 @@ then applies the same height bound. The AVL bound is safe but runs 1–2 levels 
 
 **Cached variants are deliberately not per-op oblivious.** They serve nodes left in the stash by
 earlier ops without a server round, keep the visited path in `local` until the next op, and pad to
-`h` rounds (`2h` for AVL delete). They are meant for use inside a larger oblivious composition.
+`h` rounds (`2h` for AVL delete), never padding below zero when an op loaded more nodes. They are meant for use inside a larger oblivious composition.
 `BPlusOmapCached.delete` reads each level's child and sibling in one batched round (`h` rounds, same
 bandwidth as `2h−1` paths).
 
@@ -521,8 +528,8 @@ disk.
   number of lower paths depends on how full the bucket is.
 - **B+ block ids can outgrow their size bound:** `BPlusOmap._max_block_size` assumes ids below
   `num_data`, but deletes never recycle ids. The row capacity's slack has absorbed it so far.
-- **Composed-map capacity errors** (a full GroupOmap bucket) raise a bare `MemoryError` after the upper
-  ORAM read, leaving that access half done.
+- **Composed-map capacity errors** (a full GroupOmap bucket) raise a bare `MemoryError` once the upper
+  access completes; no lower access is made, so the server sees the failed insert as a shorter op.
 - **Not yet built:** a round driver and handle API for schemes, retrying or resending a lost batch, and
   persistence (reattaching a server's trees after a restart). `GroupOmap` ignores `build_file`, and a
   path or list read result is untyped (`ExecuteResult.require` returns `Any`).
