@@ -1,5 +1,3 @@
-"""Multi-path ORAM: extends PathOram to read and evict several paths in one batch."""
-
 from dataclasses import replace
 from typing import Any
 
@@ -23,12 +21,6 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         key_path_map: PosMap | None = None,
         new_path_map: PosMap | None = None,
     ) -> DataMap:
-        """Batch read/write: read all paths at once, operate, then evict all paths at once.
-
-        ``key_value_map`` is {key: value to write} (UNSET for read-only); ``key_path_map`` overrides the
-        leaves read from (default: the position map); ``new_path_map`` overrides the new leaves (default:
-        random). Returns {key: value before any write}.
-        """
         self._check_batch(key_value_map)
         return self._operate_on_keys(key_value_map, key_path_map, new_path_map)
 
@@ -50,7 +42,6 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         key_path_map: PosMap | None = None,
         new_path_map: PosMap | None = None,
     ) -> DataMap:
-        """Like operate_on_keys but defers eviction to a later eviction_for_mul_keys call."""
         self._check_batch(key_value_map)
         return self._operate_on_keys_without_eviction(key_value_map, key_path_map, new_path_map)
 
@@ -60,8 +51,6 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         key_path_map: dict[Any, int] | None = None,
         new_path_map: dict[Any, int] | None = None,
     ) -> dict[Any, Any]:
-        """Read every requested key's path in one batch, remap each to a new leaf, apply any writes, and
-        leave the paths pending; returns {key: value before write}."""
         if not key_value_map:
             return {}
 
@@ -87,7 +76,6 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         return read_values
 
     def eviction_for_mul_keys(self, updates: DataMap | None = None) -> None:
-        """Apply optional {key: value} updates to the stash, then evict the batch's paths."""
         for key, value in (updates or {}).items():
             require_oram_key(self._identity, key, self._num_data)
             require_value(self._identity, value, self._data_size)
@@ -104,8 +92,6 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         self._write_back()
 
     def _insert_block(self, block: Data) -> None:
-        """Add a block that is not stored yet: read one random path, stash the block, and evict that path,
-        so the server sees exactly a single-key access."""
         leaf = self._get_new_leaf()
         self._client.add_read_path(label=self._name, leaves=[leaf])
         self._absorb_path(self._client.execute().require(self._name))

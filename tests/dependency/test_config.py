@@ -37,7 +37,9 @@ _OMAP = {**_ORAM, "key_size": 4}
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
     ],
 )
-def test_config_rejects_each_invalid_field(config_cls, valid, invalid, message):
+def test_config_rejects_each_invalid_field(client, config_cls, valid, invalid, message):
+    if config_cls is not OramOstOmapConfig:
+        valid = {**valid, "client": client}
     config_cls(**valid)
     with pytest.raises(ValueError, match=message):
         config_cls(**{**valid, **invalid})

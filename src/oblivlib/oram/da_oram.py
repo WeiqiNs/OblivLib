@@ -1,10 +1,3 @@
-"""De-Amortized ORAM (DAOram).
-
-The position map is compressed into a chain of position-map trees whose leaves are derived from a
-PRF of (key, group count, individual count); de-amortized resets keep counter overflow bounded.
-Call ``init_server_storage`` once, then use ``operate_on_key``. Defaults use a 1/64 compression ratio.
-"""
-
 import math
 import secrets
 from dataclasses import replace
@@ -13,27 +6,18 @@ from typing import Any, NamedTuple, Protocol, override
 
 from oblivlib.dependency import Blake2Prf, Data, InitData, PathRows
 from oblivlib.dependency.config import DaOramConfig
+from oblivlib.dependency.helpers import binary_str_to_bytes, bytes_to_binary_str
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
-from oblivlib.oram.bit_string import binary_str_to_bytes, bytes_to_binary_str
 from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_keys, pos_map_level_count
 
 
 class ResetLeaf(NamedTuple):
-    """A pending counter reset. ``offset`` is -1 (with a random ``cur_leaf`` and ``new_leaf=None``) when
-    no reset is due; otherwise it is the ic offset whose backup leaf moves from ``cur_leaf`` to
-    ``new_leaf``. (Named ``offset`` rather than ``index`` because NamedTuple fields may not shadow the
-    built-in ``tuple.index`` method.)"""
-
     offset: int
     cur_leaf: int
     new_leaf: int | None
 
 
 class ProcessedData(NamedTuple):
-    """Result of processing a counter block plus any piggybacked reset: the looked-up key's current
-    and new leaf (``cur_leaf``/``new_leaf``), and the reset key's offset/current/new leaf
-    (``r_index`` is -1 when no reset is carried)."""
-
     cur_leaf: int
     new_leaf: int
     r_index: int
@@ -42,8 +26,6 @@ class ProcessedData(NamedTuple):
 
 
 class DaCounterMixin(Protocol):
-    """Counter layout and PRF leaves shared by DAOram and its position-map levels."""
-
     _config: DaOramConfig
     _prf: Blake2Prf
     _last_oram_data: int
@@ -63,7 +45,6 @@ class DaCounterMixin(Protocol):
 
     @cached_property
     def _count_length(self) -> int:
-        """Bit length of the counter value a position-map block stores."""
         return self._gc_length + (self._ic_length + 1) * self._num_ic
 
     @property
@@ -71,7 +52,6 @@ class DaCounterMixin(Protocol):
         return binary_str_to_bytes("0" * self._count_length)
 
     def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int) -> int:
-        """Leaf for (key, gc, ic) in a tree of ``level`` levels, computed as PRF(KEY||GC||IC) mod 2^(level-1)."""
         return self._prf.digest_mod_n(
             binary_str_to_bytes(
                 bin(key)[2:].zfill(level - 1) + bin(gc)[2:].zfill(self._gc_length) + bin(ic)[2:].zfill(self._ic_length)
@@ -80,7 +60,6 @@ class DaCounterMixin(Protocol):
         )
 
     def _get_previous_leaf_from_prf(self, key: int, gc: int, ic: int) -> int:
-        """Leaf for (key, gc, ic) in the previous (larger) oram."""
         return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level)
 
 
@@ -101,7 +80,6 @@ class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
         )
 
     def _perform_reset(self, key: int, data: Data) -> ResetLeaf:
-        """Like _perform_reset_on_chip but reads the indicators from a stored Data block."""
         data.value = bytes_to_binary_str(data.value).zfill(self._count_length)
 
         ic_indicators = data.value[-self._num_ic :]
@@ -120,7 +98,6 @@ class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
         return ResetLeaf(offset, cur_leaf, new_leaf)
 
     def _update_data(self, key: int, data: Data, offset: int) -> tuple[int, int]:
-        """Like _update_data_on_chip but operates on a stored Data block's counter value."""
         data.value = bytes_to_binary_str(data.value).zfill(self._count_length)
 
         gc = int(data.value[: self._gc_length], 2)
@@ -162,9 +139,6 @@ class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
     def _retrieve_pos_map_block_with_reset(
         self, key: int, offset: int, new_leaf: int, r_key: int | None, r_new_leaf: int | None, path: PathRows
     ) -> ProcessedData:
-        """Pull the path into the stash, advance key's counter and remap it to new_leaf, and remap the
-        optional reset key r_key to r_new_leaf. The returned reset fields are r_index=-1, a random cur
-        leaf, and None new leaf when no reset is carried to the next level."""
         self._absorb_path(path=path)
 
         data = self._require_in_stash(key=key)
@@ -179,12 +153,6 @@ class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
     def _access_pos_map_level(
         self, cur_key: int, cur_index: int, new_leaf: int, r_key: int | None, r_new_leaf: int | None, leaves: list[int]
     ) -> ProcessedData:
-        """Drive this position-map level's own server I/O and process its block plus any reset.
-
-        Reads the data path and reset path on the shared client (under its own name), updates the
-        counter for ``cur_key`` (and remaps the optional reset key ``r_key``), then evicts and writes
-        the paths back. Returns ``(next_cur_leaf, next_new_leaf, r_index, r_cur_leaf, r_new_leaf)``.
-        """
         self._client.add_read_path(label=self._name, leaves=leaves)
         result = self._client.execute()
         path = result.require(self._name)
@@ -203,8 +171,6 @@ class DaPosMapLevel(TreeStorageBase[DaOramConfig], DaCounterMixin):
 
 class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
     def __init__(self, config: DaOramConfig):
-        if config.client is None:
-            raise ValueError("Client is required for main ORAM.")
         if config.num_data <= config.on_chip_mem:
             raise ValueError(f"num_data ({config.num_data}) must be greater than on_chip_mem ({config.on_chip_mem}).")
 
@@ -223,7 +189,6 @@ class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
 
     @cached_property
     def _pos_map_oram_dummy_size(self) -> int:
-        """Byte size of the dummy value stored in position maps."""
         return math.ceil(self._count_length / 8)
 
     @override
@@ -231,7 +196,6 @@ class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
         return self._prf_leaf(key=key, gc=0, ic=0, level=self._level)
 
     def _make_levels(self) -> list[DaPosMapLevel]:
-        """The position-map levels, smallest first; each level's leaves derive from the shared PRF key."""
         levels = []
         last_oram_data, last_oram_level = self._num_data, self._level
         count = pos_map_level_count(num_data=self._num_data, on_chip=self._on_chip_mem, ratio=self._num_ic) - 1
@@ -259,10 +223,6 @@ class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
             level._build_and_host()
 
     def _perform_reset_on_chip(self, key: int) -> ResetLeaf:
-        """Check the on-chip ic indicators for a pending reset; returns (offset, cur_leaf, new_leaf).
-
-        offset is -1 (and a random cur_leaf, None new_leaf) when no reset is due.
-        """
         data = bytes_to_binary_str(self._on_chip_storage[key]).zfill(self._count_length)
 
         ic_indicators = data[-self._num_ic :]
@@ -279,7 +239,6 @@ class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
         return ResetLeaf(offset, cur_leaf, new_leaf)
 
     def _update_data_on_chip(self, key: int, offset: int) -> tuple[int, int]:
-        """Advance the on-chip counter at offset and return (cur_leaf, new_leaf) for the previous oram."""
         data = bytes_to_binary_str(self._on_chip_storage[key]).zfill(self._count_length)
 
         gc = int(data[: self._gc_length], 2)
@@ -319,7 +278,6 @@ class DAOram(TreeBaseOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
         return cur_leaf, new_leaf
 
     def _get_leaf_from_pos_map(self, key: int) -> ProcessedData:
-        """Walk the position-map chain to find key's leaf and new leaf, performing resets along the way."""
         (chip_key, chip_offset), *level_keys = pos_map_keys(key, ratio=self._num_ic, count=len(self._levels) + 1)
 
         cur_leaf, new_leaf = self._update_data_on_chip(key=chip_key, offset=chip_offset)

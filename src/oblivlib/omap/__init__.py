@@ -1,9 +1,3 @@
-"""Public API for ``oblivlib.omap``: the OMAP schemes and their construction configs.
-
-The configs are defined in ``oblivlib.dependency.config`` and re-exported here as a
-convenience so a scheme and its config can be imported together.
-"""
-
 from oblivlib.dependency.config import (
     AvlOmapCachedConfig,
     AvlOmapConfig,

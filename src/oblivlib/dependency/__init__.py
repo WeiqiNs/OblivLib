@@ -38,7 +38,6 @@ from .crypto import (
 from .errors import (
     ContractError,
     DuplicateLabelError,
-    MissingClientError,
     MissingResultError,
     OblivlibError,
     ProtocolError,
@@ -91,7 +90,6 @@ __all__ = [
     "hash_data_to_map",
     "ContractError",
     "DuplicateLabelError",
-    "MissingClientError",
     "MissingResultError",
     "OblivlibError",
     "ProtocolError",

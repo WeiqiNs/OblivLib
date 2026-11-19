@@ -1,10 +1,3 @@
-"""Group-by-hash OMAP with oblivious metadata storage.
-
-An upper ORAM stores per-hash-bucket metadata (prf_seed, key_list); a lower ``MulPathOram`` stores each
-value in a block named by its key, at the PRF-computed path ``PRF(seed || key)``. Search fetches the whole
-bucket and reshuffles it under a new seed; insert stashes the new block on its path.
-"""
-
 import os
 from typing import Any, override
 
@@ -30,11 +23,9 @@ def _decode_metadata(value: bytes) -> tuple[bytes, list[bytes]]:
 
 
 class GroupOmap(BaseOmap):
-    """Group-by-hash OMAP with oblivious metadata storage in an upper ORAM."""
-
     SEED_SIZE = 32
 
-    def __init__(self, config: GroupOmapConfig, upper_oram: TreeBaseOram):
+    def __init__(self, config: GroupOmapConfig, upper_oram: TreeBaseOram[Any, Any]):
         self._config: GroupOmapConfig = config
 
         self._num_buckets = config.num_data
@@ -69,13 +60,10 @@ class GroupOmap(BaseOmap):
 
     @staticmethod
     def _bucket_upper_bound(num_data: int) -> int:
-        """Worst-case number of items in one hash bucket (https://eprint.iacr.org/2021/1280)."""
         return max_bucket_load(num_data)
 
     @staticmethod
     def upper_oram_data_size(num_data: int, key_size: int) -> int:
-        """Minimum ``data_size`` the upper ORAM needs to hold a full bucket's metadata (its seed and up to
-        the bucket bound of ``key_size``-byte keys); construct the upper ORAM with at least this."""
         upper_bound = GroupOmap._bucket_upper_bound(num_data)
         return len(_encode_metadata(os.urandom(GroupOmap.SEED_SIZE), [os.urandom(key_size)] * upper_bound))
 
@@ -112,16 +100,13 @@ class GroupOmap(BaseOmap):
         return self._config.encryptor
 
     def _compute_path(self, seed: bytes, key: bytes) -> int:
-        """Lower-ORAM leaf for an item, as PRF(seed || key)."""
         return self._leaf_prf.digest_mod_n(message=seed + key, mod=self._num_data)
 
     def _hash_key_to_bucket(self, key: bytes) -> int:
-        """Hash a key to its bucket index in [0, num_buckets)."""
         return self._bucket_prf.digest_mod_n(message=key, mod=self._num_buckets)
 
     @override
     def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
-        """Initialize both ORAMs with the given key-value pairs."""
         require_omap_init(self._identity, data or [], key_size=self._key_size, data_size=self._data_size)
         data_map = hash_data_to_map(prf=self._bucket_prf, data=data or [], map_size=self._num_buckets)
 
@@ -144,8 +129,6 @@ class GroupOmap(BaseOmap):
         self._lower_oram._host_tree(self._lower_oram._build_tree(lower_blocks))
 
     def _read_bucket(self, seed: bytes, new_seed: bytes, keys: list[bytes]) -> dict[Any, Any]:
-        """Read every item of a bucket in one batch, moving each to its path under ``new_seed``; the
-        eviction is left to the caller."""
         if not keys:
             return {}
         return self._lower_oram._operate_on_keys_without_eviction(
@@ -156,8 +139,6 @@ class GroupOmap(BaseOmap):
 
     @override
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
-        """Search for ``key``, optionally updating its value. Accesses every item in the bucket (for
-        obliviousness) and reshuffles them all to new paths. Returns the old value, or None if absent."""
         require_omap_key(self._identity, key, self._key_size)
         if value is not None:
             require_value(self._identity, value, self._data_size)
@@ -177,7 +158,6 @@ class GroupOmap(BaseOmap):
 
     @override
     def insert(self, key: bytes, value: bytes) -> None:
-        """Insert a new key-value pair."""
         require_omap_key(self._identity, key, self._key_size)
         require_value(self._identity, value, self._data_size)
 
@@ -193,7 +173,6 @@ class GroupOmap(BaseOmap):
         self._upper_oram.eviction_with_update_stash(key=bucket_id, value=_encode_metadata(seed, bucket_keys))
 
     def search_group(self, bucket_id: int) -> list[tuple[bytes, bytes]]:
-        """Return all (key, value) items in a bucket, reshuffling them to new paths."""
         seed, bucket_keys = _decode_metadata(self._upper_oram.operate_on_key_without_eviction(key=bucket_id))
 
         new_seed = os.urandom(self.SEED_SIZE)

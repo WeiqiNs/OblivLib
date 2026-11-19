@@ -233,7 +233,8 @@ hierarchy and holds each scheme's defaults:
 - `OmapConfig(OramConfig)` adds `key_size` and `distinguishable` → AVL/B+ configs (and their cached
   variants) and `GroupOmapConfig`. `OramOstOmapConfig` stands alone (only `num_data`).
 
-Configs validate in `__post_init__`. Dataclasses don't chain `__post_init__`, so every subclass that
+`client` is required. `name` defaults to `unique_name(prefix)`, a per-scheme prefix plus a random suffix,
+so only a caller that needs a known storage label passes one. Configs validate in `__post_init__`. Dataclasses don't chain `__post_init__`, so every subclass that
 adds a constraint calls `super().__post_init__()` first.
 
 The config is the single source of truth. `TreeStorageBase` exposes each field as a read-only private
@@ -421,8 +422,9 @@ bandwidth as `2h−1` paths).
 `AVLTree`/`BPlusTree` build the initial ODS storage (`get_data_list`) and are the standard the oblivious
 ports mirror. Each keeps a recursive twin of `insert`/`delete` that tests cross-check structurally. The
 non-recursive `delete`s are the templates for the oblivious deletes: they record the visited path in a
-`local` list in clear phases (locate, remove, repair bottom-up). Their batched and recursive methods are
-kept as templates and cross-check oracles even though only tests call them.
+`local` list in clear phases (locate, remove, repair bottom-up). `AVLTreeNode`/`BPlusTreeNode` are the
+in-memory pointer trees used only for this initial build; `AVLData`/`BPlusData` are the stored node
+values, with child keys and leaves in place of pointers, that the oblivious maps operate on.
 
 - An ORAM block's value is one node: `AVLData` holds the value plus each child's `(key, leaf, height)`;
   `BPlusData` holds parallel `keys`/`values` lists, where an internal node's values are child
@@ -437,14 +439,6 @@ kept as templates and cross-check oracles even though only tests call them.
   than the better of two is what the oblivious map follows: it prefetches just that sibling, so the work
   per level is fixed and independent of the borrow/merge outcome. Both deletes route through
   `_fix_underflow`, which is what makes them cross-checkable.
-- `multi_search`/`multi_insert` are level-synchronized: every cursor advances one level per round, so a
-  batch costs at most `h` rounds of growing width. `multi_search` maps absent keys to `None` (B+'s
-  single-key `search` raises instead). `multi_insert` is two-phase. Phase 1 (`_collect_insert_paths`) is
-  its only storage access: one batched descent gathering the union of the insertion paths into `local`.
-  Phase 2 (`_insert_into_local`) replays single-key inserts against `local` only, raising if it needs a
-  node outside it; nodes a split creates join `local` so later inserts can descend onto them. AVL
-  rebalances per key (it cannot be batch-rebalanced in one pass), so for both trees the result equals
-  sequential single inserts, the shape the oblivious port mirrors.
 
 ---
 
@@ -492,7 +486,8 @@ disk.
 - A sealed row is exactly `row_bytes` long whatever its occupancy or value lengths, and building and
   per-op eviction seal through the same `PathCipher`, so an initial row is indistinguishable from an
   evicted one.
-- Every scheme on a shared client has a distinct `name` (its storage label).
+- Every scheme on a shared client has a distinct `name` (its storage label). Configs default it to
+  `<prefix>-<8 hex digits>` drawn from `secrets.randbelow`, and the server rejects a reused label.
 - ORAM: `operate_on_key(key)` reads, `operate_on_key(key, value)` writes `value` (`bytes`), an address
   never written reads `b""`, and the return value is always the pre-write value.
 - `FlexibleBinaryTree` absent nodes are empty rows and are skipped by `read_path`, so the server sees

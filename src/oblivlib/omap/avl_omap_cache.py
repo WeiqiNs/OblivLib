@@ -1,5 +1,3 @@
-"""AVL OMAP with caching optimization for repeated accesses."""
-
 from typing import Any, override
 
 from oblivlib.dependency.config import AvlOmapCachedConfig
@@ -7,14 +5,6 @@ from oblivlib.omap.avl_omap import AVLOmap
 
 
 class AVLOmapCached(AVLOmap):
-    """AVL OMAP with stash caching. Versus ``AVLOmap``: a cache hit (node already in stash) skips the
-    ORAM access; insert/search/delete keep the visited path in local, flushed at the start of the next
-    op, so nearby repeated accesses reuse cached nodes; padding is a single tree-height traversal.
-
-    Unlike ``BPlusOmapCached.search`` (which streams and keeps nothing), this ``search`` retains the
-    path in local for reuse. Both cached variants are intentionally NOT per-op oblivious -- caching
-    makes the access pattern data-dependent."""
-
     def __init__(self, config: AvlOmapCachedConfig):
         super().__init__(config)
 

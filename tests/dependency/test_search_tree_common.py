@@ -61,12 +61,3 @@ class TestSearchTreeBatched:
     """The batched (multi-key) descent that the oblivious port will mirror: one level-synchronized
     descent serves the whole key set rather than one descent per key. The per-tree files cross-check it
     against sequential single-key ops; this pins the empty and absent-key edges both trees share."""
-
-    def test_multi_ops_handle_empty_inputs(self, make_search_tree):
-        tree = make_search_tree(leaf_range=1000)
-        assert tree.multi_search([1, 2, 3]) == {1: None, 2: None, 3: None}
-        tree.multi_insert([])
-        assert tree.multi_search([]) == {}
-
-        tree.multi_insert([(5, 50), (6, 60)])
-        assert tree.multi_search([5, 6, 7]) == {5: 50, 6: 60, 7: None}

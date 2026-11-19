@@ -1,7 +1,6 @@
-"""OMAP constructed with the AVL tree ODS."""
-
 import copy
 import math
+from collections.abc import Callable
 from functools import cached_property
 from typing import Any, Protocol, cast, override
 
@@ -13,32 +12,24 @@ from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
 
 
 class AVLNode(Protocol):
-    """Type-only view of an AVL block: a ``Data`` whose ``value`` is always an ``AVLData``. Runtime
-    objects are plain ``Data``; this exists so the type checker resolves ``node.value.l_key`` etc."""
-
     key: Any
     leaf: int
     value: AVLData
 
 
 class LocalNodes(LocalNodesBase[AVLNode]):
-    """Nodes retrieved during AVL operations: adds AVL rotation/reparenting helpers to the shared base."""
-
     def reparent(self, child_key: Any, new_parent_key: Any) -> None:
-        """Update a node's parent link (and root_key if it becomes the root)."""
         self.parent_of[child_key] = new_parent_key
         if new_parent_key is None:
             self.root_key = child_key
 
     def swap_in_path(self, key_a: Any, key_b: Any) -> None:
-        """Swap two keys' positions in the path (used after rotation); skipped if either is absent."""
         if key_a in self.path and key_b in self.path:
             idx_a = self.path.index(key_a)
             idx_b = self.path.index(key_b)
             self.path[idx_a], self.path[idx_b] = self.path[idx_b], self.path[idx_a]
 
-    def update_all_leaves(self, get_new_leaf) -> None:
-        """Give every node a fresh leaf and fix each parent's stored child-leaf, in a single pass."""
+    def update_all_leaves(self, get_new_leaf: Callable[[], int]) -> None:
         for key, node in self.nodes.items():
             node.leaf = get_new_leaf()
             parent = self.get_parent(key)
@@ -51,7 +42,6 @@ class LocalNodes(LocalNodesBase[AVLNode]):
     def update_child_in_parent(
         self, parent_key: Any, old_child_key: Any, new_key: Any, new_leaf: Any, new_height: int
     ) -> None:
-        """Point a parent's child (the side matching old_child_key) at new (key, leaf, height)."""
         parent = cast(AVLNode | None, self.nodes.get(parent_key))
         if parent is None:
             return
@@ -66,7 +56,6 @@ class LocalNodes(LocalNodesBase[AVLNode]):
             parent.value.r_height = new_height
 
     def replace_node_key(self, old_key: Any, new_key: Any) -> None:
-        """Rename a node's key across all tracking structures (used in delete with two children)."""
         if old_key not in self.nodes:
             return
 
@@ -131,7 +120,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         return blocks, (root.key, root.leaf)
 
     def _update_height(self) -> None:
-        """Recompute every local node's height bottom-up and update each parent's stored child-height."""
         for node_key in reversed(self._local.path):
             node = self._local.require(node_key)
 
@@ -147,8 +135,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
                     parent.value.r_height = new_height
 
     def _rotate_node(self, node_key: Any, rotate_left: bool) -> tuple[Any, int, int]:
-        """AVL rotation at ``node_key`` (it becomes the child); returns the new subtree root's
-        (key, leaf, height)."""
         node = self._local.get(node_key)
         if node is None:
             raise ValueError(f"Node {node_key} not found in local.")
@@ -183,8 +169,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         return pivot.key, pivot.leaf, new_height
 
     def _balance_node(self, node_key: Any, is_delete: bool = False) -> tuple[Any, int, int]:
-        """Re-balance ``node_key`` if unbalanced; returns the (key, leaf, height) now at this position.
-        On delete the off-path child/grandchild may need loading first (extra reads, see _op_round_bounds)."""
         node = self._local.require(node_key)
         balance = node.value.l_height - node.value.r_height
 
@@ -223,7 +207,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         return node.key, node.leaf, 1 + max(node.value.l_height, node.value.r_height)
 
     def _balance_local(self, is_delete: bool = False) -> None:
-        """Rebalance the downloaded path bottom-up, re-pointing each parent at the post-rotation child."""
         idx = len(self._local.path) - 1
 
         while idx >= 0:
@@ -258,8 +241,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
             self.root = (root_node.key, root_node.leaf)
 
     def _descend_and_link(self, key: Any, data_block: Data) -> None:
-        """Descend from the root to ``key``'s insertion point, link ``data_block`` there, add it to local.
-        Pure tree algorithm: the begin/finalize framing belongs to the caller."""
         root = self.root
         assert root is not None
         self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None)
@@ -286,8 +267,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         self._local.add(node=data_block, parent_key=current_key)
 
     def _descend_to_key(self, key: Any) -> Any:
-        """Descend from the root toward ``key``; return the key where the descent stopped (the match, or
-        the last node when ``key`` is absent). Pure tree algorithm."""
         root = self.root
         assert root is not None
         self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None)
@@ -312,9 +291,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         return current_key
 
     def _delete_at_node(self, node_key: Any) -> tuple[Any, bool]:
-        """Remove the (already-loaded) node via the three AVL delete cases; returns (deleted_value, done).
-        ``done`` is True only for the single-node tree, where the new root is set and local cleared (so the
-        caller skips the post-op fixup). Pure tree algorithm."""
         node = self._local.require(node_key)
         deleted_value = node.value.value
         parent_key = self._local.get_parent_key(node_key)
@@ -384,28 +360,17 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         return deleted_value, False
 
     def _post_op_fixup(self, is_delete: bool = False) -> None:
-        """Shared post-op fixup: recompute heights, re-leaf every node, then rebalance bottom-up."""
         self._update_height()
         self._local.update_all_leaves(self._get_new_leaf)
         self._balance_local(is_delete=is_delete)
 
     @override
     def _op_round_bounds(self) -> dict[str, int]:
-        """Self-clearing round cost per op (retrieve the nodes, then evict them all back), height h.
-        search/insert pull h nodes and need h more rounds to evict them => 2h (+1 margin); delete pulls
-        up to 3h (h to locate the node + in-order successor, 2h for a rebalance that can cascade to the
-        root, fetching the off-path child + grandchild per level) and needs 3h to evict => 6h. Oblivious
-        mode (distinguishable=False) pads all three to their max (see ``_op_budget``);
-        ``test_omap_common.py`` enforces both regimes."""
         h = self._max_height
         return {"search": 2 * h + 1, "insert": 2 * h + 1, "delete": 6 * h}
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:
-        """Streaming search: descend one node at a time, re-homing and evicting each before reading the
-        next, so ``local`` holds O(1) nodes (not the whole path). Pads to the op budget, so it is
-        oblivious when distinguishable=False (fixed read/evict round count) and cheaper/depth-varying
-        when distinguishable=True."""
         self._op_rounds = 0
         budget = self._op_budget("search")
         if self._short_circuit_read(key=key, num_round=budget):
@@ -464,8 +429,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
     @override
     def _insert(self, key: Any, value: Any = None) -> None:
-        """Mirrors plaintext ``AVLTree.insert``: descend to the insertion point, link the new leaf, then
-        rebalance bottom-up (at most one rotation, reusing the already-loaded path nodes)."""
         self._op_rounds = 0
         budget = self._op_budget("insert")
         if key is None:
@@ -491,7 +454,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
     @override
     def _delete(self, key: Any) -> Any:
-        """Delete ``key`` and return its value (or None if absent)."""
         self._op_rounds = 0
         budget = self._op_budget("delete")
         if self._short_circuit_read(key=key, num_round=budget):

@@ -8,7 +8,9 @@ with `dataclasses.replace(cfg, num_data=...)`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import secrets
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, get_args
 
@@ -19,6 +21,10 @@ if TYPE_CHECKING:
 ResetMethod = Literal["prob", "hard"]
 
 
+def unique_name(prefix: str) -> Callable[[], str]:
+    return lambda: f"{prefix}-{secrets.randbelow(1 << 32):08x}"
+
+
 @dataclass(frozen=True, kw_only=True)
 class OramConfig:
     """Shared construction parameters for every tree-based ORAM.
@@ -27,8 +33,9 @@ class OramConfig:
       power-of-two leaf count that covers it.
     - ``data_size``: the most bytes a value may hold; a longer value raises ``ContractError``. Sealed rows
       are sized for a full bucket of blocks with values this long.
-    - ``client``: the ``Client`` handle to server storage; required before any I/O.
-    - ``name``: this scheme's storage label on ``client``; distinct per scheme sharing one client.
+    - ``client``: the ``Client`` handle to server storage.
+    - ``name``: this scheme's storage label on ``client``. Defaults to the scheme's prefix plus a random
+      suffix, so schemes sharing a client never collide; pass one only to address storage by a known label.
     - ``build_file``: build the initial tree on the client in this file instead of memory, for trees
       larger than RAM. Requires an ``encryptor`` (the file holds only sealed rows); it is handed to the
       server and gone from this path once hosted, so position-map children reuse it in turn.
@@ -40,8 +47,8 @@ class OramConfig:
 
     num_data: int
     data_size: int
-    client: Client | None = None
-    name: str = "oram"
+    client: Client
+    name: str = field(default_factory=unique_name("oram"))
     build_file: str | Path | None = None
     bucket_size: int = 4
     stash_scale: int = 7
@@ -62,19 +69,19 @@ class OramConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class PathOramConfig(OramConfig):
-    name: str = "po"
+    name: str = field(default_factory=unique_name("po"))
 
 
 @dataclass(frozen=True, kw_only=True)
 class StaticOramConfig(OramConfig):
-    name: str = "so"
+    name: str = field(default_factory=unique_name("so"))
 
 
 @dataclass(frozen=True, kw_only=True)
 class MulPathOramConfig(OramConfig):
     """``stash_scale_multiplier`` multiplies ``stash_scale`` to absorb a batch of paths per access."""
 
-    name: str = "mul_path_oram"
+    name: str = field(default_factory=unique_name("mul_path_oram"))
     stash_scale_multiplier: int = 1
 
 
@@ -83,7 +90,7 @@ class RecursiveOramConfig(OramConfig):
     """``on_chip_mem``: target size of the position map kept on the client; ``num_data`` must exceed it.
     ``compression_ratio``: child leaves stored per position-map block."""
 
-    name: str = "rc"
+    name: str = field(default_factory=unique_name("rc"))
     on_chip_mem: int = 10
     compression_ratio: int = 4
 
@@ -122,7 +129,7 @@ class CounterOramConfig(OramConfig):
 class DaOramConfig(CounterOramConfig):
     """``on_chip_mem``: target size of the position map kept on the client; ``num_data`` must exceed it."""
 
-    name: str = "da"
+    name: str = field(default_factory=unique_name("da"))
     on_chip_mem: int = 10
 
     def __post_init__(self) -> None:
@@ -138,7 +145,7 @@ class FreecursiveOramConfig(CounterOramConfig):
     ``1 / num_ic``) and treats a counter overflow as an error; ``"hard"`` (the insecure original scheme)
     resets only on overflow."""
 
-    name: str = "fc"
+    name: str = field(default_factory=unique_name("fc"))
     num_ic: int = 48
     ic_length: int = 10
     gc_length: int = 32
@@ -165,7 +172,7 @@ class OmapConfig(OramConfig):
     the default ``False`` pads every op to the largest bound.
     """
 
-    name: str = "omap"
+    name: str = field(default_factory=unique_name("omap"))
     key_size: int
     distinguishable: bool = False
 
@@ -177,19 +184,19 @@ class OmapConfig(OramConfig):
 
 @dataclass(frozen=True, kw_only=True)
 class AvlOmapConfig(OmapConfig):
-    name: str = "avl"
+    name: str = field(default_factory=unique_name("avl"))
 
 
 @dataclass(frozen=True, kw_only=True)
 class AvlOmapCachedConfig(AvlOmapConfig):
-    name: str = "avl_opt"
+    name: str = field(default_factory=unique_name("avl_opt"))
 
 
 @dataclass(frozen=True, kw_only=True)
 class BPlusOmapConfig(OmapConfig):
     """``order``: maximum children per internal node (at least 3)."""
 
-    name: str = "bplus"
+    name: str = field(default_factory=unique_name("bplus"))
     order: int
 
     def __post_init__(self) -> None:
@@ -200,12 +207,12 @@ class BPlusOmapConfig(OmapConfig):
 
 @dataclass(frozen=True, kw_only=True)
 class BPlusOmapCachedConfig(BPlusOmapConfig):
-    name: str = "bplus_opt"
+    name: str = field(default_factory=unique_name("bplus_opt"))
 
 
 @dataclass(frozen=True, kw_only=True)
 class GroupOmapConfig(OmapConfig):
-    name: str = "group_omap"
+    name: str = field(default_factory=unique_name("group_omap"))
 
 
 @dataclass(frozen=True, kw_only=True)

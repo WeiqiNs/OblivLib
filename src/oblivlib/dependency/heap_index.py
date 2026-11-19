@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from oblivlib.dependency.types import Data, PathData
 
 
@@ -20,6 +22,11 @@ def parent(index: int) -> int:
 def path_to_root(index: int) -> list[int]:
     node = index + 1
     return [(node >> shift) - 1 for shift in range(node.bit_length())]
+
+
+def path_leaves(indices: Iterable[int], level: int) -> list[int]:
+    first_leaf = leaf_index(0, level)
+    return sorted(index - first_leaf for index in indices if index >= first_leaf)
 
 
 def path_indices(leaves: list[int], level: int) -> list[int]:

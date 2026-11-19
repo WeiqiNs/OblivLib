@@ -1,6 +1,3 @@
-"""Static ORAM: a PathOram whose leaf positions are fixed by a PRF of the key rather than
-reassigned on each access."""
-
 from typing import Any, override
 
 from oblivlib.dependency import Blake2Prf, PseudoRandomFunction
@@ -14,7 +11,6 @@ class StaticOram(PathOram[StaticOramConfig]):
         self._prf = prf if prf else Blake2Prf()
 
     def _get_path_number(self, key: int) -> int:
-        """Fixed PRF-derived leaf for key."""
         return self._prf.digest_mod_n(str(key).encode(), self._leaf_range)
 
     @override

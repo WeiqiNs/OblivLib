@@ -1,6 +1,6 @@
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import override
@@ -25,6 +25,11 @@ class FileImage:
     level: int
     row_bytes: int
     path: Path
+
+    def rows(self) -> Iterator[bytes]:
+        with self.path.open("rb") as file:
+            while row := file.read(self.row_bytes):
+                yield row
 
 
 TreeImage = MemoryImage | FileImage

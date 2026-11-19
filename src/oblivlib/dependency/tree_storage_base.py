@@ -2,12 +2,13 @@ import secrets
 from collections.abc import Iterable
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 
 from oblivlib.dependency.client import Client
 from oblivlib.dependency.codec import BlockCodec, DefaultCodec, packed_size
 from oblivlib.dependency.config import OramConfig
 from oblivlib.dependency.crypto import Encryptor
-from oblivlib.dependency.errors import MissingClientError, StashOverflowError
+from oblivlib.dependency.errors import StashOverflowError
 from oblivlib.dependency.heap_index import compute_level, empty_path, fill_data_to_path
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
 from oblivlib.dependency.tree_builder import TreeImage, build_tree
@@ -22,7 +23,7 @@ class TreeStorageBase[ConfigT: OramConfig]:
         self._leaf_range: int = 1 << (self._level - 1)
         self._stash_capacity: int = config.stash_scale * max(1, self._level - 1)
 
-        self._stash: list = []
+        self._stash: list[Any] = []
         self._max_stash: int = 0
 
     @property
@@ -55,8 +56,6 @@ class TreeStorageBase[ConfigT: OramConfig]:
 
     @property
     def _client(self) -> Client:
-        if self._config.client is None:
-            raise MissingClientError(f"{type(self).__name__} {self._name!r} has no client; pass client= in its config")
         return self._config.client
 
     @cached_property

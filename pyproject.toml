@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "oblivlib"
 version = "0.1.0"
-description = "A Python library of oblivious data structures — Oblivious RAM (ORAM) and Oblivious Map (OMAP)."
+description = "A Python library of oblivious data structures and algorithms."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -20,6 +20,7 @@ keywords = [
     "oblivious",
     "oblivious-ram",
     "oblivious-map",
+    "oblivious-data-structures",
     "cryptography",
     "privacy",
     "security",
@@ -32,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security :: Cryptography",
     "Topic :: Scientific/Engineering",
     "Typing :: Typed",
@@ -50,9 +52,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/WeiqiNs/DAORAM"
-Repository = "https://github.com/WeiqiNs/DAORAM"
-Issues = "https://github.com/WeiqiNs/DAORAM/issues"
+Homepage = "https://github.com/WeiqiNs/OblivLib"
+Repository = "https://github.com/WeiqiNs/OblivLib"
+Issues = "https://github.com/WeiqiNs/OblivLib/issues"
 
 [tool.pytest.ini_options]
 # importlib mode lets same-named test modules coexist without __init__.py packages.

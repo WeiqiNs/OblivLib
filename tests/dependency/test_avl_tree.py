@@ -4,8 +4,6 @@ non-recursive implementations against each other (the standard the oblivious AVL
 
 import random
 
-import pytest
-
 from oblivlib.dependency import AVLTree, KVPair
 
 
@@ -30,18 +28,6 @@ def _shape(node):
 
 
 class TestAVLTree:
-    def test_multi_search_matches_search(self):
-        keys = list(range(300))
-        tree = AVLTree(leaf_range=1000)
-        root = None
-        for k in keys:
-            root = tree.insert(root=root, kv_pair=KVPair(key=k, value=k * 2))
-
-        query = keys + [-1, 500]
-        results = tree.multi_search(keys=query, root=root)
-        for k in query:
-            assert results[k] == AVLTree.search(key=k, root=root)
-
     def test_recursive_insert_matches_iterative(self):
         tree = AVLTree(leaf_range=1000)
         root_it = root_rec = None
@@ -50,41 +36,6 @@ class TestAVLTree:
             root_rec = tree.recursive_insert(root=root_rec, kv_pair=KVPair(key=k, value=k))
         _invariants(root_it)
         assert _shape(root_it) == _shape(root_rec)
-
-    def test_insert_into_local_rejects_unfetched_node(self):
-        tree = AVLTree(leaf_range=100)
-        root = None
-        for k in range(10):
-            root = tree.insert(root=root, kv_pair=KVPair(key=k, value=k))
-        with pytest.raises(ValueError):
-            tree._insert_into_local(root=root, local=set(), kv_pair=KVPair(key=100, value=100))
-
-    def test_multi_insert_matches_sequential(self):
-        keys = random.Random(2).sample(range(100000), 500)
-        tree = AVLTree(leaf_range=200000)
-        root_batched = root_single = None
-        for k in keys:
-            root_single = tree.insert(root=root_single, kv_pair=KVPair(key=k, value=k))
-        root_batched = tree.multi_insert(root=root_batched, kv_pairs=[KVPair(key=k, value=k) for k in keys])
-
-        _invariants(root_batched)
-        assert _shape(root_batched) == _shape(root_single)
-
-    def test_multi_insert_into_existing_matches_sequential(self):
-        rng = random.Random(11)
-        base = rng.sample(range(0, 100000, 2), 1000)
-        batch = rng.sample(range(1, 100000, 2), 500)
-        tree = AVLTree(leaf_range=200000)
-        root_batched = root_single = None
-        for k in base:
-            root_batched = tree.insert(root=root_batched, kv_pair=KVPair(key=k, value=k))
-            root_single = tree.insert(root=root_single, kv_pair=KVPair(key=k, value=k))
-        root_batched = tree.multi_insert(root=root_batched, kv_pairs=[KVPair(key=k, value=k) for k in batch])
-        for k in batch:
-            root_single = tree.insert(root=root_single, kv_pair=KVPair(key=k, value=k))
-
-        _invariants(root_batched)
-        assert _shape(root_batched) == _shape(root_single)
 
     def test_recursive_delete_matches_iterative(self):
         tree = AVLTree(leaf_range=1000)

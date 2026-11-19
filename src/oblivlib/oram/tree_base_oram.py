@@ -1,10 +1,3 @@
-"""Abstract base class for binary-tree-based ORAMs.
-
-Adds the ORAM-specific layer (position-map levels, eviction, the operate_on_key access template) on top
-of the shared ``TreeStorageBase`` (config accessors, level/stash math, random leaves, path encryption).
-Private members use single underscores (not name-mangled ``__``) so subclasses can access them.
-"""
-
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
@@ -24,7 +17,6 @@ def _initial_pairs(data: InitData | None) -> Iterable[tuple[int, Any]]:
 
 
 def pos_map_level_count(*, num_data: int, on_chip: int, ratio: int) -> int:
-    """The fewest position-map levels ``L`` with ``on_chip * ratio**L >= num_data``."""
     if ratio < 2:
         raise ValueError(f"ratio must be >= 2 to compress {num_data} entries into {on_chip}, got {ratio}.")
     count, capacity = 0, on_chip
@@ -35,7 +27,6 @@ def pos_map_level_count(*, num_data: int, on_chip: int, ratio: int) -> int:
 
 
 def pos_map_keys(key: int, *, ratio: int, count: int) -> list[tuple[int, int]]:
-    """For each of ``count`` position maps (outermost first), the (block key, offset within block) for key."""
     keys = []
     for _ in range(count):
         key, offset = divmod(key, ratio)
@@ -52,8 +43,6 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
 
     @property
     def max_stash(self) -> int:
-        """Peak stash size observed, including every position-map level's, for sizing client storage.
-        (An upper bound: the per-level peaks need not occur at the same time.)"""
         return self._max_stash + sum(level._max_stash for level in self._levels)
 
     @abstractmethod
@@ -73,8 +62,6 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
                 yield Data(key=key, leaf=self._initial_leaf(key), value=b"")
 
     def _read_block(self, key: int, value: Any, *, leaves: list[int], new_leaf: int) -> Any:
-        """Pull the paths to ``leaves`` into the stash, read key (optionally writing value), remap it to
-        new_leaf, and leave those paths pending for ``_write_back``."""
         self._client.add_read_path(label=self._name, leaves=leaves)
         self._absorb_path(path=self._client.execute().require(self._name))
         data = self._require_in_stash(key=key)
@@ -91,9 +78,7 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
         self._pending_leaves = []
 
     @abstractmethod
-    def init_server_storage(self, data: InitData | None = None) -> None:
-        """Build and host this oram's server storage. ``data`` gives initial values, as a mapping or a
-        one-shot stream of ``(key, value)`` pairs; every other key starts as ``b""``."""
+    def init_server_storage(self, data: InitData | None = None) -> None: ...
 
     def _require_access(self, key: Any, value: Any) -> None:
         require_oram_key(self._identity, key, self._num_data)
@@ -101,19 +86,16 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
             require_value(self._identity, value, self._data_size)
 
     def operate_on_key(self, key: int, value: Any = UNSET) -> bytes:
-        """Return key's current value (``b""`` until written); write ``value`` when one is given."""
         self._require_access(key, value)
         read_value = self._operate_on_key_without_eviction(key, value)
         self._write_back()
         return read_value
 
     def operate_on_key_without_eviction(self, key: int, value: Any = UNSET) -> bytes:
-        """Like ``operate_on_key`` but leaves the path's write-back to ``eviction_with_update_stash``."""
         self._require_access(key, value)
         return self._operate_on_key_without_eviction(key, value)
 
     def eviction_with_update_stash(self, key: int, value: bytes) -> None:
-        """Set key's value in the stash, then evict and write the path back."""
         require_oram_key(self._identity, key, self._num_data)
         require_value(self._identity, value, self._data_size)
         if not self._pending_leaves:

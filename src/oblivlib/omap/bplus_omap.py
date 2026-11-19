@@ -1,6 +1,5 @@
-"""OMAP constructed with the B+ tree ODS."""
-
 import math
+from collections.abc import Callable
 from functools import cached_property
 from typing import Any, Protocol, cast, override
 
@@ -12,32 +11,23 @@ from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
 
 
 class BPlusValue(Protocol):
-    """Type-only view of a B+ node's payload (a ``BPlusData``); exists so the type checker resolves
-    ``node.value.keys[i]`` etc. through the ``Data.value: Any`` field."""
-
     keys: list[Any]
     values: list[Any]
 
 
 class BPlusNode(Protocol):
-    """Type-only view of a B+ block: a ``Data`` whose ``value`` is a populated ``BPlusData``. Runtime
-    objects are plain ``Data``; the ``LocalNodes`` getters cast their stored ``Data`` to this view."""
-
     key: Any
     leaf: int
     value: BPlusValue
 
 
 class LocalNodes(LocalNodesBase[BPlusNode]):
-    """Nodes retrieved during B+ operations: adds child-index tracking and leaf helpers to the base."""
-
     def __init__(self) -> None:
         super().__init__()
         self.child_index_of: dict[Any, int] = {}
 
     @staticmethod
     def is_leaf_node(node: BPlusNode) -> bool:
-        """A node is a leaf when its keys and values lists have equal length."""
         return len(node.value.keys) == len(node.value.values)
 
     @override
@@ -50,20 +40,17 @@ class LocalNodes(LocalNodesBase[BPlusNode]):
         return self.child_index_of.get(key)
 
     def get_leaf(self) -> BPlusNode | None:
-        """Get the leaf node (last in path; None when the path is empty)."""
         if not self.path:
             return None
         return cast(BPlusNode | None, self.nodes.get(self.path[-1]))
 
     def require_leaf(self) -> BPlusNode:
-        """Get the leaf node (last in path) known to exist; raise if it is genuinely absent."""
         node = cast(BPlusNode | None, self.nodes.get(self.path[-1])) if self.path else None
         if node is None:
             raise KeyError("The local has no leaf node.")
         return node
 
-    def update_all_leaves(self, get_new_leaf) -> None:
-        """Give every node a fresh leaf and update each parent's stored child (key, leaf), in one pass."""
+    def update_all_leaves(self, get_new_leaf: Callable[[], int]) -> None:
         for key, node in self.nodes.items():
             node.leaf = get_new_leaf()
             parent = self.get_parent(key)
@@ -78,7 +65,6 @@ class LocalNodes(LocalNodesBase[BPlusNode]):
         return node
 
     def pop(self, key: Any) -> BPlusNode:
-        """Remove and return a node known to be loaded; raise if it is genuinely absent."""
         node = cast(BPlusNode | None, self.remove(key))
         if node is None:
             raise KeyError(f"Node {key} is not loaded in local.")
@@ -145,8 +131,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         return blocks, (root.id, root.leaf)
 
     def _find_leaf(self, key: Any) -> int:
-        """Descend to the leaf holding ``key`` without keeping the visited nodes in local (each is moved
-        to the stash and evicted before the next is read); returns the leaf's old path."""
         if self._local:
             raise MemoryError("The local storage was not emptied before this operation.")
 
@@ -186,7 +170,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         return old_leaf
 
     def _find_leaf_to_local(self, key: Any) -> None:
-        """Descend to the leaf holding ``key``, keeping every visited node in local with parent links."""
         if self._local:
             raise MemoryError("The local storage was not emptied before this operation.")
 
@@ -219,8 +202,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             node.leaf = new_leaf
 
     def _split_node(self, node: BPlusNode) -> tuple[int, int]:
-        """Split a full ``node`` in place into a left (the original) and a new right half, depending on
-        whether it is a leaf or internal; the new right node is added to the stash. Returns its (key, leaf)."""
         right_node = self._get_bplus_data()
 
         if self._local.is_leaf_node(node):
@@ -238,7 +219,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         return right_node.key, right_node.require_leaf()
 
     def _insert_in_parent(self, child_node: BPlusNode, parent_node: BPlusNode) -> None:
-        """Split ``child_node`` and insert the promoted key + new right pointer into ``parent_node``."""
         insert_key = child_node.value.keys[self._mid]
         right_node = self._split_node(node=child_node)
 
@@ -255,7 +235,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
                 return
 
     def _create_parent(self, child_node: BPlusNode) -> None:
-        """Split a rootless full ``child_node`` and create a new root over the two halves."""
         insert_key = child_node.value.keys[self._mid]
         right_node = self._split_node(node=child_node)
 
@@ -267,7 +246,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         self.root = (parent_node.key, parent_node.leaf)
 
     def _insert_into_loaded_leaf(self, key: Any, value: Any) -> None:
-        """Insert ``key``/``value`` into the leaf already loaded in local, then split overflow up the path."""
         leaf = self._local.require_leaf()
 
         for index, each_key in enumerate(leaf.value.keys):
@@ -283,7 +261,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         self._perform_insertion()
 
     def _perform_insertion(self):
-        """Split any overflowed node back up the loaded path (leaf to root)."""
         path = self._local.path
         index = len(path) - 1
 
@@ -306,12 +283,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
     def _find_path_with_siblings(
         self, key: Any
     ) -> tuple[dict[int, BPlusNode], list[int], dict[int, BPlusNode], dict[int, int], int]:
-        """Find the root-to-leaf path for ``key``, pre-fetching one sibling at every non-root level.
-
-        Pre-fetching is what makes delete oblivious: the path child *and* a sibling are read at each level
-        whether or not a later underflow needs the sibling, so the read count depends only on the (public)
-        tree height, never on the borrow/merge outcome. Returns (path_nodes by level, child_indices,
-        siblings by child-level, sibling_indices by child-level, num path reads performed)."""
         if self._local:
             raise MemoryError("The local storage was not emptied before this operation.")
 
@@ -382,12 +353,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         siblings: dict[int, BPlusNode],
         sibling_indices: dict[int, int],
     ) -> Any:
-        """Remove ``key`` from the pre-fetched path and rebalance, leaving the survivors in place.
-
-        Operates on the structures from ``_find_path_with_siblings``: removes the key from the leaf,
-        resolves underflow bottom-up with the pre-fetched siblings (borrow-or-merge), and collapses the
-        root. Merged-away nodes are dropped from ``path_nodes``/``siblings`` so the caller flushes only
-        survivors. Returns the deleted value, or None if the key was absent."""
         min_keys = (self._order - 1) // 2
 
         leaf_level = len(path_nodes) - 1
@@ -491,20 +456,11 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
     @override
     def _op_round_bounds(self) -> dict[str, int]:
-        """Self-clearing round cost per op (retrieve the nodes, then evict them all back), height h.
-        search/insert pull h nodes and need h more rounds to evict them => 2h (+1 margin); delete
-        pre-fetches the path child + one sibling at each non-root level (~2h retrieval, fixed regardless
-        of the borrow/merge outcome -- see _find_path_with_siblings) and needs 2h to evict => 4h.
-        Oblivious mode (distinguishable=False) pads all three to their max (see ``_op_budget``);
-        ``test_omap_common.py`` enforces both regimes."""
         h = self._max_height
         return {"search": 2 * h + 1, "insert": 2 * h + 1, "delete": 4 * h}
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:
-        """Streaming search: descend to the leaf via _find_leaf (each visited node evicted before the
-        next is read, so ``local`` holds O(1) nodes), then pad to the op budget. Oblivious when
-        distinguishable=False (fixed read/evict round count); cheaper/depth-varying when True."""
         self._op_rounds = 0
         budget = self._op_budget("search")
         if self._short_circuit_read(key=key, num_round=budget):
@@ -534,8 +490,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
     @override
     def _insert(self, key: Any, value: Any = None) -> None:
-        """Mirrors plaintext ``BPlusTree.insert``: descend to the target leaf, add the pair, then split
-        any overflowed node back up the path (splits add stash nodes, not new reads)."""
         self._op_rounds = 0
         budget = self._op_budget("insert")
         if key is None:
@@ -561,12 +515,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
     @override
     def _delete(self, key: Any) -> Any:
-        """Delete ``key`` and return its value (or None if absent).
-
-        Mirrors plaintext ``BPlusTree.delete`` / ``_fix_underflow`` (single sibling per underflow, prefer
-        left else right, borrow-or-merge). Obliviousness comes from pre-fetching that sibling at every
-        level, so every path -- hit, miss, borrow, or merge -- does the same reads, padded to the fixed
-        budget. So an observer cannot tell a hit from a miss, nor read off the rebalancing."""
         self._op_rounds = 0
         budget = self._op_budget("delete")
 

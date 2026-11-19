@@ -1,9 +1,3 @@
-"""Path ORAM.
-
-Call ``init_server_storage`` once after construction to build the server storage, then use
-``operate_on_key`` to obliviously read/write data points.
-"""
-
 from typing import Any, Never, override
 
 from oblivlib.dependency import InitData, OramConfig, PosMap
@@ -11,9 +5,6 @@ from oblivlib.oram.tree_base_oram import TreeBaseOram
 
 
 class PathOram[ConfigT: OramConfig](TreeBaseOram[ConfigT, Never]):
-    """Path ORAM. Generic over its config type so subclasses (StaticOram, MulPathOram) can
-    specialize ``_config`` to their own config while reusing this scheme's logic."""
-
     def __init__(self, config: ConfigT):
         super().__init__(config)
 

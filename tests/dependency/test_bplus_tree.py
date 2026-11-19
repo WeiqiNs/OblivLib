@@ -4,8 +4,6 @@ non-recursive implementations against each other (the standard the oblivious B+ 
 
 import random
 
-import pytest
-
 from oblivlib.dependency import BPlusTree, BPlusTreeNode, KVPair
 
 
@@ -33,18 +31,6 @@ def _shape(node):
 
 
 class TestBPlusTree:
-    def test_multi_search_matches_search(self):
-        tree = BPlusTree(order=4, leaf_range=1000)
-        root = BPlusTreeNode()
-        present = list(range(300))
-        for k in present:
-            root = tree.insert(root=root, kv_pair=KVPair(key=k, value=k * 2))
-
-        results = tree.multi_search(keys=present + [-1, 500], root=root)
-        for k in present:
-            assert results[k] == tree.search(key=k, root=root)
-        assert results[-1] is None and results[500] is None
-
     def test_recursive_insert_matches_iterative(self):
         for order in (3, 4, 5):
             tree = BPlusTree(order=order, leaf_range=1000)
@@ -54,43 +40,6 @@ class TestBPlusTree:
                 root_rec = tree.recursive_insert(root=root_rec, kv_pair=KVPair(key=k, value=k))
             _invariants(root_it)
             assert _shape(root_it) == _shape(root_rec)
-
-    def test_insert_into_local_rejects_unfetched_node(self):
-        tree = BPlusTree(order=4, leaf_range=1000)
-        root = BPlusTreeNode()
-        for k in range(20):
-            root = tree.insert(root=root, kv_pair=KVPair(key=k, value=k))
-        with pytest.raises(ValueError):
-            tree._insert_into_local(root=root, local=set(), kv_pair=KVPair(key=100, value=100))
-
-    def test_multi_insert_matches_sequential(self):
-        for order in (3, 4, 5):
-            keys = random.Random(order).sample(range(100000), 400)
-            tree = BPlusTree(order=order, leaf_range=200000)
-            root_single = BPlusTreeNode()
-            for k in keys:
-                root_single = tree.insert(root=root_single, kv_pair=KVPair(key=k, value=k))
-            root_batched = tree.multi_insert(root=BPlusTreeNode(), kv_pairs=[KVPair(key=k, value=k) for k in keys])
-
-            _invariants(root_batched)
-            assert _shape(root_batched) == _shape(root_single)
-
-    def test_multi_insert_into_existing_matches_sequential(self):
-        for order in (3, 4, 5):
-            rng = random.Random(order + 10)
-            base = rng.sample(range(0, 100000, 2), 800)
-            batch = rng.sample(range(1, 100000, 2), 400)
-            tree = BPlusTree(order=order, leaf_range=200000)
-            root_batched, root_single = BPlusTreeNode(), BPlusTreeNode()
-            for k in base:
-                root_batched = tree.insert(root=root_batched, kv_pair=KVPair(key=k, value=k))
-                root_single = tree.insert(root=root_single, kv_pair=KVPair(key=k, value=k))
-            root_batched = tree.multi_insert(root=root_batched, kv_pairs=[KVPair(key=k, value=k) for k in batch])
-            for k in batch:
-                root_single = tree.insert(root=root_single, kv_pair=KVPair(key=k, value=k))
-
-            _invariants(root_batched)
-            assert _shape(root_batched) == _shape(root_single)
 
     def test_recursive_delete_matches_iterative(self):
         for order in (3, 4, 5):

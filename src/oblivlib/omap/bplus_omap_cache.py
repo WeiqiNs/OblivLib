@@ -1,5 +1,3 @@
-"""B+ tree OMAP with caching optimization for repeated accesses."""
-
 from typing import Any, override
 
 from oblivlib.dependency.config import BPlusOmapCachedConfig
@@ -7,17 +5,6 @@ from oblivlib.omap.bplus_omap import BPlusNode, BPlusOmap
 
 
 class BPlusOmapCached(BPlusOmap):
-    """B+ OMAP with stash caching. Versus ``BPlusOmap``: a cache hit (node already in stash) skips the
-    ORAM access; insert keeps the visited path in local, flushed at the start of the next op, so nearby
-    repeated accesses reuse cached nodes; fewer interaction rounds -- insert/search are one
-    root->leaf descent (h rounds), and delete fetches the path child *and* one sibling together in a
-    single batched read-write round per level (see ``_batch_move_nodes_to_local``), so it is h rounds
-    (1 root + h-1 batched) instead of the non-cached 2h-1, while bandwidth stays ~2h-1 paths.
-
-    Unlike ``AVLOmapCached.search`` (which keeps the path cached), this ``search`` streams and keeps
-    nothing in local. Both cached variants are intentionally NOT per-op oblivious -- caching makes the
-    access pattern data-dependent by design."""
-
     def __init__(self, config: BPlusOmapCachedConfig):
         super().__init__(config)
 
@@ -33,12 +20,6 @@ class BPlusOmapCached(BPlusOmap):
             super()._move_node_to_local(key=key, leaf=leaf, parent_key=parent_key, child_index=child_index)
 
     def _batch_move_nodes_to_local(self, nodes_to_fetch: list[tuple[Any, int]]) -> None:
-        """Fetch several nodes (e.g. a path child and its sibling) in ONE read-write round.
-
-        Cache hits are served from the stash for free; the misses are read with a single batched
-        ``add_read_path`` and written back with a single batched eviction, so any number of nodes costs
-        one round. Counts as one real round (``_op_rounds += 1``) only when a server read happens -- a
-        full cache hit is free. The fetched nodes are left in local for the caller to ``pop`` by key."""
         keys_to_read: list[Any] = []
         leaves_to_read: list[int] = []
 
@@ -85,9 +66,6 @@ class BPlusOmapCached(BPlusOmap):
     def _find_path_with_siblings_cached(
         self, key: Any
     ) -> tuple[dict[int, BPlusNode], list[int], dict[int, BPlusNode], dict[int, int]]:
-        """Batched-round variant of ``_find_path_with_siblings``: at each non-root level the path child
-        and one sibling are read together in a single round, so the descent is h rounds rather than 2h-1.
-        Returns the same shape ``_apply_delete`` consumes."""
         self._flush_local_to_stash()
 
         path_nodes: dict[int, BPlusNode] = {}
@@ -154,7 +132,6 @@ class BPlusOmapCached(BPlusOmap):
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:
-        """Flush local first so cache hits land in the stash, then run the base streaming search."""
         self._flush_local_to_stash()
         return super()._search(key=key, value=value)
 
@@ -183,12 +160,6 @@ class BPlusOmapCached(BPlusOmap):
 
     @override
     def _delete(self, key: Any) -> Any:
-        """Delete in h interaction rounds: each level's path child and one sibling are fetched together
-        in a single batched read-write round (see ``_find_path_with_siblings_cached`` /
-        ``_batch_move_nodes_to_local``), so the op is h rounds (1 root + h-1 batched) regardless of the
-        borrow/merge outcome -- padded to the max-height budget. Bandwidth is unchanged (~2h-1 paths);
-        only the round-trip count drops to h. Cache hits that skip a real round shift onto dummy padding,
-        so the total stays a fixed h rounds."""
         self._op_rounds = 0
         budget = self._max_height
 

@@ -118,16 +118,16 @@ def test_undersized_oram_raises(client):
 
 def test_rejects_contract_violations(client):
     omap = _make_omap("avl", "path", client)
-    with pytest.raises(ContractError, match="OramOstOmap 'avl'.*given twice"):
+    with pytest.raises(ContractError, match="OramOstOmap 'avl-[0-9a-f]{8}'.*given twice"):
         omap.init_server_storage(data=[(b"k", b"lost"), (b"k", b"kept")])
     omap.init_server_storage(data=[(b"k", b"kept")])
     rounds = client.metrics.rounds
 
     cases: list[tuple[Any, Any]] = [("k", b"v"), (b"x" * 11, b"v"), (b"k", "v"), (b"k", b"x" * 11)]
     for key, value in cases:
-        with pytest.raises(ContractError, match="OramOstOmap 'avl'"):
+        with pytest.raises(ContractError, match="OramOstOmap 'avl-[0-9a-f]{8}'"):
             omap.search(key=key, value=value)
-        with pytest.raises(ContractError, match="OramOstOmap 'avl'"):
+        with pytest.raises(ContractError, match="OramOstOmap 'avl-[0-9a-f]{8}'"):
             omap.insert(key=key, value=value)
 
     assert client.metrics.rounds == rounds

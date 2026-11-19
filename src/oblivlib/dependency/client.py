@@ -1,14 +1,14 @@
 import secrets
 import shutil
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self, override
 
 from oblivlib.dependency.errors import MissingResultError, UnknownLabelError
-from oblivlib.dependency.heap_index import leaf_index, path_indices
+from oblivlib.dependency.heap_index import path_indices, path_leaves
 from oblivlib.dependency.protocol import (
     PROTOCOL_VERSION,
     AttachTree,
@@ -132,21 +132,6 @@ class TransportBackend(Backend):
         self._transport.close()
 
 
-def _list_op_bytes(op: ListOp) -> int:
-    return 0 if isinstance(op, ListPopBack) else len(op.value)
-
-
-def _path_leaves(indices: Iterable[int], level: int) -> list[int]:
-    first_leaf = leaf_index(0, level)
-    return sorted(index - first_leaf for index in indices if index >= first_leaf)
-
-
-def _file_rows(image: FileImage) -> Iterator[bytes]:
-    with image.path.open("rb") as file:
-        while row := file.read(image.row_bytes):
-            yield row
-
-
 class Client:
     """The client-side handle to a storage server; every scheme does all its I/O through one.
 
@@ -249,7 +234,7 @@ class Client:
         """Stage rows for whole root-to-leaf paths: ``data`` must hold exactly the nodes of the paths to
         the leaves among its indices."""
         level = self.level_of(label)
-        if set(data) != set(path_indices(_path_leaves(data, level), level)):
+        if set(data) != set(path_indices(path_leaves(data, level), level)):
             raise ValueError(f"Client: a write to {label!r} must cover exactly the paths to its leaves.")
         self._write_paths.setdefault(label, {}).update(data)
 
@@ -320,7 +305,7 @@ class Client:
         filename = self._hand_over(image.path)
         if filename is None:
             self.create_tree(label, level=image.level, row_bytes=image.row_bytes)
-            self._stream_rows(label, _file_rows(image))
+            self._stream_rows(label, image.rows())
             image.path.unlink()
             return
         attach = AttachTree(
@@ -364,7 +349,7 @@ class Client:
 
     def _write_path_op(self, label: str, data: PathRows) -> WritePath:
         level = self._levels[label]
-        leaves = _path_leaves(data, level)
+        leaves = path_leaves(data, level)
         return WritePath(label=label, leaves=leaves, rows=[data[i] for i in path_indices(leaves, level)])
 
     def _take_writes(self) -> list[WriteOp]:
@@ -398,7 +383,7 @@ class Client:
             if isinstance(op, WritePath):
                 payload += sum(len(row) for row in op.rows)
             else:
-                payload += sum(_list_op_bytes(list_op) for list_op in op.ops)
+                payload += sum(len(list_op.value) for list_op in op.ops if not isinstance(list_op, ListPopBack))
 
         results: dict[str, Any] = {}
         for op, rows in zip(reads, reply.results, strict=True):

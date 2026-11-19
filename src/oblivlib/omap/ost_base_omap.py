@@ -1,9 +1,3 @@
-"""Parent class for the tree-structured ODS omaps.
-
-Adds the ODS-specific layer (root/local bookkeeping, tree traversal, padding budgets) on top of the
-shared ``TreeStorageBase`` (config accessors, level/stash math, random leaves, path encryption).
-"""
-
 from abc import ABC, abstractmethod
 from functools import cached_property
 from typing import Any, cast, override
@@ -20,11 +14,6 @@ KV_LIST = list[tuple[Any, Any]]
 
 
 class LocalNodesBase[NodeT]:
-    """Shared bookkeeping for the nodes downloaded into ``local`` during one tree-ODS operation: the
-    node dict, parent links, traversal path, and root key. Concrete subclasses (AVL / B+ ``LocalNodes``)
-    add their scheme-specific tracking and parametrize ``NodeT`` with their typed node view; nodes are
-    stored as plain ``Data`` and cast to that view."""
-
     def __init__(self) -> None:
         self.nodes: dict[Any, Data] = {}
         self.parent_of: dict[Any, Any] = {}
@@ -49,7 +38,6 @@ class LocalNodesBase[NodeT]:
         return cast(NodeT | None, self.nodes.get(key))
 
     def require(self, key: Any) -> NodeT:
-        """Get a node known to be loaded; raise if it is genuinely absent."""
         node = self.nodes.get(key)
         if node is None:
             raise KeyError(f"Node {key} is not loaded in local.")
@@ -66,7 +54,6 @@ class LocalNodesBase[NodeT]:
         return cast(NodeT | None, self.nodes.get(self.root_key)) if self.root_key is not None else None
 
     def require_root(self) -> NodeT:
-        """Get the root node known to exist; raise if it is genuinely absent."""
         node = self.nodes.get(self.root_key) if self.root_key is not None else None
         if node is None:
             raise KeyError("The local has no root node.")
@@ -102,7 +89,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     @abstractmethod
     def _new_local(self) -> LocalT:
-        """Create this scheme's empty local-node container (its concrete ``LocalNodes``)."""
         raise NotImplementedError
 
     @property
@@ -111,7 +97,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     @property
     def _distinguishable(self) -> bool:
-        """Whether the operation type may leak (each op pads to its own bound) vs. fully oblivious."""
         return self._config.distinguishable
 
     @property
@@ -124,17 +109,14 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     @abstractmethod
     def update_mul_tree_height(self, num_tree: int) -> None:
-        """Re-set the per-tree height for an ODS holding ``num_tree`` trees (one per upper-ORAM datum)."""
         raise NotImplementedError
 
     @cached_property
     @abstractmethod
     def _max_block_size(self) -> int:
-        """Bytes of the widest data block stored in the ORAM; each scheme overrides with its own."""
         raise NotImplementedError
 
     def _find_in_stash(self, key: Any) -> int:
-        """Index of the node for ``key`` in the stash, or -1 if absent."""
         for i, node in enumerate(self._stash):
             if node.key == key:
                 return i
@@ -147,7 +129,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
     def _move_node_to_local(
         self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
     ) -> None:
-        """Read ``leaf``'s path, move the block for ``key`` into local, then evict and write back."""
         assert leaf is not None
         self._move_node_to_local_without_eviction(key=key, leaf=leaf, parent_key=parent_key, child_index=child_index)
 
@@ -157,7 +138,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
     def _move_node_to_local_without_eviction(
         self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
     ) -> None:
-        """Like ``_move_node_to_local`` but without the eviction/write-back (used by the streaming ``search``)."""
         found = False
         to_index = len(self._stash)
 
@@ -188,7 +168,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
             raise KeyError(f"The search key {key} is not found.")
 
     def _perform_dummy_operation(self, num_round: int) -> None:
-        """Read, stash, and evict ``num_round`` random paths -- the padding that hides real round counts."""
         if num_round < 0:
             raise ValueError("The height is not enough, as the number of dummy operation required is negative.")
 
@@ -209,10 +188,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
             self._client.execute()
 
     def _short_circuit_read(self, key: Any, num_round: int) -> bool:
-        """Handle the dummy (``key is None``) / empty-tree case of a read-like op uniformly: do
-        ``num_round`` dummy evictions and report that the caller should return ``None``. Routing every
-        scheme through one place keeps the per-op obliviousness budget consistent (so a miss, a dummy,
-        and a hit are indistinguishable in round count)."""
         if key is None or self.root is None:
             self._perform_dummy_operation(num_round=num_round)
             return True
@@ -220,27 +195,19 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     @abstractmethod
     def _op_round_bounds(self) -> dict[str, int]:
-        """Per-op self-clearing round costs (retrieve the nodes, then evict them all back) keyed by
-        'search'/'insert'/'delete', as a function of tree height. The non-distinguishable budget is the
-        max over all of them (see ``_op_budget``)."""
         raise NotImplementedError
 
     def _op_budget(self, op: str) -> int:
-        """Total rounds ``op`` pads to. ``distinguishable=True``: each op uses its own bound (so the op
-        type leaks). Default (False): every op pads to the heaviest bound, hiding the op type."""
         bounds = self._op_round_bounds()
         if self._distinguishable:
             return bounds[op]
         return max(bounds.values())
 
     def _pad_to(self, budget: int) -> None:
-        """Pad the current op to ``budget`` total rounds (real moves are tracked in _op_rounds)."""
         self._perform_dummy_operation(num_round=budget - self._op_rounds)
 
     @abstractmethod
     def _build_ods_blocks(self, data: list[KVPair]) -> tuple[list[Data], ROOT]:
-        """Build this scheme's in-memory tree from a non-empty ``data`` list; return its storage blocks
-        and the (key, leaf) pointer to its root."""
         raise NotImplementedError
 
     @staticmethod
@@ -248,7 +215,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         return [KVPair(key=pair[0], value=pair[1]) for pair in data]
 
     def _init_ods_storage(self, data: KV_LIST | None) -> TreeImage:
-        """Build the ODS-tree binary storage for the input key-value pairs."""
         blocks: list[Data] = []
         if data:
             blocks, self.root = self._build_ods_blocks(data=self._normalize_pairs(data))
@@ -260,7 +226,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         self._host_tree(self._init_ods_storage(data=data))
 
     def _init_mul_tree_ods_storage(self, data_list: list[KV_LIST] | None) -> tuple[TreeImage, list[ROOT | None]]:
-        """Build one ODS tree per pair-list into shared storage; return it plus each tree's root."""
         blocks: list[Data] = []
         root_list: list[ROOT | None] = []
         for data in data_list or []:
@@ -274,7 +239,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         return self._build_tree(blocks), root_list
 
     def init_mul_tree_server_storage(self, data_list: list[KV_LIST] | None = None) -> list[ROOT | None]:
-        """Store an ODS holding multiple trees; return the list of their roots."""
         for data in data_list or []:
             require_omap_init(self._identity, data, key_size=self._key_size, data_size=self._data_size)
         tree, root_list = self._init_mul_tree_ods_storage(data_list=data_list)
@@ -283,8 +247,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     @override
     def search(self, key: bytes | None, value: bytes | None = None) -> bytes | None:
-        """Return ``key``'s value, or ``None`` when absent, writing ``value`` when one is given. ``key=None``
-        is a dummy op that looks like a real one."""
         if key is not None:
             require_omap_key(self._identity, key, self._key_size)
             if value is not None:
@@ -293,14 +255,12 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
     @override
     def insert(self, key: bytes | None, value: bytes | None = None) -> None:
-        """Insert an absent ``key``; ``key=None`` is a dummy op."""
         if key is not None:
             require_omap_key(self._identity, key, self._key_size)
             require_value(self._identity, value, self._data_size)
         self._insert(key, value)
 
     def delete(self, key: bytes | None) -> bytes | None:
-        """Remove ``key`` and return its value, or ``None`` when absent; ``key=None`` is a dummy op."""
         if key is not None:
             require_omap_key(self._identity, key, self._key_size)
         return self._delete(key)

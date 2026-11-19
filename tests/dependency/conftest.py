@@ -27,12 +27,6 @@ class _SearchTreeAdapter(ABC):
     @abstractmethod
     def delete(self, key) -> None: ...
 
-    @abstractmethod
-    def multi_insert(self, pairs) -> None: ...
-
-    @abstractmethod
-    def multi_search(self, keys) -> dict: ...
-
 
 class _AVLAdapter(_SearchTreeAdapter):
     missing_raises = False
@@ -53,15 +47,6 @@ class _AVLAdapter(_SearchTreeAdapter):
     def delete(self, key) -> None:
         self._root = self._tree.delete(root=self._root, key=key)
 
-    @override
-    def multi_insert(self, pairs) -> None:
-        kv_pairs = [KVPair(key=key, value=value) for key, value in pairs]
-        self._root = self._tree.multi_insert(root=self._root, kv_pairs=kv_pairs)
-
-    @override
-    def multi_search(self, keys) -> dict:
-        return self._tree.multi_search(keys=keys, root=self._root)
-
 
 class _BPlusAdapter(_SearchTreeAdapter):
     missing_raises = True
@@ -81,15 +66,6 @@ class _BPlusAdapter(_SearchTreeAdapter):
     @override
     def delete(self, key) -> None:
         self._root = self._tree.delete(root=self._root, key=key) or BPlusTreeNode()
-
-    @override
-    def multi_insert(self, pairs) -> None:
-        kv_pairs = [KVPair(key=key, value=value) for key, value in pairs]
-        self._root = self._tree.multi_insert(root=self._root, kv_pairs=kv_pairs)
-
-    @override
-    def multi_search(self, keys) -> dict:
-        return self._tree.multi_search(keys=keys, root=self._root)
 
 
 @pytest.fixture(params=["avl", "bplus"])

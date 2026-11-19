@@ -98,16 +98,16 @@ class TestGroupOmap:
 
     def test_rejects_contract_violations(self, client):
         omap = _make_omap(client)
-        with pytest.raises(ContractError, match="GroupOmap 'group_omap'.*given twice"):
+        with pytest.raises(ContractError, match="GroupOmap 'group_omap-[0-9a-f]{8}'.*given twice"):
             omap.init_server_storage(data=[(b"k", b"lost"), (b"k", b"kept")])
         omap.init_server_storage(data=[(b"k", b"kept")])
         rounds = client.metrics.rounds
 
         cases: list[tuple[Any, Any]] = [("k", None), (b"x" * 11, None), (b"k", "v"), (b"k", b"x" * 65)]
         for key, value in cases:
-            with pytest.raises(ContractError, match="GroupOmap 'group_omap'"):
+            with pytest.raises(ContractError, match="GroupOmap 'group_omap-[0-9a-f]{8}'"):
                 omap.search(key=key, value=value)
-            with pytest.raises(ContractError, match="GroupOmap 'group_omap'"):
+            with pytest.raises(ContractError, match="GroupOmap 'group_omap-[0-9a-f]{8}'"):
                 omap.insert(key=key, value=value if value is not None else b"v")
 
         assert client.metrics.rounds == rounds

@@ -18,8 +18,8 @@ class BPlusTreeNode:
     def __init__(self):
         self.id: int | None = None
         self.leaf: int | None = None
-        self.keys: list = []
-        self.values: list = []
+        self.keys: list[Any] = []
+        self.values: list[Any] = []
         self.is_leaf: bool = True
 
     def add_kv_pair(self, kv_pair: KVPair):
@@ -71,20 +71,6 @@ class BPlusTree:
                 return leaf.values[index]
 
         raise KeyError(f"The key {key} is not found.")
-
-    def multi_search(self, keys: list[Any], root: BPlusTreeNode) -> dict[Any, Any]:
-        if not keys:
-            return {}
-
-        cursors = [(key, root) for key in keys]
-        while not cursors[0][1].is_leaf:
-            cursors = [(key, node.values[self._child_index(node=node, key=key)]) for key, node in cursors]
-
-        results: dict[Any, Any] = {}
-        for key, leaf in cursors:
-            index = next((i for i, each_key in enumerate(leaf.keys) if each_key == key), None)
-            results[key] = leaf.values[index] if index is not None else None
-        return results
 
     def _split_node(self, node: BPlusTreeNode) -> BPlusTreeNode:
         right_node = BPlusTreeNode()
@@ -155,65 +141,6 @@ class BPlusTree:
         self._recursive_insert(node=child, kv_pair=kv_pair)
         if len(child.keys) >= self._order:
             self._insert_in_parent(child_node=child, parent_node=node)
-
-    @staticmethod
-    def _collect_insert_paths(root: BPlusTreeNode | None, keys: list[Any]) -> set[BPlusTreeNode]:
-        local: set[BPlusTreeNode] = set()
-        if root is None or not keys:
-            return local
-
-        cursors = [(key, root) for key in keys]
-        while True:
-            for _, node in cursors:
-                local.add(node)
-            if cursors[0][1].is_leaf:
-                return local
-            cursors = [(key, node.values[BPlusTree._child_index(node=node, key=key)]) for key, node in cursors]
-
-    def _split_and_promote_local(self, child: BPlusTreeNode, parent: BPlusTreeNode, local: set[BPlusTreeNode]) -> None:
-        insert_key = child.keys[self._mid]
-        right = self._split_node(node=child)
-        local.add(right)
-
-        position = self._child_index(node=parent, key=insert_key)
-        parent.keys.insert(position, insert_key)
-        parent.values.insert(position + 1, right)
-
-    def _grow_root_local(self, child: BPlusTreeNode, local: set[BPlusTreeNode]) -> BPlusTreeNode:
-        insert_key = child.keys[self._mid]
-        right = self._split_node(node=child)
-        local.add(right)
-
-        parent = BPlusTreeNode()
-        parent.is_leaf = False
-        parent.keys = [insert_key]
-        parent.values = [child, right]
-        local.add(parent)
-        return parent
-
-    def _insert_into_local(self, root: BPlusTreeNode, local: set[BPlusTreeNode], kv_pair: KVPair) -> BPlusTreeNode:
-        leaves = self._find_leaf_path(root=root, key=kv_pair.key)
-        if any(node not in local for node in leaves):
-            raise ValueError("multi_insert stepped onto an unfetched node; the batched paths were incomplete.")
-        leaves[-1].add_kv_pair(kv_pair=kv_pair)
-
-        index = len(leaves) - 1
-        while True:
-            if len(leaves[index].keys) >= self._order:
-                if index > 0:
-                    self._split_and_promote_local(child=leaves[index], parent=leaves[index - 1], local=local)
-                    index -= 1
-                else:
-                    return self._grow_root_local(child=leaves[index], local=local)
-            else:
-                break
-        return root
-
-    def multi_insert(self, root: BPlusTreeNode, kv_pairs: list[KVPair]) -> BPlusTreeNode:
-        local = self._collect_insert_paths(root=root, keys=[kv_pair.key for kv_pair in kv_pairs])
-        for kv_pair in kv_pairs:
-            root = self._insert_into_local(root=root, local=local, kv_pair=kv_pair)
-        return root
 
     def _fix_underflow(self, parent: BPlusTreeNode, child_index: int) -> None:
         is_left = child_index > 0

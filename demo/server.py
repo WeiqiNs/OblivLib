@@ -1,13 +1,3 @@
-"""ORAM/OMAP Server Demo.
-
-Usage:
-    python server.py [--ip IP] [--port PORT] [--storage-dir DIR]
-
-Examples:
-    python server.py
-    python server.py --port 6666 --storage-dir /tmp/oblivlib-store
-"""
-
 import argparse
 
 from oblivlib.dependency import StorageServer, ZmqListener, serve

@@ -10,10 +10,6 @@ class MissingResultError(OblivlibError):
     pass
 
 
-class MissingClientError(OblivlibError):
-    pass
-
-
 class DuplicateLabelError(OblivlibError):
     pass
 

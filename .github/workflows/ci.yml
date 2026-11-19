@@ -9,7 +9,6 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs on the same ref so only the latest commit is validated.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.x"
           cache: "pip"
           cache-dependency-path: "pyproject.toml"
 
@@ -49,8 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Mirror requires-python (>=3.12) and the declared classifiers.
-        python-version: [ "3.12", "3.13" ]
+        python-version: [ "3.12", "3.x" ]
 
     steps:
       - name: Checkout repository

@@ -102,26 +102,6 @@ class AVLTree:
 
         return None
 
-    @staticmethod
-    def multi_search(keys: list[Any], root: AVLTreeNode | None) -> dict[Any, Any]:
-        results: dict[Any, Any] = dict.fromkeys(keys)
-        if root is None:
-            return results
-
-        cursors = [(key, root) for key in keys]
-        while cursors:
-            next_cursors = []
-            for key, node in cursors:
-                if key == node.key:
-                    results[key] = node.value
-                elif key < node.key:
-                    if node.left_node is not None:
-                        next_cursors.append((key, node.left_node))
-                elif node.right_node is not None:
-                    next_cursors.append((key, node.right_node))
-            cursors = next_cursors
-        return results
-
     def insert(self, root: AVLTreeNode | None, kv_pair: KVPair) -> AVLTreeNode:
         if not root:
             return AVLTreeNode(kv_pair)
@@ -165,67 +145,6 @@ class AVLTree:
             root.right_node = self.recursive_insert(root=root.right_node, kv_pair=kv_pair)
 
         return self._balance(root)
-
-    @staticmethod
-    def _collect_insert_paths(root: AVLTreeNode | None, keys: list[Any]) -> set[AVLTreeNode]:
-        local: set[AVLTreeNode] = set()
-        if root is None:
-            return local
-
-        cursors = [(key, root) for key in keys]
-        while cursors:
-            next_cursors = []
-            for key, node in cursors:
-                local.add(node)
-                child = node.left_node if key < node.key else node.right_node
-                if child is not None:
-                    next_cursors.append((key, child))
-            cursors = next_cursors
-        return local
-
-    def _insert_into_local(self, root: AVLTreeNode | None, local: set[AVLTreeNode], kv_pair: KVPair) -> AVLTreeNode:
-        if root is None:
-            new_node = AVLTreeNode(kv_pair)
-            local.add(new_node)
-            return new_node
-
-        stack = []
-        node = root
-        while True:
-            if node not in local:
-                raise ValueError("multi_insert stepped onto an unfetched node; the batched paths were incomplete.")
-            stack.append(node)
-            if kv_pair.key < node.key:
-                if not node.left_node:
-                    node.left_node = AVLTreeNode(kv_pair)
-                    local.add(node.left_node)
-                    stack.append(node.left_node)
-                    break
-                node = node.left_node
-            else:
-                if not node.right_node:
-                    node.right_node = AVLTreeNode(kv_pair)
-                    local.add(node.right_node)
-                    stack.append(node.right_node)
-                    break
-                node = node.right_node
-
-        while True:
-            node = stack.pop()
-            balanced_node = self._balance(node)
-            if not stack:
-                return balanced_node
-            parent = stack[-1]
-            if parent.left_node == node:
-                parent.left_node = balanced_node
-            else:
-                parent.right_node = balanced_node
-
-    def multi_insert(self, root: AVLTreeNode | None, kv_pairs: list[KVPair]) -> AVLTreeNode | None:
-        local = self._collect_insert_paths(root=root, keys=[kv_pair.key for kv_pair in kv_pairs])
-        for kv_pair in kv_pairs:
-            root = self._insert_into_local(root=root, local=local, kv_pair=kv_pair)
-        return root
 
     def delete(self, root: AVLTreeNode | None, key: Any) -> AVLTreeNode | None:
         if not root:
