@@ -2,7 +2,7 @@
 
 OblivLib (`oblivlib`) implements classic oblivious algorithms (oblivious RAM and oblivious maps) for
 client/server deployments where the client is trusted and may compute non-obliviously, and the server only
-stores encrypted data. Design notes are in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+stores encrypted data. Design notes are in [`ARCHITECTURE.md`](https://github.com/WeiqiNs/OblivLib/blob/main/ARCHITECTURE.md).
 
 Related publications by the maintainers:
 
@@ -11,29 +11,29 @@ Related publications by the maintainers:
 ## ORAM
 
 - [Path ORAM](https://dl.acm.org/doi/10.1145/2508859.2516660):
-  [`path_oram.py`](src/oblivlib/oram/path_oram.py)
+  [`path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/path_oram.py)
 - [Recursive Path ORAM](https://link.springer.com/chapter/10.1007/978-3-642-25385-0_11):
-  [`recursive_path_oram.py`](src/oblivlib/oram/recursive_path_oram.py)
+  [`recursive_path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/recursive_path_oram.py)
 - [Freecursive ORAM](https://people.csail.mit.edu/devadas/pubs/freecursive.pdf), insecure
-  original: [`freecursive_oram.py`](src/oblivlib/oram/freecursive_oram.py) with `reset_method="hard"`
+  original: [`freecursive_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/freecursive_oram.py) with `reset_method="hard"`
 - [Freecursive ORAM with probabilistic resets](https://eprint.iacr.org/2016/1084):
-  [`freecursive_oram.py`](src/oblivlib/oram/freecursive_oram.py) with `reset_method="prob"` (default)
+  [`freecursive_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/freecursive_oram.py) with `reset_method="prob"` (default)
 - [DAORAM, de-amortized fixed resets](https://dl.acm.org/doi/10.14778/3712221.3712235):
-  [`da_oram.py`](src/oblivlib/oram/da_oram.py)
+  [`da_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/da_oram.py)
 - Multi-path and static (PRF-positioned) Path ORAM variants:
-  [`mul_path_oram.py`](src/oblivlib/oram/mul_path_oram.py), [`static_oram.py`](src/oblivlib/oram/static_oram.py)
+  [`mul_path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/mul_path_oram.py), [`static_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/static_oram.py)
 
 ## OMAP
 
 - [AVL-tree OMAP](https://dl.acm.org/doi/10.1145/2660267.2660314) with the
-  [streaming search](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf): [`avl_omap.py`](src/oblivlib/omap/avl_omap.py)
+  [streaming search](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf): [`avl_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/avl_omap.py)
 - [B+-tree OMAP](https://people.eecs.berkeley.edu/~matei/papers/2020/vldb_oblidb.pdf):
-  [`bplus_omap.py`](src/oblivlib/omap/bplus_omap.py)
+  [`bplus_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/bplus_omap.py)
 - [ORAM + search-tree framework](https://dl.acm.org/doi/10.14778/3712221.3712235), composing
-  any ORAM with any tree OMAP: [`oram_ost_omap.py`](src/oblivlib/omap/oram_ost_omap.py)
-- Group-by-hash OMAP: [`group_omap.py`](src/oblivlib/omap/group_omap.py)
+  any ORAM with any tree OMAP: [`oram_ost_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/oram_ost_omap.py)
+- Group-by-hash OMAP: [`group_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/group_omap.py)
 - Cache-optimized AVL and B+ variants (not per-op oblivious):
-  [`avl_omap_cache.py`](src/oblivlib/omap/avl_omap_cache.py), [`bplus_omap_cache.py`](src/oblivlib/omap/bplus_omap_cache.py)
+  [`avl_omap_cache.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/avl_omap_cache.py), [`bplus_omap_cache.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/bplus_omap_cache.py)
 
 Tree OMAPs hide the operation type by default (`distinguishable=False`); set it to `True` to let each
 operation pad only to its own bound.
@@ -106,8 +106,8 @@ with Client.connect("tcp://server-host:5555") as client:
     assert omap.search(b"alice") == b"42"
 ```
 
-Runnable versions live in [`demo/`](demo): start `python demo/server.py`, then run `python demo/client.py`.
+Runnable versions live in [`demo/`](https://github.com/WeiqiNs/OblivLib/tree/main/demo): start `python demo/server.py`, then run `python demo/client.py`.
 Every scheme gets a unique storage label by default, so several can share one client; pass `name=` in a
 config only to address storage by a known label. The shared test suites
-([`tests/oram/test_oram_common.py`](tests/oram/test_oram_common.py),
-[`tests/omap/test_omap_common.py`](tests/omap/test_omap_common.py)) show every scheme in use.
+([`tests/oram/test_oram_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/oram/test_oram_common.py),
+[`tests/omap/test_omap_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/omap/test_omap_common.py)) show every scheme in use.
