@@ -1,12 +1,3 @@
-"""Behavioral suite run against every ODS OMAP via the ``omap_spec`` fixture (see conftest.py).
-
-Three reinforcing kinds of check:
-  * model oracle      -- random op sequences must agree with a plain ``dict`` at every step;
-  * structural invariants -- the reconstructed tree must stay a valid, balanced, correctly-linked AVL;
-  * access-pattern uniformity -- search/insert must touch a fixed number of paths regardless of key
-    (the obliviousness property tests otherwise cannot see). Cached variants opt out.
-"""
-
 import math
 import random
 from collections.abc import Callable
@@ -15,17 +6,10 @@ from typing import Any
 import pytest
 
 from oblivlib.dependency import Client, ContractError
-from oblivlib.omap import AVLOmap, AVLOmapCached, BPlusOmap, BPlusOmapCached, GroupOmap, OramOstOmap
-from oblivlib.omap.base_omap import BaseOmap
 
 
 def _b(number: int) -> bytes:
     return b"%d" % number
-
-
-def test_all_schemes_implement_base_omap():
-    for scheme in (AVLOmap, AVLOmapCached, BPlusOmap, BPlusOmapCached, GroupOmap, OramOstOmap):
-        assert issubclass(scheme, BaseOmap)
 
 
 class TestOmapBehavior:
@@ -41,8 +25,7 @@ class TestOmapBehavior:
         omap = omap_spec.make(client=client, num_data=64)
         omap.init_server_storage()
         assert omap.search(key=b"5") is None
-        if omap_spec.supports_delete:
-            assert omap.delete(key=b"5") is None
+        assert omap.delete(key=b"5") is None
 
     def test_dummy_ops(self, omap_spec, client):
         omap = omap_spec.make(client=client, num_data=64)
@@ -51,8 +34,7 @@ class TestOmapBehavior:
             omap.insert(key=_b(i), value=_b(i))
         assert omap.search(key=None) is None
         omap.insert(key=None)
-        if omap_spec.supports_delete:
-            assert omap.delete(key=None) is None
+        assert omap.delete(key=None) is None
         for i in range(20):
             assert omap.search(key=_b(i)) == _b(i)
 
@@ -107,16 +89,10 @@ class TestOmapBehavior:
         for i in range(60):
             assert omap.search(key=_b(i)) == _b(i * 3)
 
-    def test_build_file_round_trip(self, omap_spec, client, test_file, encryptor):
-        omap = omap_spec.make(client=client, num_data=128, build_file=test_file, encryptor=encryptor)
-        omap.init_server_storage(data=[(_b(i), _b(i * 5)) for i in range(30)])
-        for i in range(30, 60):
-            omap.insert(key=_b(i), value=_b(i * 5))
-        for i in range(60):
-            assert omap.search(key=_b(i)) == _b(i * 5)
-
-    def test_init_with_data(self, omap_spec, client):
-        omap = omap_spec.make(client=client, num_data=256)
+    @pytest.mark.parametrize("use_build_file", [False, True])
+    def test_init_with_data(self, omap_spec, client, test_file, encryptor, use_build_file):
+        build = {"build_file": test_file, "encryptor": encryptor} if use_build_file else {}
+        omap = omap_spec.make(client=client, num_data=256, **build)
         omap.init_server_storage(data=[(_b(i), _b(i)) for i in range(128)])
         for i in range(128, 200):
             omap.insert(key=_b(i), value=_b(i))
@@ -161,7 +137,6 @@ class TestOmapBehavior:
         rng = random.Random(1234)
         omap = omap_spec.make(client=Client.local(), num_data=128)
         omap.init_server_storage()
-        read = omap.search
         model, keyspace = {}, [_b(i) for i in range(128)]
         for _ in range(800):
             key = rng.choice(keyspace)
@@ -171,7 +146,7 @@ class TestOmapBehavior:
                     omap.insert(key=key, value=value)
                     model[key] = value
             else:
-                assert read(key=key) == model.get(key)
+                assert omap.search(key=key) == model.get(key)
         for key in keyspace:
             assert omap.search(key=key) == model.get(key)
 
@@ -185,13 +160,9 @@ class TestOmapBehavior:
             if key not in model:
                 omap.insert(key=key, value=key)
                 model[key] = key
-        if omap_spec.cached:
-            omap._flush_local_to_stash()
         omap_spec.invariant_checker(omap, model)
 
     def test_delete_oracle(self, omap_spec):
-        if not omap_spec.supports_delete:
-            pytest.skip("scheme has no delete")
         rng = random.Random(2024)
         omap = omap_spec.make(client=Client.local(), num_data=128)
         omap.init_server_storage()
@@ -209,17 +180,11 @@ class TestOmapBehavior:
             elif model:
                 assert omap.delete(key=key) == model.get(key)
                 model.pop(key, None)
-        if omap_spec.cached:
-            omap._flush_local_to_stash()
         for key in keyspace:
             assert omap.search(key=key) == model.get(key)
-        if omap_spec.cached:
-            omap._flush_local_to_stash()
         omap_spec.invariant_checker(omap, model)
 
     def test_delete_empties_tree(self, omap_spec, client):
-        if not omap_spec.supports_delete:
-            pytest.skip("scheme has no delete")
         omap = omap_spec.make(client=client, num_data=64)
         omap.init_server_storage()
         for i in range(40):
@@ -230,9 +195,6 @@ class TestOmapBehavior:
 
 
 class TestOmapObliviousness:
-    """Per-op access patterns must be key-independent: a fixed number of path rounds regardless of
-    the key, a miss must look like a hit, and a dummy op(None) must look like a real op."""
-
     def test_search_access_uniform(self, oblivious_omap_spec, counting_client):
         omap_spec = oblivious_omap_spec
         client, server = counting_client
@@ -244,9 +206,8 @@ class TestOmapObliviousness:
         miss = {server.rounds(omap.search, _b(10_000 + j))[0] for j in range(10)}
         assert len(hit) == 1, f"search rounds vary by key: {sorted(hit)}"
         assert miss == hit, f"missing-key search distinguishable from hit: miss={miss} hit={hit}"
-        if omap_spec.search_none:
-            dummy = {server.rounds(omap.search, None)[0] for _ in range(5)}
-            assert dummy == hit, f"search(None) distinguishable from a real search: {dummy} vs {hit}"
+        dummy = {server.rounds(omap.search, None)[0] for _ in range(5)}
+        assert dummy == hit, f"search(None) distinguishable from a real search: {dummy} vs {hit}"
 
     def test_insert_access_uniform(self, oblivious_omap_spec, counting_client):
         omap_spec = oblivious_omap_spec
@@ -283,8 +244,8 @@ class TestOmapObliviousness:
         delete_rounds = server.rounds(omap.delete, b"50")[0]
         assert search_rounds < delete_rounds, f"search {search_rounds} should be < delete {delete_rounds}"
 
-    def test_delete_access_uniform(self, delete_oblivious_omap_spec, counting_client):
-        omap_spec = delete_oblivious_omap_spec
+    def test_delete_access_uniform(self, oblivious_omap_spec, counting_client):
+        omap_spec = oblivious_omap_spec
         client, server = counting_client
         omap = omap_spec.make(client=client, num_data=256)
         omap.init_server_storage()

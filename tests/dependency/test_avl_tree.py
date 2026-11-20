@@ -1,14 +1,9 @@
-"""AVL-specific structural tests. Generic insert/search/delete behavior lives in
-`test_search_tree_common.py`; here we pin the AVL invariants and cross-check the recursive and
-non-recursive implementations against each other (the standard the oblivious AVL map mirrors)."""
-
 import random
 
 from oblivlib.dependency import AVLTree, KVPair
 
 
 def _invariants(node, low=None, high=None) -> int:
-    """Assert BST order, AVL balance (|height diff| <= 1) and height bookkeeping; return the height."""
     if node is None:
         return 0
     assert low is None or node.key > low
@@ -21,7 +16,6 @@ def _invariants(node, low=None, high=None) -> int:
 
 
 def _shape(node):
-    """Full (key, value, height, left, right) shape, so two trees can be compared exactly."""
     if node is None:
         return None
     return node.key, node.value, node.height, _shape(node.left_node), _shape(node.right_node)

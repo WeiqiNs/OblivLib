@@ -1,16 +1,9 @@
-"""Behavioral tests shared by AVLTree and BPlusTree, parametrized via the `make_search_tree` factory.
-
-These assert the insert/search/delete contract holds regardless of internal structure; the
-structure-specific assertions live in `test_avl_tree.py` and `test_bplus_tree.py`.
-"""
-
 import random
 
 import pytest
 
 
 def _assert_absent(tree, key) -> None:
-    """Assert a missing key follows the tree's contract: KeyError for B+ tree, None for AVL."""
     if tree.missing_raises:
         with pytest.raises(KeyError):
             tree.search(key)
@@ -55,9 +48,3 @@ class TestSearchTreeBehavior:
             assert tree.search(k) == k
         for k in to_delete:
             _assert_absent(tree, k)
-
-
-class TestSearchTreeBatched:
-    """The batched (multi-key) descent that the oblivious port will mirror: one level-synchronized
-    descent serves the whole key set rather than one descent per key. The per-tree files cross-check it
-    against sequential single-key ops; this pins the empty and absent-key edges both trees share."""

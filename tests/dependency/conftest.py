@@ -1,10 +1,3 @@
-"""Fixtures shared by the dependency tests.
-
-The AVL and B+ trees expose the same insert/search/delete contract, so a small adapter lets one
-parametrized behavioral suite (`test_search_tree_common.py`) cover both. Scheme-specific structural
-assertions stay in `test_avl_tree.py` / `test_bplus_tree.py`.
-"""
-
 from abc import ABC, abstractmethod
 from typing import ClassVar, override
 
@@ -14,8 +7,6 @@ from oblivlib.dependency import AVLTree, BPlusTree, BPlusTreeNode, KVPair
 
 
 class _SearchTreeAdapter(ABC):
-    """Uniform stateful wrapper over a search tree, holding the tree and its current root."""
-
     missing_raises: ClassVar[bool]
 
     @abstractmethod
@@ -70,6 +61,5 @@ class _BPlusAdapter(_SearchTreeAdapter):
 
 @pytest.fixture(params=["avl", "bplus"])
 def make_search_tree(request):
-    """Return a factory `make_search_tree(leaf_range=...)` producing an AVL or B+ tree adapter."""
     builders = {"avl": _AVLAdapter, "bplus": _BPlusAdapter}
     return builders[request.param]

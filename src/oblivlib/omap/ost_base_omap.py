@@ -138,7 +138,6 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
     ) -> None:
         found = False
-        to_index = len(self._stash)
 
         self._op_rounds += 1
 
@@ -159,7 +158,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
         if not found:
             stash_idx = self._find_in_stash(key)
-            if 0 <= stash_idx < to_index:
+            if stash_idx >= 0:
                 self._local.add(node=self._stash[stash_idx], parent_key=parent_key, child_index=child_index)
                 del self._stash[stash_idx]
                 return

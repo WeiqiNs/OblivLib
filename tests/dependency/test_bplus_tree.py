@@ -1,14 +1,9 @@
-"""B+ tree-specific structural tests. Generic insert/search/delete behavior lives in
-`test_search_tree_common.py`; here we pin the B+ invariants and cross-check the recursive and
-non-recursive implementations against each other (the standard the oblivious B+ map mirrors)."""
-
 import random
 
 from oblivlib.dependency import BPlusTree, BPlusTreeNode, KVPair
 
 
 def _invariants(node) -> None:
-    """Assert keys stay sorted, internal nodes hold one more child than keys, and all leaves are level."""
 
     def check(n, depth):
         assert n.keys == sorted(n.keys)
@@ -21,8 +16,6 @@ def _invariants(node) -> None:
 
 
 def _shape(node):
-    """Full structural shape, so two trees can be compared exactly: for a leaf its keys and stored
-    values, for an internal node its separator keys and the shapes of its children."""
     if node is None:
         return None
     if node.is_leaf:

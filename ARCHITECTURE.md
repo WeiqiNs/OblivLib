@@ -410,7 +410,10 @@ from `_op_round_bounds` as functions of the height bound `h`. With the default
 `distinguishable=False`, every op pads to the largest bound so the op type is hidden; `True` lets each
 op use its own bound.
 
-Bounds count fetch rounds plus matching eviction rounds:
+Budgets are in fetch units: `_op_rounds` counts fetches, each real fetch already carries its own eviction,
+and each padding unit is one dummy read plus its eviction. The formulas below count a fetch and its
+eviction as two, so they run about twice the tight fetch bound (search/insert ≤ h, AVL delete ≤ 3h);
+measured AVL peaks at n=1024 (h=15) are 12/12/13 fetches against 31/31/90:
 
 - **AVL:** search/insert `2h+1`. Insert needs at most one rotation, and its nodes are already on the
   descent path. Delete is `6h`: locate the node plus its successor (one downward path, ≤ h), a rebalance
@@ -431,7 +434,9 @@ then applies the same height bound. The AVL bound is safe but runs 1–2 levels 
 
 **Cached variants are deliberately not per-op oblivious.** They serve nodes left in the stash by
 earlier ops without a server round, keep the visited path in `local` until the next op, and pad to
-`h` rounds (`2h` for AVL delete), never padding below zero when an op loaded more nodes. They are meant for use inside a larger oblivious composition.
+`h` rounds (`2h` for AVL delete), never padding below zero when an op loaded more nodes. Their counts are
+approximate: they count nodes in `local` (stash hits and a new insert node included), and an AVL delete
+that empties or re-roots a one-node path pads a full `2h` after its fetches. They are meant for use inside a larger oblivious composition.
 `BPlusOmapCached.delete` reads each level's child and sibling in one batched round (`h` rounds, same
 bandwidth as `2h−1` paths). Both B+ deletes run one walk (`_find_path_with_siblings`); they differ only in
 `_fetch_nodes`, one round per node for `BPlusOmap` and one batched round per level for the cached map.
@@ -448,7 +453,8 @@ values, with child keys and leaves in place of pointers, that the oblivious maps
 - An ORAM block's value is one node: `AVLData` holds the value plus each child's `(key, leaf, height)`;
   `BPlusData` holds parallel `keys`/`values` lists, where an internal node's values are child
   `(id, leaf)` pairs and a leaf's are the stored values.
-- AVL routes equal-or-larger keys right. A two-children delete replaces the node with the in-order
+- `AVLTree` routes equal-or-larger keys right (the oblivious insert routes equal keys left; only
+  duplicate keys, which are undefined behaviour, can tell). A two-children delete replaces the node with the in-order
   predecessor when the left subtree is taller, else the successor; `delete` and `recursive_delete` make
   the same choice, so they produce structurally identical trees.
 - B+ leaf splits keep the median in the right half and copy it up as the separator. Internal splits
@@ -500,8 +506,9 @@ disk.
   `ValueError` at config construction.
 - Keys and values obey the data contract (§3); a violation raises `ContractError` before any client
   state changes or any round is spent.
-- The accessed-path sequence and the round count depend only on the sequence of calls, never on keys or
-  values; write deferral folds read-less batches into the next batch the same way for every input (§2).
+- For the per-op-oblivious schemes (every ORAM, `AVLOmap`, `BPlusOmap`; not the cached maps or
+  `GroupOmap`, §5 and §8), the accessed-path sequence and the round count depend only on the sequence of
+  calls, never on keys or values; write deferral folds read-less batches into the next batch the same way for every input (§2).
 - A sealed row is exactly `row_bytes` long whatever its occupancy or value lengths, and building and
   per-op eviction seal through the same `PathCipher`, so an initial row is indistinguishable from an
   evicted one.
@@ -512,8 +519,9 @@ disk.
 - `FlexibleBinaryTree` absent nodes are empty rows and are skipped by `read_path`, so the server sees
   which nodes are empty versus present. That is the same information the write lengths already reveal,
   and the adopting scheme controls both.
-- A real op never exceeds its round budget: `_perform_dummy_operation` raises on a negative pad count,
-  so a broken bound fails loudly rather than leaking.
+- A real op that exceeds its round budget fails loudly: `_perform_dummy_operation` raises on a negative
+  pad count. The check runs after the op's fetches reached the server and its changes took effect, so the
+  extra rounds have already leaked; it reports a broken bound, it does not prevent the leak.
 
 ---
 
@@ -547,6 +555,10 @@ disk.
 - **Counter overflows are not recoverable:** a probabilistic-reset IC overflow at a position-map level
   raises after that level's read and leaves the instance inconsistent; the group counter is never
   checked, so it overflows its `gc_length` field silently (unreachable at the default widths).
+- **An ODS op that raises mid-way leaves the map unusable:** the path just read is absorbed but never
+  evicted, fetched nodes stay in `local`, and `root` may name a stale leaf; later ops raise or lose
+  nodes. A `StashOverflowError` repeats on every later op. `num_data` bounds sizing but is never
+  enforced, so overfilling a map ends this way rather than with a `ContractError`.
 - **Composed-map capacity errors** (a full GroupOmap bucket) raise a bare `MemoryError` once the upper
   access completes; no lower access is made, so the server sees the failed insert as a shorter op.
 - **Not yet built:** a round driver and handle API for schemes, retrying or resending a lost batch, and
@@ -566,7 +578,7 @@ disk.
   workload with deferral off and on and compares the batches), `encryptor`, and `test_file`.
 - `tests/dependency/`: `make_search_tree` parametrizes one behavioural suite
   (`test_search_tree_common.py`) over AVL and B+. Per-tree files hold the structural invariant validators
-  and recursive/iterative and batched/sequential cross-checks. The protocol, server, client, transport,
+  and recursive/iterative cross-checks. The protocol, server, client, transport,
   cipher, builder, and configs each have their own file (`test_config.py` holds one table covering every
   config check); `FlexibleBinaryTree` runs over memory-plain and memory-encrypted trees, since it has no
   storage-specific code. Test order mirrors source order. Trivial helpers covered transitively get no
@@ -581,7 +593,7 @@ disk.
   sizes. `MulPathOram`'s batch API, edge cases, and the remote protocol and handover modes have their own
   files.
 - `tests/omap/`: `omap_spec` parametrizes over `OMAP_SPECS`, each entry declaring its guarantees
-  (`per_op_oblivious`, `delete_oblivious`, …). The obliviousness tests draw from filtered fixtures, so
+  (`per_op_oblivious`). The obliviousness tests draw from filtered fixtures, so
   they are *collected* only for variants that claim the property, and count path reads through a
   recording client. Cached variants are excluded by construction, so there are no standing skips.
   Composed maps have their own files.

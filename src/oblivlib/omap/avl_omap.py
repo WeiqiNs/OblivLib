@@ -59,9 +59,6 @@ class LocalNodes(LocalNodesBase[AVLNode]):
             parent.value.r_height = new_height
 
     def replace_node_key(self, old_key: Any, new_key: Any) -> None:
-        if old_key not in self.nodes:
-            return
-
         self.nodes[new_key] = self.nodes.pop(old_key)
         self.parent_of[new_key] = self.parent_of.pop(old_key)
         if old_key in self.path:
@@ -138,15 +135,9 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
                     parent.value.r_height = new_height
 
     def _rotate_node(self, node_key: Any, rotate_left: bool) -> tuple[Any, int, int]:
-        node = self._local.get(node_key)
-        if node is None:
-            raise ValueError(f"Node {node_key} not found in local.")
-
+        node = self._local.require(node_key)
         pivot_key = node.value.r_key if rotate_left else node.value.l_key
-        pivot = self._local.get(pivot_key)
-        if pivot is None or pivot.key != pivot_key:
-            side = "Right" if rotate_left else "Left"
-            raise ValueError(f"{side} node is not loaded when it is supposed to.")
+        pivot = self._local.require(pivot_key)
 
         if rotate_left:
             node.value.r_key = pivot.value.l_key
@@ -218,12 +209,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
         while idx >= 0:
             node_key = self._local.path[idx]
-            node = self._local.get(node_key)
-            if node is None:
-                idx -= 1
-                continue
-
-            original_key = node.key
+            original_key = self._local.require(node_key).key
             key, leaf, height = self._balance_node(node_key=node_key, is_delete=is_delete)
 
             new_node = self._local.get(key)
@@ -238,8 +224,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
                     parent.value.l_key = key
                     parent.value.l_leaf = leaf
                     parent.value.l_height = height
-                else:
-                    raise ValueError("This node is not connected to its parent.")
 
             idx -= 1
 
