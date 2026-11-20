@@ -17,8 +17,6 @@ def _initial_pairs(data: InitData | None) -> Iterable[tuple[int, Any]]:
 
 
 def pos_map_level_count(*, num_data: int, on_chip: int, ratio: int) -> int:
-    if ratio < 2:
-        raise ValueError(f"ratio must be >= 2 to compress {num_data} entries into {on_chip}, got {ratio}.")
     count, capacity = 0, on_chip
     while capacity < num_data:
         capacity *= ratio

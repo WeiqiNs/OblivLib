@@ -491,7 +491,7 @@ disk.
   for Freecursive); the constructor raises otherwise. The number of position-map levels is exact: the
   fewest `L` with `on_chip * ratio**L >= num_data`, in integer arithmetic (`pos_map_level_count` in
   `tree_base_oram.py`; DA and Freecursive keep the last level on chip, so they use one fewer). A ratio
-  below 2 cannot compress and raises.
+  below 2 cannot compress, so the configs reject it (`compression_ratio`, `num_ic`).
 - `max_stash` is the main ORAM's peak stash plus every position-map level's peak; each peak is recorded
   in `_check_stash`, so it includes build overflow.
 - A `MulPathOram` batch with explicit read paths (`key_path_map`) leaves the position map unchanged
@@ -540,6 +540,13 @@ disk.
   number of lower paths depends on how full the bucket is.
 - **B+ block ids can outgrow their size bound:** `BPlusOmap._max_block_size` assumes ids below
   `num_data`, but deletes never recycle ids. The row capacity's slack has absorbed it so far.
+- **A split Freecursive access shows where the key's reset chunk sits:** the reset chunks before the
+  key's run in `operate_on_key_without_eviction` and the ones after it in `eviction_with_update_stash`, so
+  traffic a caller interleaves between the halves (as `OramOstOmap` does) reveals `(key % num_ic) // 2`
+  on an access that resets. The fused `operate_on_key` is unaffected.
+- **Counter overflows are not recoverable:** a probabilistic-reset IC overflow at a position-map level
+  raises after that level's read and leaves the instance inconsistent; the group counter is never
+  checked, so it overflows its `gc_length` field silently (unreachable at the default widths).
 - **Composed-map capacity errors** (a full GroupOmap bucket) raise a bare `MemoryError` once the upper
   access completes; no lower access is made, so the server sees the failed insert as a shorter op.
 - **Not yet built:** a round driver and handle API for schemes, retrying or resending a lost batch, and

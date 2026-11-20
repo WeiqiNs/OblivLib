@@ -125,8 +125,8 @@ class CounterOramConfig(OramConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.num_ic < 1:
-            raise ValueError(f"num_ic must be >= 1, got {self.num_ic}.")
+        if self.num_ic < 2:
+            raise ValueError(f"num_ic must be >= 2, got {self.num_ic}.")
         if self.ic_length < 1:
             raise ValueError(f"ic_length must be >= 1, got {self.ic_length}.")
         if self.gc_length < 1:

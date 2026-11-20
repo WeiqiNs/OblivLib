@@ -83,7 +83,7 @@ class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
         self._levels = self._make_levels()
         smallest = self._levels[0] if self._levels else self
         self._last_oram_data, self._last_oram_level = smallest._num_data, smallest._level
-        self._on_chip_storage: list[bytes] = [self._zero_counter] * (-(-self._last_oram_data // self._num_ic) + 1)
+        self._on_chip_storage: list[bytes] = [self._zero_counter] * -(-self._last_oram_data // self._num_ic)
 
     @abstractmethod
     def _new_level(self, config: ConfigT, *, last_oram_data: int, last_oram_level: int) -> LevelT: ...

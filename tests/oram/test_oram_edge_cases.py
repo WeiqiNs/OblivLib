@@ -112,6 +112,17 @@ def test_da_oram_reset_block_left_in_pos_map_stash(monkeypatch, client):
         model[key] = b"%d" % step
 
 
+def test_da_oram_resets_in_a_partly_filled_last_block(client):
+    oram = DAOram(DaOramConfig(num_data=102, data_size=8, client=client, num_ic=4, ic_length=2, on_chip_mem=4))
+    oram.init_server_storage()
+    model: dict[int, bytes] = {}
+    workload = random.Random(11)
+    for step in range(1500):
+        key = workload.choice([96, 97, 98, 99, 100, 101])
+        assert oram.operate_on_key(key=key, value=b"%d" % step) == model.get(key, b"")
+        model[key] = b"%d" % step
+
+
 def test_rejects_non_bytes_oversized_and_out_of_range(make_oram, client):
     oram = make_oram(num_data=64, data_size=10, client=client)
     oram.init_server_storage()
