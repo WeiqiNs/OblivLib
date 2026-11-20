@@ -62,6 +62,15 @@ def test_sorted_inserts_reach_every_two_path_bplus_bound(client, order, num_data
     assert omap._op_fetches + -(-omap._op_owed // 2) == omap._budget == 2 * height - 1
 
 
+def test_a_one_leaf_tree_caps_its_rounds_at_one_path(client):
+    omap = BPlusOmap(BPlusOmapConfig(order=3, num_data=1, key_size=4, data_size=4, client=client))
+    omap.init_server_storage()
+    omap.insert(b"k", b"v")
+    assert omap.search(b"k") == b"v"
+    assert omap.delete(b"k") == b"v"
+    assert omap.search(b"k") is None
+
+
 def test_every_bplus_op_reads_two_paths_in_each_of_the_same_rounds(recorded_client):
     client, recorder = recorded_client()
     omap = BPlusOmap(BPlusOmapConfig(order=3, num_data=32, key_size=4, data_size=4, client=client))
