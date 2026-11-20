@@ -149,7 +149,7 @@ identity. Initial data gives each key at most once, in every ORAM and OMAP (and 
 OMAP init checks all pairs up front (`contract.require_omap_init`); ORAM init checks while streaming
 (`TreeBaseOram._initial_blocks`), so a repeat stops the build partway. An ORAM address never written
 reads `b""`; `None` is not a value. Internal structured values (position-map blocks, composed-map roots
-and metadata, ODS nodes) are msgpack; the library never pickles.
+and metadata, ODS nodes) are fixed-layout records (below); the library never pickles.
 
 ### Blocks and codecs
 
@@ -157,26 +157,26 @@ and metadata, ODS nodes) are msgpack; the library never pickles.
 `FieldTuple` mixin: `to_fields()` lists the dataclass's fields in declaration order and `from_fields`
 rebuilds the instance, so reordering, adding, or removing a field changes the stored format.
 
-A `BlockCodec` (`codec.py`) turns a block into the msgpack-ready `[key, leaf, value]` and back, never
-touching the live block. `DefaultCodec` stores the value as is; `NodeCodec(max_block_bytes, value_cls)`
-stores a node value as its field list and rebuilds it. msgpack returns lists where tuples went in, so
-decoders accept lists (B+ internal values come back as `[id, leaf]`). `max_block_bytes` bounds one packed
-block: `TreeStorageBase._max_block_bytes` for plain values, each ODS's `_max_block_size` for nodes, both
-computed with `codec.packed_size` on a widest-case block.
+Every stored record has a declared layout of fixed-width fields (`layout.py`): `UInt(bits)`,
+`Bytes(max_size)` (length plus zero padding), `FixedBytes`, `Optional`, `Array`, `Seq(field, max_count)`
+(count plus padded slots), `Record`, and `Variant`, each with a fixed `size`; a value that does not fit
+its field raises `CapacityError` (a `ValueError`) while it is encoded. A scheme declares its block as
+`block_layout(_key_field, _leaf_field, _value_field)` (`TreeStorageBase` defaults: `UInt` for
+`num_data - 1`, `UInt` for `leaf_range - 1`, `Bytes(data_size)`); AVL, B+, Recursive and counter levels,
+and the GroupOmap lower ORAM override fields. B+ block ids are `UInt(64)`, so the growing id counter
+never outruns its field. Counter blocks are one `UInt` word read and written through `BitFields`.
 
 ### Path ciphers and rows
 
 A `PathCipher` (`path_cipher.py`) turns a bucket into a server row and back, and is the one path both
-initial building and per-op eviction go through (`TreeStorageBase._cipher`). A bucket packs as a msgpack
-array of its real blocks only; there are no dummy blocks.
+initial building and per-op eviction go through (`TreeStorageBase._cipher`). A bucket is
+`Seq(block, bucket_size)`, so it always encodes to the same length.
 
-- `PlainPathCipher`: the row is the packed bucket, unpadded, so rows vary in length (memory servers
-  only). An empty bucket packs to a non-empty row, so a present empty node stays distinct from an absent
-  one.
-- `SealedPathCipher`: the row is `enc(u32_be(len) ‖ packed ‖ zero padding)`, padded to the capacity of a
-  full bucket of widest blocks (the largest msgpack array header plus `bucket_size * max_block_bytes`).
-  Every sealed row is therefore exactly `row_bytes` long, whatever it holds. A bucket with too many
-  blocks or bytes raises `RowSizeError` instead of producing a longer row.
+- `PlainPathCipher`: the row is the encoded bucket (memory servers only). An empty bucket encodes to a
+  non-empty row, so a present empty node stays distinct from an absent one.
+- `SealedPathCipher`: the row is `enc(encoded bucket)`, so `row_bytes` is
+  `ciphertext_length(Seq(block, bucket_size).size)`, computed from the layout. A bucket with too many
+  blocks or a field that does not fit raises `CapacityError` instead of producing a longer row.
 
 ### Heap-index math (`heap_index.py`)
 
@@ -264,11 +264,11 @@ samples leaves and threads them down the chain.
 
 `src/oblivlib/dependency/tree_storage_base.py`, generic over its config type. It is the shared core of
 `TreeBaseOram` and the ODS base `OstBaseOmap`: config accessors, level/leaf-range/stash-size math,
-block sizing (`_max_block_bytes`), `_get_new_leaf`, the stash with its capacity check (`_check_stash`,
+the block layout (`_block_layout`), `_get_new_leaf`, the stash with its capacity check (`_check_stash`,
 which records the peak stash size in `_max_stash` and then raises `StashOverflowError`, also a
 `MemoryError`, on overflow), the stash helpers (`_require_in_stash`, `_update_stash_leaf`), tree
 construction and hosting (`_build_tree`, `_host_tree`), the path rounds every scheme goes through, and
-the scheme's `PathCipher` (`_cipher`, built from its `_codec`; §3, §6). It lives in `dependency/` so
+the scheme's `PathCipher` (`_cipher`, built from its block layout; §3, §6). It lives in `dependency/` so
 both higher layers depend downward on it rather than on each other.
 
 **A path read and its write-back are one unit.** `_open_paths(leaves)` reads paths and returns their
@@ -364,14 +364,13 @@ would overflow, the block **resets**: GC increments, ICs zero, and every child's
   overflow bumps GC and sets every other child's indicator. **Every access reads two paths**, the data
   path and a reset path (random when none is due), so a reset is indistinguishable from no reset.
 
-The on-chip and in-ORAM variants of the counter update, and the prob/hard variants, are deliberately
-duplicated rather than shared: they differ in obliviousness-critical details. The on-chip helpers
-(`_update_data_on_chip`, `_perform_reset_on_chip`, Freecursive's `_update_on_chip_data`) live on the main
-ORAM, and the stored-block helpers (`_update_data`, `_perform_reset`, `_update_data_prob_reset`,
-`_update_data_hard_reset`) on the level class.
+A counter update is a pure function of the counter word, shared by the on-chip counters and the stored
+blocks: DA's `_step` and `_reset` (`DaCounterMixin`), Freecursive's `_advance`. A group counter that
+would outgrow its field raises `CapacityError` from `BitFields.set`; `gc_length` is at least
+`MIN_GC_LENGTH` (64, `config.py`), since GC grows at most once per access.
 
 Everything else lives once in `oram/counter_oram.py`. `CounterMixin` is a `Protocol` holding the
-counter widths, `_zero_counter`, and the PRF leaves (`_prf_leaf`, `_get_previous_leaf_from_prf`); the
+counter widths, the counter layout (`_counters`), and the PRF leaves (`_prf_leaf`, `_get_previous_leaf_from_prf`); the
 layout's total width is the config's `count_length`, and `on_chip` names the config's on-chip size
 (`on_chip_mem` / `on_chip_size`). `CounterPosMapLevel` (a `TreeStorageBase`) is the level constructor
 and `_build_and_host`. `CounterOram` (a `TreeBaseOram`) is the main ORAM's constructor, on-chip
@@ -399,22 +398,20 @@ deriving from `TreeStorageBase` under both roles would form a diamond with `Tree
   `None`; `key=None` is a dummy op. Insert assumes the key is absent: duplicate keys are undefined
   behaviour.
 - **Composed maps.** `OramOstOmap` (VLDB 2025) hashes each key with a PRF into an ORAM slot that stores
-  the root of that slot's ODS tree, as `msgpack([key, leaf])` (`b""` for an empty tree). An op fetches
+  the root of that slot's ODS tree, encoded with the ODS's `root_layout`. An op fetches
   the root, runs the ODS op, and writes the root back. It works with any `TreeBaseOram` × `OstBaseOmap`,
   and calls `update_mul_tree_height` so the ODS sizes its budgets for one small tree per slot. `search`,
   `insert`, and `delete` share that fetch-run-write-back sequence (`_on_slot`). The ORAM must be at
-  least `OramOstOmap.oram_data_size(key_size)` wide; construction checks this.
+  least `OramOstOmap.oram_data_size(ost)` wide; construction checks this.
 - **`GroupOmap`** hashes keys into buckets. An upper ORAM stores per-bucket metadata
-  `msgpack([seed, keys])`, and a lower `MulPathOram` stores each value in a block **named by its key**,
+  a fixed-layout `(seed, keys)` record, and a lower `MulPathOram` stores each value in a block **named by its key**,
   on the path `PRF(seed ‖ key) mod leaf_range` of the lower tree (not `num_data`, so search paths cover
   the same range as an insert's uniformly random path). A search reads every block of the key's bucket in one batch and
   reshuffles them under a new seed. An insert stashes a new block on its path through
   `MulPathOram._insert_block`, which reads and evicts one uniformly random path, so the server sees the
   same single-path access as before. GroupOmap drives the lower ORAM through its underscore
-  (contract-free) methods, since the lower ORAM is internal and keyed by bytes rather than addresses. The
-  lower ORAM sizes its slots for an int address, so its `data_size` is widened by `key_size` plus
-  `_KEY_SLOT_OVERHEAD` (`group_omap.py`): a msgpack byte string costs its length plus at most a 5-byte
-  header, against at least one byte for the int it replaces. Buckets hold at most `load_bound.max_bucket_load(num_data)` keys, and the upper ORAM must be
+  (contract-free) methods, since the lower ORAM is internal and keyed by bytes rather than addresses. Its
+  block key field is `Bytes(key_size)`. Buckets hold at most `load_bound.max_bucket_load(num_data)` keys, and the upper ORAM must be
   at least `GroupOmap.upper_oram_data_size(num_data, key_size)` wide; construction checks this.
 
 ### Obliviousness model
@@ -498,15 +495,13 @@ values, with child keys and leaves in place of pointers, that the oblivious maps
   at most 256 bits per half, so domains above `2**512` are rejected.
 
 **Encryption is per bucket.** Building the initial tree and evicting a path both seal through the
-scheme's one `SealedPathCipher` (§3): the bucket's real blocks are packed as one msgpack array, length
-prefixed, zero padded to the row capacity, and encrypted once, so there is one nonce+tag per bucket and
+scheme's one `SealedPathCipher` (§3): the bucket is encoded in its fixed layout and encrypted once, so there is one nonce+tag per bucket and
 every row has the same length whatever it holds. Only the client holds the encryptor; the server stores
 and returns sealed rows. GCM authentication is defense in depth under the honest-but-curious model, not
 malicious-server integrity: it has no replay or freshness protection. Random 96-bit nonces cap safe use
 at ~2³² encryptions per key.
 
-`encryptor=None` stores each bucket as its plaintext msgpack row, of varying length, on a memory server
-only; the tests use this for speed. A `build_file` always needs an encryptor, so plaintext never reaches
+`encryptor=None` stores each bucket as its plaintext encoded row on a memory server only; the tests use this for speed. A `build_file` always needs an encryptor, so plaintext never reaches
 disk.
 
 ---
@@ -570,18 +565,13 @@ disk.
   makes.
 - **GroupOmap leaks bucket occupancy:** a search reads one lower path per key in the bucket, so the
   number of lower paths depends on how full the bucket is.
-- **B+ block ids can outgrow their size bound:** `BPlusOmap._max_block_size` assumes ids below
-  `num_data`, but ids are never recycled and even insert-only builds allocate more than `num_data` (64
-  sorted inserts at order 3 use 120). Random insert/delete churn at order 3, `num_data=64`, with
-  `AesGcm` raises `RowSizeError` within a few thousand ops. Fixing it (recycling ids, sizing by the live
-  node bound) changes the row size.
 - **A split Freecursive access shows where the key's reset chunk sits:** the reset chunks before the
   key's run in `operate_on_key_without_eviction` and the ones after it in `eviction_with_update_stash`, so
   traffic a caller interleaves between the halves (as `OramOstOmap` does) reveals `(key % num_ic) // 2`
   on an access that resets. The fused `operate_on_key` is unaffected.
-- **Counter overflows are not recoverable:** a probabilistic-reset IC overflow at a position-map level
-  raises after that level's read and leaves the instance inconsistent; the group counter is never
-  checked, so it overflows its `gc_length` field silently (unreachable at the default widths).
+- **Counter overflows are not recoverable:** a probabilistic-reset IC overflow, or a group counter
+  overflow, at a position-map level raises `CapacityError` after that level's read and leaves the
+  instance inconsistent.
 - **An access that raises partway through a multi-tree scheme is not rolled back.** No block is
   duplicated (§4), but a position-map level, an ODS parent, or a counter may already name a leaf the
   data block was never moved to, so a later access of that key raises `KeyError`. Single-tree accesses
