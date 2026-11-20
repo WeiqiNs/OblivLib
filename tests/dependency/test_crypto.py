@@ -70,6 +70,10 @@ class TestPrp:
     def test_rejects_bad_parameters_and_inputs(self):
         with pytest.raises(ValueError, match="Domain size"):
             FeistelPrp(domain_size=1)
+        with pytest.raises(ValueError, match=r"at most 2\*\*512"):
+            FeistelPrp(domain_size=2**512 + 1)
+        widest = FeistelPrp(domain_size=2**512, key=bytes(16))
+        assert widest.inverse(widest.permute(5)) == 5
         with pytest.raises(ValueError, match="at least 16 bytes"):
             FeistelPrp(domain_size=10, key=bytes(8))
         prp = FeistelPrp(domain_size=10)

@@ -484,7 +484,8 @@ values, with child keys and leaves in place of pointers, that the oblivious maps
   `hash_data_to_map` hash `bytes` keys with it for the composed maps.
 - `FeistelPrp`: a 4-round balanced Feistel (the Luby–Rackoff bound for a strong PRP) over an even bit
   width. The SHA-256 round function clones a key-seeded hash per round, which is equivalent to hashing
-  `key ‖ round ‖ value`. Non-power-of-2 domains use cycle-walking, which stays a bijection.
+  `key ‖ round ‖ value`. Non-power-of-2 domains use cycle-walking, which stays a bijection. A round's SHA-256 output mixes
+  at most 256 bits per half, so domains above `2**512` are rejected.
 
 **Encryption is per bucket.** Building the initial tree and evicting a path both seal through the
 scheme's one `SealedPathCipher` (§3): the bucket's real blocks are packed as one msgpack array, length

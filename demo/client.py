@@ -1,8 +1,8 @@
 import argparse
 import time
 
-from oblivlib.dependency import AesGcm, AvlOmapConfig, Client, DaOramConfig
-from oblivlib.omap import AVLOmap, OramOstOmap, OramOstOmapConfig
+from oblivlib.dependency import AesGcm, AvlOmapConfig, Client, DaOramConfig, OramOstOmapConfig
+from oblivlib.omap import AVLOmap, OramOstOmap
 from oblivlib.oram import DAOram
 
 KEY_SIZE = 16

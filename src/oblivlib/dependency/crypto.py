@@ -122,6 +122,8 @@ class FeistelPrp(PseudoRandomPermutation):
     def __init__(self, domain_size: int, key: bytes | None = None):
         if domain_size <= 1:
             raise ValueError("Domain size must be >= 2.")
+        if domain_size > 1 << 512:
+            raise ValueError("Domain size must be at most 2**512, the widest a SHA-256 round can mix.")
         if key is not None and len(key) < self.KEY_SIZE:
             raise ValueError(f"Key should be at least {self.KEY_SIZE} bytes.")
 

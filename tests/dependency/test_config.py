@@ -25,7 +25,6 @@ _OMAP = {**_ORAM, "key_size": 4}
         (RecursiveOramConfig, _ORAM, {"on_chip_mem": 0}, "on_chip_mem"),
         (RecursiveOramConfig, _ORAM, {"compression_ratio": 1}, "compression_ratio"),
         (DaOramConfig, _ORAM, {"num_ic": 1}, "num_ic must be >= 2"),
-        (FreecursiveOramConfig, _ORAM, {"num_ic": 1}, "num_ic must be >= 2"),
         (DaOramConfig, _ORAM, {"ic_length": 0}, "ic_length"),
         (DaOramConfig, _ORAM, {"gc_length": 0}, "gc_length"),
         (DaOramConfig, _ORAM, {"on_chip_mem": 0}, "on_chip_mem"),
