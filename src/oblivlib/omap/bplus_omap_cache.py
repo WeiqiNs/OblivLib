@@ -9,15 +9,13 @@ class BPlusOmapCached(BPlusOmap):
         super().__init__(config)
 
     @override
-    def _move_node_to_local(
-        self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
-    ) -> None:
+    def _move_node_to_local(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         stash_idx = self._find_in_stash(key)
         if stash_idx >= 0:
             node = self._stash.pop(stash_idx)
-            self._local.add(node=node, parent_key=parent_key, child_index=child_index)
+            self._local.add(node=node, parent_key=parent_key)
         else:
-            super()._move_node_to_local(key=key, leaf=leaf, parent_key=parent_key, child_index=child_index)
+            super()._move_node_to_local(key=key, leaf=leaf, parent_key=parent_key)
 
     @override
     def _fetch_nodes(self, nodes: list[tuple[Any, int]]) -> None:
@@ -36,7 +34,6 @@ class BPlusOmapCached(BPlusOmap):
             return
 
         self._op_rounds += 1
-        to_index = len(self._stash)
         self._client.add_read_path(label=self._name, leaves=leaves_to_read)
         result = self._client.execute()
         path = self._cipher.open_path(result.require(self._name))
@@ -47,20 +44,10 @@ class BPlusOmapCached(BPlusOmap):
                 if data.key in keys_to_find:
                     self._local.add(node=data)
                     keys_to_find.discard(data.key)
-                elif data.key is not None:
+                else:
                     self._stash.append(data)
 
         self._check_stash()
-
-        for node_key in list(keys_to_find):
-            stash_idx = self._find_in_stash(node_key)
-            if 0 <= stash_idx < to_index:
-                self._local.add(node=self._stash.pop(stash_idx))
-                keys_to_find.discard(node_key)
-
-        if keys_to_find:
-            raise KeyError(f"The search key(s) {keys_to_find} are not found.")
-
         self._write_paths(leaves_to_read)
 
     @override
@@ -89,7 +76,7 @@ class BPlusOmapCached(BPlusOmap):
         self._insert_into_loaded_leaf(key=key, value=value)
 
         self._flush_local_to_stash()
-        self._perform_dummy_operation(num_round=self._max_height - num_retrieved_nodes)
+        self._perform_dummy_operation(num_round=max(0, self._max_height - num_retrieved_nodes))
 
     @override
     def _delete(self, key: Any) -> Any:

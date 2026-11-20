@@ -9,15 +9,13 @@ class AVLOmapCached(AVLOmap):
         super().__init__(config)
 
     @override
-    def _move_node_to_local(
-        self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
-    ) -> None:
+    def _move_node_to_local(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         stash_idx = self._find_in_stash(key)
         if stash_idx >= 0:
             node = self._stash.pop(stash_idx)
-            self._local.add(node=node, parent_key=parent_key, child_index=child_index)
+            self._local.add(node=node, parent_key=parent_key)
         else:
-            super()._move_node_to_local(key=key, leaf=leaf, parent_key=parent_key, child_index=child_index)
+            super()._move_node_to_local(key=key, leaf=leaf, parent_key=parent_key)
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:

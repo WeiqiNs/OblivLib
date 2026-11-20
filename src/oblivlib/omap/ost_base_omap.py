@@ -26,8 +26,7 @@ class LocalNodesBase[NodeT]:
     def __bool__(self) -> bool:
         return len(self.nodes) > 0
 
-    def add(self, node: Data, parent_key: Any = None, child_index: int | None = None) -> None:
-        del child_index
+    def add(self, node: Data, parent_key: Any = None) -> None:
         self.nodes[node.key] = node
         self.parent_of[node.key] = parent_key
         self.path.append(node.key)
@@ -126,17 +125,13 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         self._stash += self._local.to_list()
         self._local.clear()
 
-    def _move_node_to_local(
-        self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
-    ) -> None:
+    def _move_node_to_local(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         assert leaf is not None
-        self._move_node_to_local_without_eviction(key=key, leaf=leaf, parent_key=parent_key, child_index=child_index)
+        self._move_node_to_local_without_eviction(key=key, leaf=leaf, parent_key=parent_key)
 
         self._write_paths([leaf])
 
-    def _move_node_to_local_without_eviction(
-        self, key: Any, leaf: int | None, parent_key: Any = None, child_index: int | None = None
-    ) -> None:
+    def _move_node_to_local_without_eviction(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         found = False
 
         self._op_rounds += 1
@@ -149,7 +144,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         for bucket in path.values():
             for data in bucket:
                 if data.key == key:
-                    self._local.add(node=data, parent_key=parent_key, child_index=child_index)
+                    self._local.add(node=data, parent_key=parent_key)
                     found = True
                 else:
                     self._stash.append(data)
@@ -159,7 +154,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         if not found:
             stash_idx = self._find_in_stash(key)
             if stash_idx >= 0:
-                self._local.add(node=self._stash[stash_idx], parent_key=parent_key, child_index=child_index)
+                self._local.add(node=self._stash[stash_idx], parent_key=parent_key)
                 del self._stash[stash_idx]
                 return
 

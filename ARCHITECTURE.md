@@ -433,12 +433,16 @@ which `GroupOmap` also uses for its bucket bound; `lambert_w` solves `w·eʷ = x
 then applies the same height bound. The AVL bound is safe but runs 1–2 levels above the exact minimal-node recurrence.
 
 **Cached variants are deliberately not per-op oblivious.** They serve nodes left in the stash by
-earlier ops without a server round, keep the visited path in `local` until the next op, and pad to
-`h` rounds (`2h` for AVL delete), never padding below zero when an op loaded more nodes. Their counts are
+earlier ops without a server round (AVL keeps the visited path in `local` until the next op), and pad to
+`h` rounds (`2h` for AVL delete), never padding below zero when an op loaded more nodes. Exceptions:
+`BPlusOmapCached.search` is the plain `BPlusOmap` search with its full budget and no stash serving, and its
+delete pads through `_pad_to`, so it raises if an over-full map grows past `h`. Because padding counts
+nodes rather than rounds, sorted inserts into a `BPlusOmapCached` (every path node a stash hit) send no
+round and nothing is evicted, so the stash overflows (order 3, `num_data=64`: 63 blocks against 42). Their counts are
 approximate: they count nodes in `local` (stash hits and a new insert node included), and an AVL delete
 that empties or re-roots a one-node path pads a full `2h` after its fetches. They are meant for use inside a larger oblivious composition.
 `BPlusOmapCached.delete` reads each level's child and sibling in one batched round (`h` rounds, same
-bandwidth as `2h−1` paths). Both B+ deletes run one walk (`_find_path_with_siblings`); they differ only in
+bandwidth as `2h−1` paths). Both B+ deletes run one walk (`_find_path_with_siblings`); they differ in
 `_fetch_nodes`, one round per node for `BPlusOmap` and one batched round per level for the cached map.
 
 ### Plaintext reference trees (`dependency/avl_tree.py`, `bplus_tree.py`)
@@ -547,7 +551,10 @@ disk.
 - **GroupOmap leaks bucket occupancy:** a search reads one lower path per key in the bucket, so the
   number of lower paths depends on how full the bucket is.
 - **B+ block ids can outgrow their size bound:** `BPlusOmap._max_block_size` assumes ids below
-  `num_data`, but deletes never recycle ids. The row capacity's slack has absorbed it so far.
+  `num_data`, but ids are never recycled and even insert-only builds allocate more than `num_data` (64
+  sorted inserts at order 3 use 120). Random insert/delete churn at order 3, `num_data=64`, with
+  `AesGcm` raises `RowSizeError` within a few thousand ops. Fixing it (recycling ids, sizing by the live
+  node bound) changes the row size.
 - **A split Freecursive access shows where the key's reset chunk sits:** the reset chunks before the
   key's run in `operate_on_key_without_eviction` and the ones after it in `eviction_with_update_stash`, so
   traffic a caller interleaves between the halves (as `OramOstOmap` does) reveals `(key % num_ic) // 2`

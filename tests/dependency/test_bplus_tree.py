@@ -51,13 +51,3 @@ class TestBPlusTree:
                     _invariants(root_it)
                 assert _shape(root_it) == _shape(root_rec)
             assert root_it is None and root_rec is None
-
-    def test_get_data_list_layout(self):
-        tree = BPlusTree(order=4, leaf_range=1000)
-        root = BPlusTreeNode()
-        for i in range(21):
-            root = tree.insert(root=root, kv_pair=KVPair(key=i, value=i))
-
-        data_list = tree.get_data_list(root=root)
-        assert data_list[0].value.keys == root.keys
-        assert len(data_list[0].value.values) == len(root.values)

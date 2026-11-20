@@ -28,8 +28,7 @@ def _read_all_blocks(scheme):
 def _live_blocks(omap):
     blocks = {data.key: data for data in _read_all_blocks(omap)}
     for data in list(omap._stash) + omap._local.to_list():
-        if data.key is not None:
-            blocks[data.key] = data
+        blocks[data.key] = data
     return blocks
 
 
@@ -65,21 +64,27 @@ def verify_bplus_invariants(omap, model):
         return
     blocks = _live_blocks(omap)
     collected = {}
+    leaf_depths = set()
+    min_keys = (omap._order - 1) // 2
 
     def is_leaf(value):
         return len(value.keys) == len(value.values)
 
-    def walk(block_id, leaf, low, high):
+    def walk(block_id, leaf, low, high, depth):
         assert block_id in blocks, f"block {block_id} referenced by a pointer but not present"
         data = blocks[block_id]
         assert data.leaf == leaf, f"block {block_id}: stored leaf {data.leaf} != pointer {leaf}"
         value = data.value
         assert list(value.keys) == sorted(value.keys), f"keys unsorted in block {block_id}: {value.keys}"
+        assert len(value.keys) < omap._order, f"block {block_id} overfull: {len(value.keys)} keys"
+        if depth > 0:
+            assert len(value.keys) >= min_keys, f"block {block_id} underfull: {len(value.keys)} keys"
         for k in value.keys:
             assert (low is None or low <= k) and (high is None or k < high), (
                 f"key {k} outside routing bounds ({low}, {high}) in block {block_id}"
             )
         if is_leaf(value):
+            leaf_depths.add(depth)
             for k, v in zip(value.keys, value.values, strict=True):
                 assert k not in collected, f"duplicate key {k} across leaves"
                 collected[k] = v
@@ -88,11 +93,12 @@ def verify_bplus_invariants(omap, model):
             low_i = low
             for i, (child_id, child_leaf) in enumerate(value.values):
                 high_i = value.keys[i] if i < len(value.keys) else high
-                walk(child_id, child_leaf, low_i, high_i)
+                walk(child_id, child_leaf, low_i, high_i, depth + 1)
                 low_i = value.keys[i] if i < len(value.keys) else low_i
 
     root_id, root_leaf = omap.root
-    walk(root_id, root_leaf, None, None)
+    walk(root_id, root_leaf, None, None, 0)
+    assert len(leaf_depths) == 1, f"leaves at several depths: {sorted(leaf_depths)}"
     assert collected == model, (
         f"leaves != model (missing {set(model) - set(collected)}, extra {set(collected) - set(model)})"
     )
@@ -186,3 +192,8 @@ def counting_client(recorded_client):
 @pytest.fixture
 def read_all_blocks():
     return _read_all_blocks
+
+
+@pytest.fixture
+def check_bplus_invariants():
+    return verify_bplus_invariants

@@ -1,6 +1,5 @@
 import math
 from bisect import bisect_right
-from collections.abc import Callable
 from functools import cached_property
 from typing import Any, Protocol, cast, override
 
@@ -23,22 +22,9 @@ class BPlusNode(Protocol):
 
 
 class LocalNodes(LocalNodesBase[BPlusNode]):
-    def __init__(self) -> None:
-        super().__init__()
-        self.child_index_of: dict[Any, int] = {}
-
     @staticmethod
     def is_leaf_node(node: BPlusNode) -> bool:
         return len(node.value.keys) == len(node.value.values)
-
-    @override
-    def add(self, node: Data, parent_key: Any = None, child_index: int | None = None) -> None:
-        super().add(node=node, parent_key=parent_key)
-        if child_index is not None:
-            self.child_index_of[node.key] = child_index
-
-    def get_child_index(self, key: Any) -> int | None:
-        return self.child_index_of.get(key)
 
     def require_leaf(self) -> BPlusNode:
         node = cast(BPlusNode | None, self.nodes.get(self.path[-1])) if self.path else None
@@ -46,30 +32,11 @@ class LocalNodes(LocalNodesBase[BPlusNode]):
             raise KeyError("The local has no leaf node.")
         return node
 
-    def update_all_leaves(self, get_new_leaf: Callable[[], int]) -> None:
-        for key, node in self.nodes.items():
-            node.leaf = get_new_leaf()
-            parent = self.get_parent(key)
-            child_index = self.get_child_index(key)
-            if parent is not None and child_index is not None:
-                parent.value.values[child_index] = (node.key, node.leaf)
-
-    @override
-    def remove(self, key: Any) -> Data | None:
-        node = super().remove(key)
-        self.child_index_of.pop(key, None)
-        return node
-
     def pop(self, key: Any) -> BPlusNode:
         node = cast(BPlusNode | None, self.remove(key))
         if node is None:
             raise KeyError(f"Node {key} is not loaded in local.")
         return node
-
-    @override
-    def clear(self) -> None:
-        super().clear()
-        self.child_index_of.clear()
 
 
 class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
@@ -133,7 +100,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         root = self.root
         assert root is not None
 
-        self._move_node_to_local_without_eviction(key=root[0], leaf=root[1], parent_key=None, child_index=None)
+        self._move_node_to_local_without_eviction(key=root[0], leaf=root[1], parent_key=None)
 
         node = self._local.require_root()
         old_leaf = node.leaf
@@ -149,7 +116,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             node.value.values[child_index] = (child_key, new_leaf)
             self._stash.append(self._local.remove(node.key))
             self._write_paths([old_leaf])
-            self._move_node_to_local_without_eviction(key=child_key, leaf=child_leaf, parent_key=None, child_index=None)
+            self._move_node_to_local_without_eviction(key=child_key, leaf=child_leaf, parent_key=None)
 
             node = self._local.require_root()
             old_leaf = node.leaf
@@ -164,7 +131,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         root = self.root
         assert root is not None
 
-        self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None, child_index=None)
+        self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None)
 
         node = self._local.require_root()
         node.leaf = self._get_new_leaf()
@@ -176,7 +143,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             child_index = bisect_right(node.value.keys, key)
 
             child_key, child_leaf = node.value.values[child_index]
-            self._move_node_to_local(key=child_key, leaf=child_leaf, parent_key=node.key, child_index=child_index)
+            self._move_node_to_local(key=child_key, leaf=child_leaf, parent_key=node.key)
             node.value.values[child_index] = (child_key, new_leaf)
 
             node = self._local.require_leaf()
@@ -249,7 +216,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
     def _fetch_nodes(self, nodes: list[tuple[Any, int]]) -> None:
         for node_key, leaf in nodes:
-            self._move_node_to_local(key=node_key, leaf=leaf, parent_key=None, child_index=None)
+            self._move_node_to_local(key=node_key, leaf=leaf, parent_key=None)
 
     def _find_path_with_siblings(
         self, key: Any
@@ -263,7 +230,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         root = self.root
         assert root is not None
 
-        self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None, child_index=None)
+        self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None)
         node = self._local.pop(root[0])
         node.leaf = self._get_new_leaf()
         self.root = (node.key, node.leaf)
@@ -276,32 +243,21 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             child_indices.append(child_index)
             child_key, child_leaf = node.value.values[child_index]
 
-            sibling_index: int | None = None
-            if child_index > 0:
-                sibling_index = child_index - 1
-            elif child_index < len(node.value.values) - 1:
-                sibling_index = child_index + 1
+            sibling_index = child_index - 1 if child_index > 0 else child_index + 1
+            sib_key, sib_leaf = node.value.values[sibling_index]
+            sib_new_leaf = self._get_new_leaf()
 
-            nodes_to_fetch: list[tuple[Any, int]] = [(child_key, child_leaf)]
-            sib_key = sib_new_leaf = None
-            if sibling_index is not None:
-                sib_key, sib_leaf = node.value.values[sibling_index]
-                sib_new_leaf = self._get_new_leaf()
-                nodes_to_fetch.append((sib_key, sib_leaf))
-
-            self._fetch_nodes(nodes_to_fetch)
+            self._fetch_nodes([(child_key, child_leaf), (sib_key, sib_leaf)])
 
             child_node = self._local.pop(child_key)
             node.value.values[child_index] = (child_key, new_leaf)
             child_node.leaf = new_leaf
 
-            if sibling_index is not None:
-                assert sib_new_leaf is not None
-                sibling_node = self._local.pop(sib_key)
-                sibling_node.leaf = sib_new_leaf
-                node.value.values[sibling_index] = (sib_key, sib_new_leaf)
-                siblings[level + 1] = sibling_node
-                sibling_indices[level + 1] = sibling_index
+            sibling_node = self._local.pop(sib_key)
+            sibling_node.leaf = sib_new_leaf
+            node.value.values[sibling_index] = (sib_key, sib_new_leaf)
+            siblings[level + 1] = sibling_node
+            sibling_indices[level + 1] = sibling_index
 
             level += 1
             path_nodes[level] = child_node
@@ -348,9 +304,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
                     if len(node.value.keys) >= min_keys:
                         break
                     child_level = level + 1
-                    if child_level not in siblings:
-                        break
-
                     sibling = siblings[child_level]
                     sib_index = sibling_indices[child_level]
                     is_left_sibling = sib_index < child_index
@@ -403,18 +356,11 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
                     node_level = level
                     node = parent
 
-                root_node = path_nodes.get(0)
-                if root_node is not None and len(root_node.value.keys) == 0:
-                    if len(root_node.value.keys) == len(root_node.value.values):
-                        self.root = None
-                    else:
-                        child_key, child_leaf = root_node.value.values[0]
-                        self.root = (child_key, child_leaf)
+                root_node = path_nodes[0]
+                if len(root_node.value.keys) == 0:
+                    child_key, child_leaf = root_node.value.values[0]
+                    self.root = (child_key, child_leaf)
                     del path_nodes[0]
-
-                if self.root is not None and 0 in path_nodes:
-                    root_node = path_nodes[0]
-                    self.root = (root_node.key, root_node.leaf)
 
         return deleted_value
 
@@ -429,9 +375,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         budget = self._op_budget("search")
         if self._short_circuit_read(key=key, num_round=budget):
             return None
-
-        if self._local:
-            raise MemoryError("The local storage was not emptied before this operation.")
 
         old_leaf = self._find_leaf(key=key)
 
@@ -466,9 +409,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             self.root = (data_block.key, data_block.leaf)
             self._pad_to(budget)
             return
-
-        if self._local:
-            raise MemoryError("The local storage was not emptied before this operation.")
 
         self._find_leaf_to_local(key=key)
         self._insert_into_loaded_leaf(key=key, value=value)
