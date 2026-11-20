@@ -141,11 +141,17 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
 
     @property
     def _carry_limit(self) -> int:
-        return self._cached_carry_limit() if self._config.cached else 0
-
-    @abstractmethod
-    def _cached_carry_limit(self) -> int:
-        raise NotImplementedError
+        if not self._config.cached:
+            return 0
+        height, cached, uncached = (
+            self._max_height,
+            self._config.minimums(cached=True),
+            self._config.minimums(cached=False),
+        )
+        return max(
+            sum(self._round_width(index) for index in range(cached[op].rounds(height), uncached[op].rounds(height)))
+            for op in ODS_OPS
+        )
 
     def drain(self) -> None:
         for _ in range(-(-self._carry_limit // self._widest_round)):

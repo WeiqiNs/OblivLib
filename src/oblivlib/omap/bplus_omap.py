@@ -57,12 +57,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         return LocalNodes()
 
     @override
-    def _cached_carry_limit(self) -> int:
-        if self._config.paths_per_round == 2:
-            return max(2 * self._max_height - 3, 0)
-        return 2 * self._max_height - 2
-
-    @override
     def update_mul_tree_height(self, num_tree: int) -> None:
         tree_size = max_bucket_load(num_tree)
         self._max_height = bplus_max_levels(tree_size, self._order)

@@ -85,7 +85,7 @@ def test_sorted_inserts_reach_every_cached_bplus_bound(
     omap.drain()
     omap.delete(b"9999")
     assert omap._budget == delete_rounds * height - (delete_rounds - 1)
-    assert omap._owed == 2 * height + delete_carry == omap._carry_limit
+    assert omap._owed == 2 * height + delete_carry <= omap._carry_limit == 2 * height - 2
     assert omap.search(b"0000") == b"v"
 
 

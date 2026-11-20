@@ -247,12 +247,11 @@ class TreeOmapConfig(OmapConfig):
     insert_budget: AccessBudget | None = None
     delete_budget: AccessBudget | None = None
 
-    @property
-    def min_budgets(self) -> dict[OdsOp, AccessBudget]:
-        return self.MIN_CACHED_BUDGETS if self.cached else self.MIN_BUDGETS
+    def minimums(self, *, cached: bool) -> dict[OdsOp, AccessBudget]:
+        return self.MIN_CACHED_BUDGETS if cached else self.MIN_BUDGETS
 
     def budget(self, op: OdsOp) -> AccessBudget:
-        return getattr(self, f"{op}_budget") or self.min_budgets[op]
+        return getattr(self, f"{op}_budget") or self.minimums(cached=self.cached)[op]
 
     @classmethod
     def textbook_fields(cls) -> dict[str, Any]:
@@ -272,7 +271,7 @@ class TreeOmapConfig(OmapConfig):
         if self.cached and not self.MIN_CACHED_BUDGETS:
             raise ValueError(f"{type(self).__name__} does not support cached=True yet.")
         for op in ODS_OPS:
-            given, least = self.budget(op), self.min_budgets[op]
+            given, least = self.budget(op), self.minimums(cached=self.cached)[op]
             if given.a < least.a or given.a + given.b < least.a + least.b:
                 raise ValueError(
                     f"{op}_budget {given} is below the proven minimum {least}: a must be >= {least.a} and "
@@ -336,10 +335,9 @@ class BPlusOmapConfig(TreeOmapConfig):
     order: int
     paths_per_round: int = 2
 
-    @property
     @override
-    def min_budgets(self) -> dict[OdsOp, AccessBudget]:
-        if self.cached:
+    def minimums(self, *, cached: bool) -> dict[OdsOp, AccessBudget]:
+        if cached:
             return self.MIN_CACHED_TWO_PATH_BUDGETS if self.paths_per_round == 2 else self.MIN_CACHED_BUDGETS
         return self.MIN_TWO_PATH_BUDGETS if self.paths_per_round == 2 else self.MIN_BUDGETS
 
