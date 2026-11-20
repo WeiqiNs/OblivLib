@@ -91,7 +91,7 @@ class DaPosMapLevel(CounterPosMapLevel[DaOramConfig]):
         data.leaf = new_leaf
         self._update_stash_leaf(key=r_key, new_leaf=r_new_leaf)
 
-        self._write_paths(leaves)
+        self._write_paths()
         return DaStep(next_cur_leaf, next_new_leaf, *reset)
 
 

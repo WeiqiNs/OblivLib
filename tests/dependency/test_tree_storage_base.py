@@ -33,3 +33,18 @@ def test_require_in_stash_finds_the_block_or_names_the_missing_key(client):
     assert base._require_in_stash(1) is block
     with pytest.raises(KeyError, match="Key 2 not found"):
         base._require_in_stash(2)
+
+
+def test_a_write_back_that_fails_while_sealing_is_staged_by_the_next_read(fail_once, client, read_all_blocks):
+    base = TreeStorageBase(PathOramConfig(num_data=16, data_size=4, client=client, name="unit"))
+    base._host_tree(base._build_tree([Data(key=key, leaf=key % 8, value=b"%d" % key) for key in range(16)]))
+    base._read_paths([0])
+    fail_once(base._cipher, "seal_path")
+
+    with pytest.raises(RuntimeError, match="injected"):
+        base._write_paths()
+
+    base._read_paths([1])
+    base._write_paths()
+    held = sorted((data.key, data.value) for data in read_all_blocks(base) + base._stash)
+    assert held == [(key, b"%d" % key) for key in range(16)]

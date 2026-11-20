@@ -26,9 +26,9 @@ def _read_all_blocks(scheme):
 
 
 def _live_blocks(omap):
-    blocks = {data.key: data for data in _read_all_blocks(omap)}
-    for data in list(omap._stash) + omap._local.to_list():
-        blocks[data.key] = data
+    held = _read_all_blocks(omap) + omap._stash + omap._local.to_list()
+    blocks = {data.key: data for data in held}
+    assert len(blocks) == len(held), "a node is held more than once"
     return blocks
 
 
@@ -187,11 +187,6 @@ def oblivious_omap_spec(request):
 def counting_client(recorded_client):
     client, recorder = recorded_client()
     return client, ReadCounter(recorder)
-
-
-@pytest.fixture
-def read_all_blocks():
-    return _read_all_blocks
 
 
 @pytest.fixture

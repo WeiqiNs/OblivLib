@@ -133,7 +133,7 @@ class TestOmapBehavior:
             for j in range(i * 2 * size_group, (i * 2 + 1) * size_group + extra):
                 assert omap.search(key=_b(j)) == _b(j)
 
-    def test_model_oracle(self, omap_spec):
+    def test_model_oracle(self, omap_spec, duplicate_blocks):
         rng = random.Random(1234)
         omap = omap_spec.make(client=Client.local(), num_data=128)
         omap.init_server_storage()
@@ -149,6 +149,7 @@ class TestOmapBehavior:
                 assert omap.search(key=key) == model.get(key)
         for key in keyspace:
             assert omap.search(key=key) == model.get(key)
+        assert not duplicate_blocks(omap)
 
     def test_invariants(self, omap_spec):
         rng = random.Random(99)

@@ -93,7 +93,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         assert root.id is not None and root.leaf is not None
         return blocks, (root.id, root.leaf)
 
-    def _find_leaf(self, key: Any) -> int:
+    def _find_leaf(self, key: Any) -> None:
         if self._local:
             raise MemoryError("The local storage was not emptied before this operation.")
 
@@ -103,7 +103,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         self._move_node_to_local_without_eviction(key=root[0], leaf=root[1], parent_key=None)
 
         node = self._local.require_root()
-        old_leaf = node.leaf
         node.leaf = self._get_new_leaf()
         self.root = (node.key, node.leaf)
 
@@ -115,14 +114,11 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             child_key, child_leaf = node.value.values[child_index]
             node.value.values[child_index] = (child_key, new_leaf)
             self._stash.append(self._local.remove(node.key))
-            self._write_paths([old_leaf])
+            self._write_paths()
             self._move_node_to_local_without_eviction(key=child_key, leaf=child_leaf, parent_key=None)
 
             node = self._local.require_root()
-            old_leaf = node.leaf
             node.leaf = new_leaf
-
-        return old_leaf
 
     def _find_leaf_to_local(self, key: Any) -> None:
         if self._local:
@@ -376,7 +372,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         if self._short_circuit_read(key=key, num_round=budget):
             return None
 
-        old_leaf = self._find_leaf(key=key)
+        self._find_leaf(key=key)
 
         leaf = self._local.require_leaf()
         search_value = None
@@ -389,7 +385,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
                 break
 
         self._flush_local_to_stash()
-        self._write_paths([old_leaf])
+        self._write_paths()
         self._pad_to(budget)
 
         return search_value

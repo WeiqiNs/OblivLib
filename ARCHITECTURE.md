@@ -266,13 +266,23 @@ samples leaves and threads them down the chain.
 `TreeBaseOram` and the ODS base `OstBaseOmap`: config accessors, level/leaf-range/stash-size math,
 block sizing (`_max_block_bytes`), `_get_new_leaf`, the stash with its capacity check (`_check_stash`,
 which records the peak stash size in `_max_stash` and then raises `StashOverflowError`, also a
-`MemoryError`, on overflow), the stash helpers (`_absorb_path`, `_require_in_stash`,
-`_update_stash_leaf`), tree construction and hosting
-(`_build_tree`, `_host_tree`), block-major eviction (`_evict_stash`, which returns sealed `PathRows`),
-the round helpers `_read_paths(leaves)` (stage, execute, absorb) and `_write_paths(leaves)` (evict,
-stage, execute) that every scheme's plain read and write-back go through,
-and the scheme's `PathCipher` (`_cipher`, built from its `_codec`; §3, §6). It lives in `dependency/` so
+`MemoryError`, on overflow), the stash helpers (`_require_in_stash`, `_update_stash_leaf`), tree
+construction and hosting (`_build_tree`, `_host_tree`), the path rounds every scheme goes through, and
+the scheme's `PathCipher` (`_cipher`, built from its `_codec`; §3, §6). It lives in `dependency/` so
 both higher layers depend downward on it rather than on each other.
+
+**A path read and its write-back are one unit.** `_open_paths(leaves)` reads paths and returns their
+opened buckets; `_read_paths(leaves)` also moves every block into the stash, and the ODS fetches take
+the opened buckets to split nodes between `local` and the stash. Reading moves the blocks to the
+client, but the server keeps its copies until those paths are rewritten, so the storage base records
+the read leaves (`_unwritten_leaves`) and `_write_paths()` evicts the stash onto exactly those paths,
+block-major (`_stage_write_back`). Callers never name the paths they write back. If an access raises
+between the two, the leaves stay recorded, and the next `_open_paths` stages their write-back ahead of
+its own read; the batch applies writes before reads (§2), so no read ever sees a server copy of a block
+the client already holds. The stash gives up a block only once its sealed row is staged, so an
+eviction that raises while sealing loses nothing. Without this, a read overlapping an unwritten path
+absorbs a second copy of a block; eviction then writes both back and the copies diverge as one of them
+is updated.
 
 ### `TreeBaseOram` and the access protocol
 
@@ -282,8 +292,8 @@ Adds eviction and one access template. The position map belongs to the schemes t
 from a PRF. Each scheme implements a single hook, `_operate_on_key_without_eviction(key, value)`: it
 finds the key's leaves (and does any position-map level I/O), then calls `_read_block`, which reads those
 paths in one batch, pulls their real blocks into the stash, reads the key (optionally overwriting it),
-remaps it, and records the paths in `_pending_leaves`. `_write_back` evicts the stash onto the pending
-paths, stages the write, executes, and clears them. The public methods check the data contract and
+remaps it, and marks the access pending (`_access_pending`). `_write_back` writes the read paths back
+(`_write_paths`) and clears the mark. The public methods check the data contract and
 compose the two:
 
 - `operate_on_key(key, value=UNSET)` is the hook then `_write_back`, and returns the value *before*
@@ -308,7 +318,7 @@ the hook (`_pass_reset_chunk`), the key's chunk is the pending read, and the chu
 `_pending_reset_chunks` until its `_write_back` override passes them after the key's own write-back.
 A counter update always returns reset chunks: a plain increment is one single-entry chunk for the
 child, so the level and the main ORAM share one walk (`_split_at_key`) with no separate no-reset branch.
-`MulPathOram`'s batch API uses the same pending paths: `_operate_on_keys_without_eviction` reads every
+`MulPathOram`'s batch API uses the same pending access: `_operate_on_keys_without_eviction` reads every
 key's path and records them, and `_eviction_for_mul_keys` applies updates and calls `_write_back`.
 
 `TreeBaseOram` is generic over its position-map level type. `_levels` lists a recursive scheme's levels,
@@ -503,7 +513,10 @@ disk.
 
 ## 7. Invariants and contracts
 
-- A block mapped to leaf `x` is on the root→`x` path or in the stash.
+- A block mapped to leaf `x` is on the root→`x` path or in the stash, and is held exactly once: no
+  read sees a server copy of a block the client already holds (§4, "A path read and its write-back are
+  one unit"). The model tests check this across every tree and stash of a scheme
+  (`duplicate_blocks` in `tests/conftest.py`).
 - Recursive schemes require `num_data` > on-chip size (`on_chip_mem` for DA/Recursive, `on_chip_size`
   for Freecursive); the constructor raises otherwise. The number of position-map levels is exact: the
   fewest `L` with `on_chip * ratio**L >= num_data`, in integer arithmetic (`pos_map_level_count` in
@@ -569,10 +582,16 @@ disk.
 - **Counter overflows are not recoverable:** a probabilistic-reset IC overflow at a position-map level
   raises after that level's read and leaves the instance inconsistent; the group counter is never
   checked, so it overflows its `gc_length` field silently (unreachable at the default widths).
-- **An ODS op that raises mid-way leaves the map unusable:** the path just read is absorbed but never
-  evicted, fetched nodes stay in `local`, and `root` may name a stale leaf; later ops raise or lose
-  nodes. A `StashOverflowError` repeats on every later op. `num_data` bounds sizing but is never
-  enforced, so overfilling a map ends this way rather than with a `ContractError`.
+- **An access that raises partway through a multi-tree scheme is not rolled back.** No block is
+  duplicated (§4), but a position-map level, an ODS parent, or a counter may already name a leaf the
+  data block was never moved to, so a later access of that key raises `KeyError`. Single-tree accesses
+  recover: a failed `_write_back` leaves the access pending for `eviction_with_update_stash` to finish,
+  and a failed `MulPathOram._insert_block` keeps its block in the stash.
+- **An ODS op that raises mid-way leaves the map unusable:** fetched nodes stay in `local` and `root`
+  may name a stale leaf; later ops raise or lose nodes. After a `StashOverflowError`, later ops raise
+  it again until evictions bring the stash back within capacity, and may then hit the stale pointers
+  (`KeyError`). `num_data` bounds sizing but is never enforced, so overfilling a map ends this way
+  rather than with a `ContractError`.
 - **`GroupOmap` gaps:** inserting a key already present stores a second block (undefined behaviour,
   as for the ODS maps); `GroupOmapConfig.distinguishable` is ignored; the lower `MulPathOram` builds a
   `num_data` position map that `GroupOmap` never reads.
@@ -592,7 +611,10 @@ disk.
   `recorded_client` (a factory for a client over a `RecordingBackend` that records every message),
   `seeded_access` (runs a workload under a fixed seed on a recording client and returns its batches'
   access shapes and rounds), `assert_deferral_preserves_access` (built on `seeded_access`: runs a
-  workload with deferral off and on and compares the batches), `encryptor`, and `test_file`.
+  workload with deferral off and on and compares the batches), `read_all_blocks` (every block a tree
+  holds), `duplicate_blocks` (keys held more than once across a scheme's trees, stashes, and ODS
+  `local`, composed maps included; the model tests assert it is empty), `fail_once` (makes one call of
+  a method raise), `encryptor`, and `test_file`.
 - `tests/dependency/`: `make_search_tree` parametrizes one behavioural suite
   (`test_search_tree_common.py`) over AVL and B+. Per-tree files hold the structural invariant validators
   and recursive/iterative cross-checks. The protocol, server, client, transport,

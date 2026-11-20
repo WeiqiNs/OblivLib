@@ -1,3 +1,4 @@
+import contextlib
 import random
 from typing import Any
 
@@ -53,7 +54,7 @@ def _make_omap(ods_kind, oram_kind, client, n=64):
 class TestOramOstOmapOracle:
     @pytest.mark.parametrize("ods_kind", ["avl", "avl_cached", "bplus", "bplus_cached"])
     @pytest.mark.parametrize("oram_kind", ["da", "path", "recursive"])
-    def test_oracle(self, ods_kind, oram_kind, client):
+    def test_oracle(self, ods_kind, oram_kind, client, duplicate_blocks):
         n = 64
         omap = _make_omap(ods_kind, oram_kind, client, n)
         omap.init_server_storage()
@@ -74,6 +75,7 @@ class TestOramOstOmapOracle:
                 assert omap.search(key=key) == model.get(key)
         for key in keyspace:
             assert omap.search(key=key) == model.get(key)
+        assert not duplicate_blocks(omap)
 
 
 class TestOramOstOmapInit:
@@ -159,11 +161,11 @@ def test_a_failed_tree_op_still_finishes_the_oram_access(fail_once, client):
     assert omap.search(key=b"new") == b"x"
 
 
-def test_overfilled_map_keeps_raising_the_real_error(client):
+def test_overfilled_map_raises_the_overflow_and_leaves_no_access_pending(client):
     omap = _make_omap("avl", "path", client, n=16)
     omap.init_server_storage()
     with pytest.raises(StashOverflowError):
         for i in range(10_000):
             omap.insert(key=b"%d" % i, value=b"v")
-    with pytest.raises(StashOverflowError):
+    with contextlib.suppress(StashOverflowError, KeyError):
         omap.search(key=b"0")

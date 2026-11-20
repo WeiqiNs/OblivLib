@@ -37,7 +37,7 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
     def __init__(self, config: ConfigT):
         super().__init__(config)
         self._levels: list[LevelT] = []
-        self._pending_leaves: list[int] = []
+        self._access_pending: bool = False
 
     @property
     def max_stash(self) -> int:
@@ -66,22 +66,22 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
         if value is not UNSET:
             data.value = value
         data.leaf = new_leaf
-        self._pending_leaves = leaves
+        self._access_pending = True
         return read_value
 
     def _write_back(self) -> None:
-        self._write_paths(self._pending_leaves)
-        self._pending_leaves = []
+        self._write_paths()
+        self._access_pending = False
 
     @abstractmethod
     def init_server_storage(self, data: InitData | None = None) -> None: ...
 
     def _require_no_pending(self) -> None:
-        if self._pending_leaves:
+        if self._access_pending:
             raise ValueError(f"{self._identity}: an access is still waiting for its eviction.")
 
     def _require_pending(self) -> None:
-        if not self._pending_leaves:
+        if not self._access_pending:
             raise ValueError(f"{self._identity}: no access is waiting for its eviction.")
 
     def _require_access(self, key: Any, value: Any) -> None:

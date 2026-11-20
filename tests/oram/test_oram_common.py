@@ -14,7 +14,7 @@ class TestOramCommon:
         for i in range(num_data):
             assert oram.operate_on_key(key=i) == b"%d" % (i * 2)
 
-    def test_operations_match_a_dict_model(self, make_oram, num_data, client):
+    def test_operations_match_a_dict_model(self, make_oram, num_data, client, duplicate_blocks):
         oram = make_oram(num_data=num_data, data_size=10, client=client)
         oram.init_server_storage()
         model = dict.fromkeys(range(num_data), b"")
@@ -27,6 +27,7 @@ class TestOramCommon:
             assert oram.operate_on_key(key, value) == model[key]
             if isinstance(value, bytes):
                 model[key] = value
+        assert not duplicate_blocks(oram)
 
     def test_operate_then_evict(self, make_oram, num_data, client):
         oram = make_oram(num_data=num_data, data_size=10, client=client)

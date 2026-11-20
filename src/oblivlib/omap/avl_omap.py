@@ -372,7 +372,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         self._move_node_to_local_without_eviction(key=root[0], leaf=root[1], parent_key=None)
         current_key = root[0]
 
-        old_child_path = root[1]
         child_leaf = self._get_new_leaf()
         self.root = (root[0], child_leaf)
 
@@ -395,10 +394,9 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
             self._local.remove(current_key)
             self._stash.append(current)
-            self._write_paths([old_child_path])
+            self._write_paths()
 
             self._move_node_to_local_without_eviction(key=next_key, leaf=next_leaf, parent_key=current_key)
-            old_child_path = next_leaf
             current_key = next_key
             current = self._local.require(current_key)
 
@@ -409,7 +407,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         current.leaf = child_leaf
         self._local.clear()
         self._stash.append(current)
-        self._write_paths([old_child_path])
+        self._write_paths()
 
         self._pad_to(budget)
         return search_value

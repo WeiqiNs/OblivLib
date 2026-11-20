@@ -12,7 +12,7 @@ from oblivlib.dependency.errors import StashOverflowError
 from oblivlib.dependency.heap_index import compute_level, empty_path, fill_data_to_path
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
 from oblivlib.dependency.tree_builder import TreeImage, build_tree
-from oblivlib.dependency.types import Data, PathRows
+from oblivlib.dependency.types import Data, PathData
 
 
 class TreeStorageBase[ConfigT: OramConfig]:
@@ -25,6 +25,7 @@ class TreeStorageBase[ConfigT: OramConfig]:
 
         self._stash: list[Any] = []
         self._max_stash: int = 0
+        self._unwritten_leaves: list[int] = []
 
     @property
     def _name(self) -> str:
@@ -77,11 +78,6 @@ class TreeStorageBase[ConfigT: OramConfig]:
                 + f"capacity {self._stash_capacity}"
             )
 
-    def _absorb_path(self, path: PathRows) -> None:
-        for bucket in self._cipher.open_path(path).values():
-            self._stash.extend(bucket)
-        self._check_stash()
-
     def _require_in_stash(self, key: int) -> Data:
         for data in self._stash:
             if data.key == key:
@@ -92,21 +88,34 @@ class TreeStorageBase[ConfigT: OramConfig]:
         if key is not None:
             self._require_in_stash(key).leaf = new_leaf
 
-    def _evict_stash(self, leaves: list[int]) -> PathRows:
+    def _stage_write_back(self) -> None:
+        if not self._unwritten_leaves:
+            return
+        leaves = self._unwritten_leaves
         path = empty_path(level=self._level, leaves=leaves)
-        self._stash = [
+        remaining = [
             data
             for data in self._stash
             if not fill_data_to_path(data, path, leaves=leaves, level=self._level, bucket_size=self._bucket_size)
         ]
-        return self._cipher.seal_path(path)
+        self._client.add_write_path(label=self._name, data=self._cipher.seal_path(path))
+        self._stash = remaining
+        self._unwritten_leaves = []
+
+    def _open_paths(self, leaves: list[int]) -> PathData:
+        self._stage_write_back()
+        self._client.add_read_path(label=self._name, leaves=leaves)
+        path = self._cipher.open_path(self._client.execute().require(self._name))
+        self._unwritten_leaves = list(leaves)
+        return path
 
     def _read_paths(self, leaves: list[int]) -> None:
-        self._client.add_read_path(label=self._name, leaves=leaves)
-        self._absorb_path(self._client.execute().require(self._name))
+        for bucket in self._open_paths(leaves).values():
+            self._stash.extend(bucket)
+        self._check_stash()
 
-    def _write_paths(self, leaves: list[int]) -> None:
-        self._client.add_write_path(label=self._name, data=self._evict_stash(leaves=leaves))
+    def _write_paths(self) -> None:
+        self._stage_write_back()
         self._client.execute()
 
     @property

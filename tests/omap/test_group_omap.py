@@ -24,18 +24,10 @@ def _make_omap(client, n=128, encryptor=None, upper_kind="path"):
     )
 
 
-def _duplicate_blocks(omap, read_all_blocks):
-    low = omap._lower_oram
-    counts = {}
-    for data in read_all_blocks(low) + low._stash:
-        counts[data.key] = counts.get(data.key, 0) + 1
-    return {key: c for key, c in counts.items() if c > 1}
-
-
 class TestGroupOmap:
     @pytest.mark.parametrize("upper_kind", ["path", "da"])
     @pytest.mark.parametrize("enc", [False, True])
-    def test_oracle(self, upper_kind, enc, client, read_all_blocks):
+    def test_oracle(self, upper_kind, enc, client, duplicate_blocks):
         n = 128
         omap = _make_omap(client, n, AesGcm() if enc else None, upper_kind)
         omap.init_server_storage()
@@ -58,7 +50,7 @@ class TestGroupOmap:
         for key in keyspace:
             assert omap.search(key=key) == model.get(key)
         assert omap.search(key=b"absent") is None
-        assert not _duplicate_blocks(omap, read_all_blocks)
+        assert not duplicate_blocks(omap)
 
     def test_undersized_upper_raises(self, client):
         n = 128
@@ -66,7 +58,7 @@ class TestGroupOmap:
         with pytest.raises(ValueError, match="too small"):
             GroupOmap(GroupOmapConfig(num_data=n, key_size=10, data_size=64, client=client), upper_oram=too_small)
 
-    def test_with_init(self, client, read_all_blocks):
+    def test_with_init(self, client, duplicate_blocks):
         n = 128
         omap = _make_omap(client, n)
         init = [(b"%d" % i, b"%d" % (i * 7)) for i in range(n // 2)]
@@ -77,7 +69,7 @@ class TestGroupOmap:
             model[b"%d" % i] = b"%d" % (i * 7)
         for key, value in model.items():
             assert omap.search(key=key) == value
-        assert not _duplicate_blocks(omap, read_all_blocks)
+        assert not duplicate_blocks(omap)
 
     def test_rejects_contract_violations(self, client):
         omap = _make_omap(client)
@@ -172,15 +164,21 @@ def test_search_group_returns_the_bucket_and_reshuffles_it(client):
         assert omap.search(key) == value
 
 
-def test_an_insert_whose_write_back_fails_keeps_its_block_reachable(fail_once, client, read_all_blocks):
+def test_an_insert_whose_write_back_fails_keeps_its_block_reachable(
+    fail_once, monkeypatch, client, read_all_blocks, duplicate_blocks
+):
     omap = _make_omap(client, n=64)
     omap.init_server_storage([(b"key%d" % i, b"value%d" % i) for i in range(20)])
-    fail_once(omap._lower_oram, "_write_paths")
+    lower = omap._lower_oram
+    stored = read_all_blocks(lower)[0]
+    monkeypatch.setattr(lower, "_get_new_leaf", lambda: stored.leaf)
+    fail_once(lower, "_write_paths")
 
     with pytest.raises(RuntimeError, match="injected"):
         omap.insert(b"new", b"first")
 
+    assert omap.search(stored.key) == stored.value
     assert omap.search(b"new") == b"first"
     assert omap.search(b"new", b"second") == b"first"
     assert omap.search(b"new") == b"second"
-    assert not _duplicate_blocks(omap, read_all_blocks)
+    assert not duplicate_blocks(omap)

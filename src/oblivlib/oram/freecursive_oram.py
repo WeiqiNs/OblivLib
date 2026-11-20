@@ -39,7 +39,7 @@ def _pass_reset_chunk(storage: TreeStorageBase[FreecursiveOramConfig], chunk: Re
     leaves = [entry.cur_leaf for entry in chunk]
     storage._read_paths(leaves)
     _remap_others(storage, chunk, key=None)
-    storage._write_paths(leaves)
+    storage._write_paths()
 
 
 class FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
@@ -139,7 +139,7 @@ class FreecursivePosMapLevel(CounterPosMapLevel[FreecursiveOramConfig], Freecurs
         )
         data.leaf = entry.new_leaf
         _remap_others(self, chunk, key=cur_key)
-        self._write_paths(leaves)
+        self._write_paths()
 
         for other in after:
             _pass_reset_chunk(self, other)

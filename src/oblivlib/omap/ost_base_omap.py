@@ -129,7 +129,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         assert leaf is not None
         self._move_node_to_local_without_eviction(key=key, leaf=leaf, parent_key=parent_key)
 
-        self._write_paths([leaf])
+        self._write_paths()
 
     def _move_node_to_local_without_eviction(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         found = False
@@ -137,11 +137,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         self._op_rounds += 1
 
         assert leaf is not None
-        self._client.add_read_path(label=self._name, leaves=[leaf])
-        result = self._client.execute()
-        path = self._cipher.open_path(result.require(self._name))
-
-        for bucket in path.values():
+        for bucket in self._open_paths([leaf]).values():
             for data in bucket:
                 if data.key == key:
                     self._local.add(node=data, parent_key=parent_key)
@@ -168,7 +164,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
             leaf = self._get_new_leaf()
 
             self._read_paths([leaf])
-            self._write_paths([leaf])
+            self._write_paths()
 
     def _short_circuit_read(self, key: Any, num_round: int) -> bool:
         if key is None or self.root is None:

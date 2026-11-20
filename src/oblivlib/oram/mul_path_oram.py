@@ -77,7 +77,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
             if value is not UNSET:
                 data.value = value
             data.leaf = key_leaf_map[key]
-        self._pending_leaves = old_leaves
+        self._access_pending = True
         return read_values
 
     def eviction_for_mul_keys(self, updates: DataMap | None = None) -> None:
@@ -99,4 +99,4 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         self._read_paths([leaf])
         self._stash.append(block)
         self._check_stash()
-        self._write_paths([leaf])
+        self._write_paths()

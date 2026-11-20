@@ -38,7 +38,7 @@ class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
         next_leaf = data.value[cur_index]
         data.value[cur_index] = new_next_leaf
         data.leaf = new_cur_leaf
-        self._write_paths([cur_leaf])
+        self._write_paths()
         return next_leaf
 
 

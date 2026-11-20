@@ -34,12 +34,8 @@ class BPlusOmapCached(BPlusOmap):
             return
 
         self._op_rounds += 1
-        self._client.add_read_path(label=self._name, leaves=leaves_to_read)
-        result = self._client.execute()
-        path = self._cipher.open_path(result.require(self._name))
-
         keys_to_find = set(keys_to_read)
-        for bucket in path.values():
+        for bucket in self._open_paths(leaves_to_read).values():
             for data in bucket:
                 if data.key in keys_to_find:
                     self._local.add(node=data)
@@ -48,7 +44,7 @@ class BPlusOmapCached(BPlusOmap):
                     self._stash.append(data)
 
         self._check_stash()
-        self._write_paths(leaves_to_read)
+        self._write_paths()
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:

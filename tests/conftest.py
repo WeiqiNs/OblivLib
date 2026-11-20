@@ -2,6 +2,7 @@ import os
 import random
 import secrets
 import shutil
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, override
@@ -18,7 +19,9 @@ from oblivlib.dependency import (
     TransportBackend,
 )
 from oblivlib.dependency.protocol import Batch, ReadPath, Reply, Request, WritePath
-from oblivlib.oram import freecursive_oram
+from oblivlib.omap import GroupOmap, OramOstOmap
+from oblivlib.omap.ost_base_omap import OstBaseOmap
+from oblivlib.oram import TreeBaseOram, freecursive_oram
 
 DEFAULT_NUM_DATA = 2**12
 
@@ -75,6 +78,34 @@ def _coalesce(shapes: list[AccessShape]) -> list[AccessShape]:
     if pending:
         coalesced.append((pending, {}))
     return coalesced
+
+
+def _read_all_blocks(storage):
+    client = storage._client
+    client.add_read_path(storage._name, range(storage._leaf_range))
+    path = storage._cipher.open_path(client.execute().require(storage._name))
+    return [data for bucket in path.values() for data in bucket]
+
+
+def _storages(scheme):
+    if isinstance(scheme, OramOstOmap):
+        return [*_storages(scheme._oram), *_storages(scheme._ost)]
+    if isinstance(scheme, GroupOmap):
+        return [*_storages(scheme._upper_oram), scheme._lower_oram]
+    if isinstance(scheme, TreeBaseOram):
+        return [scheme, *scheme._levels]
+    return [scheme]
+
+
+def _duplicate_blocks(scheme):
+    duplicates = {}
+    for storage in _storages(scheme):
+        held = _read_all_blocks(storage) + storage._stash
+        if isinstance(storage, OstBaseOmap):
+            held += storage._local.to_list()
+        counts = Counter(data.key for data in held)
+        duplicates.update({(storage._name, key): count for key, count in counts.items() if count > 1})
+    return duplicates
 
 
 def _seed(monkeypatch: pytest.MonkeyPatch, seed: int) -> None:
@@ -159,6 +190,16 @@ def assert_deferral_preserves_access(seeded_access):
         return rounds_off, rounds_on
 
     return run
+
+
+@pytest.fixture
+def read_all_blocks():
+    return _read_all_blocks
+
+
+@pytest.fixture
+def duplicate_blocks():
+    return _duplicate_blocks
 
 
 @pytest.fixture
