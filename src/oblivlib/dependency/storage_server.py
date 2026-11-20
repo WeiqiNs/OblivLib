@@ -12,50 +12,31 @@ from oblivlib.dependency.protocol import (
     Batch,
     BatchReply,
     Close,
-    CreateList,
     CreateTree,
     Hello,
     HelloReply,
-    ListOps,
     Ok,
-    ReadList,
-    ReadOp,
-    ReadPath,
     Reply,
     Request,
-    Resize,
     Shutdown,
-    WritePath,
     WriteRange,
     error_reply,
 )
-from oblivlib.dependency.server_stores import (
-    FixedRowStore,
-    ListStore,
-    TreeStore,
-    VariableRowStore,
-    simulate_list_length,
-)
+from oblivlib.dependency.server_stores import FixedRowStore, TreeStore, VariableRowStore
 
 
 @dataclass
 class _Session:
     directory: Path | None
     trees: dict[str, TreeStore] = field(default_factory=dict)
-    lists: dict[str, ListStore] = field(default_factory=dict)
 
     def require_tree(self, label: str) -> TreeStore:
         if label not in self.trees:
             raise UnknownLabelError(f"StorageServer: tree label {label!r} is not hosted.")
         return self.trees[label]
 
-    def require_list(self, label: str) -> ListStore:
-        if label not in self.lists:
-            raise UnknownLabelError(f"StorageServer: list label {label!r} is not hosted.")
-        return self.lists[label]
-
     def require_new_label(self, label: str) -> None:
-        if label in self.trees or label in self.lists:
+        if label in self.trees:
             raise DuplicateLabelError(f"StorageServer: label {label!r} is already hosted.")
 
     def tree_path(self, label: str) -> Path | None:
@@ -65,7 +46,6 @@ class _Session:
         for tree in self.trees.values():
             tree.close()
         self.trees.clear()
-        self.lists.clear()
         if self.directory is not None:
             shutil.rmtree(self.directory, ignore_errors=True)
 
@@ -86,52 +66,28 @@ def _path_of(tree: TreeStore, leaves: list[int]) -> list[int]:
 
 
 def _validate_batch(session: _Session, batch: Batch) -> None:
-    list_lengths: dict[str, int] = {}
-    for op in batch.writes:
-        match op:
-            case WritePath(label=label, leaves=leaves, rows=rows):
-                tree = session.require_tree(label)
-                indices = _path_of(tree, leaves)
-                if len(rows) != len(indices):
-                    raise ProtocolError(
-                        f"StorageServer: write to {label!r} carries {len(rows)} rows for {len(indices)} path nodes."
-                    )
-                for row in rows:
-                    tree.check_row(row)
-            case ListOps(label=label, ops=ops):
-                length = list_lengths.get(label, len(session.require_list(label)))
-                list_lengths[label] = simulate_list_length(length, ops)
-
-    for op in batch.reads:
-        match op:
-            case ReadPath(label=label, leaves=leaves):
-                _path_of(session.require_tree(label), leaves)
-            case ReadList(label=label, indices=indices):
-                length = list_lengths.get(label, len(session.require_list(label)))
-                if indices is not None and not all(0 <= index < length for index in indices):
-                    raise ProtocolError(f"StorageServer: a read of {label!r} is out of range for a list of {length}.")
+    for write in batch.writes:
+        tree = session.require_tree(write.label)
+        indices = _path_of(tree, write.leaves)
+        if len(write.rows) != len(indices):
+            raise ProtocolError(
+                f"StorageServer: write to {write.label!r} carries {len(write.rows)} rows for {len(indices)} path nodes."
+            )
+        for row in write.rows:
+            tree.check_row(row)
+    for read in batch.reads:
+        _path_of(session.require_tree(read.label), read.leaves)
 
 
 def _apply_batch(session: _Session, batch: Batch) -> BatchReply:
-    for op in batch.writes:
-        match op:
-            case WritePath(label=label, leaves=leaves, rows=rows):
-                tree = session.trees[label]
-                tree.write_rows(path_indices(leaves, tree.level), rows)
-            case ListOps(label=label, ops=ops):
-                for list_op in ops:
-                    session.lists[label].apply(list_op)
-
-    return BatchReply(results=[_answer_read(session, op) for op in batch.reads])
-
-
-def _answer_read(session: _Session, op: ReadOp) -> list[bytes]:
-    match op:
-        case ReadPath(label=label, leaves=leaves):
-            tree = session.trees[label]
-            return tree.read_rows(path_indices(leaves, tree.level))
-        case ReadList(label=label, indices=indices):
-            return session.lists[label].read(indices)
+    for write in batch.writes:
+        tree = session.trees[write.label]
+        tree.write_rows(path_indices(write.leaves, tree.level), write.rows)
+    results = []
+    for read in batch.reads:
+        tree = session.trees[read.label]
+        results.append(tree.read_rows(path_indices(read.leaves, tree.level)))
+    return BatchReply(results=results)
 
 
 class StorageServer:
@@ -240,14 +196,8 @@ class StorageServer:
                 return _apply_batch(session, message)
             case CreateTree(session=session_id, label=label, level=level, row_bytes=row_bytes):
                 self._create_tree(self._require_session(session_id), label, level, row_bytes)
-            case CreateList(session=session_id, label=label):
-                session = self._require_session(session_id)
-                session.require_new_label(label)
-                session.lists[label] = ListStore()
             case AttachTree(session=session_id):
                 self._attach_tree(self._require_session(session_id), message)
-            case Resize(session=session_id, label=label, level=level):
-                self._require_session(session_id).require_tree(label).resize(level)
             case WriteRange(session=session_id):
                 self._write_range(self._require_session(session_id), message)
             case Close(session=session_id):

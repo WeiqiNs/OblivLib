@@ -15,12 +15,10 @@ from oblivlib.dependency.errors import (
     OblivlibError,
     ProtocolError,
     RowSizeError,
-    ScaleDownError,
     ServerError,
     StorageError,
     UnknownLabelError,
 )
-from oblivlib.dependency.types import ListPopBack, ListPushFront, ListWrite
 
 PROTOCOL_VERSION = 1
 
@@ -39,18 +37,6 @@ class WritePath:
 
 
 @dataclass(frozen=True, slots=True)
-class ReadList:
-    label: str
-    indices: list[int] | None
-
-
-@dataclass(frozen=True, slots=True)
-class ListOps:
-    label: str
-    ops: list[ListWrite | ListPushFront | ListPopBack]
-
-
-@dataclass(frozen=True, slots=True)
 class Hello:
     version: int
 
@@ -64,25 +50,12 @@ class CreateTree:
 
 
 @dataclass(frozen=True, slots=True)
-class CreateList:
-    session: str
-    label: str
-
-
-@dataclass(frozen=True, slots=True)
 class AttachTree:
     session: str
     label: str
     filename: str
     level: int
     row_bytes: int
-
-
-@dataclass(frozen=True, slots=True)
-class Resize:
-    session: str
-    label: str
-    level: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,8 +69,8 @@ class WriteRange:
 @dataclass(frozen=True, slots=True)
 class Batch:
     session: str
-    writes: list[WritePath | ListOps]
-    reads: list[ReadPath | ReadList]
+    writes: list[WritePath]
+    reads: list[ReadPath]
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,9 +104,7 @@ class ErrorReply:
     message: str
 
 
-WriteOp = WritePath | ListOps
-ReadOp = ReadPath | ReadList
-Request = Hello | CreateTree | CreateList | AttachTree | Resize | WriteRange | Batch | Close | Shutdown
+Request = Hello | CreateTree | AttachTree | WriteRange | Batch | Close | Shutdown
 Reply = HelloReply | Ok | BatchReply | ErrorReply
 
 
@@ -147,19 +118,14 @@ def _tag_table[T](classes: tuple[type[T], ...]) -> dict[str, type[T]]:
 
 
 ERROR_KINDS: dict[str, type[OblivlibError]] = _tag_table(
-    (UnknownLabelError, DuplicateLabelError, RowSizeError, ProtocolError, ScaleDownError, StorageError, ServerError)
+    (UnknownLabelError, DuplicateLabelError, RowSizeError, ProtocolError, StorageError, ServerError)
 )
 
 
 _MESSAGES: dict[str, type] = _tag_table(
     (
-        ListWrite,
-        ListPushFront,
-        ListPopBack,
         ReadPath,
         WritePath,
-        ReadList,
-        ListOps,
         *get_args(Request),
         *get_args(Reply),
     )

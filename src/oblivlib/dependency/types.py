@@ -50,26 +50,3 @@ PathRows = dict[int, bytes]
 PosMap = dict[int, int]
 DataMap = dict[int, Any]
 InitData = Mapping[int, Any] | Iterable[tuple[int, Any]]
-
-
-@dataclass(frozen=True)
-class ListWrite:
-    index: int
-    value: bytes
-
-    def __post_init__(self) -> None:
-        if self.index < 0:
-            raise ValueError(f"ListWrite index must be >= 0, got {self.index}.")
-
-
-@dataclass(frozen=True)
-class ListPushFront:
-    value: bytes
-
-
-@dataclass(frozen=True)
-class ListPopBack:
-    pass
-
-
-ListOp = ListWrite | ListPushFront | ListPopBack

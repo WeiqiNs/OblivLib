@@ -2,9 +2,6 @@ import pytest
 
 from oblivlib.dependency import (
     Client,
-    ListPopBack,
-    ListPushFront,
-    ListWrite,
     Metrics,
     MissingResultError,
     ProtocolError,
@@ -59,8 +56,6 @@ def test_staging_checks_known_labels_and_whole_paths():
         _tree(client)
         with pytest.raises(UnknownLabelError, match="'missing'"):
             client.add_read_path("missing", [0])
-        with pytest.raises(UnknownLabelError, match="'t'"):
-            client.add_read_list("t", None)
         for partial in ({0: _row(1), 1: _row(1)}, {0: _row(1), 1: _row(1), 3: _row(1), 4: _row(1), 2: _row(1)}):
             with pytest.raises(ValueError, match="'t'"):
                 client.add_write_path("t", partial)
@@ -76,20 +71,6 @@ def test_writes_apply_before_reads_and_later_write_wins():
         client.add_read_path("t", [0, 1])
         rows = client.execute().require("t")
         assert rows == {0: _row(20), 1: _row(20), 3: _row(10), 4: _row(20)}
-
-
-def test_list_ops_and_reads():
-    with Client.local() as client:
-        client.create_list("l")
-        client.add_write_list("l", [ListPushFront(b"a"), ListPushFront(b"b")])
-        client.add_write_list("l", [ListPushFront(b"c"), ListPushFront(b"d"), ListPopBack(), ListWrite(1, b"z")])
-        client.add_read_list("l", [2])
-        client.add_read_list("l", [0])
-        assert client.execute().require("l") == {0: b"d", 2: b"b"}
-
-        client.add_read_list("l", [1])
-        client.add_read_list("l", None)
-        assert client.execute().require("l") == [b"d", b"z", b"b"]
 
 
 def test_deferred_writes_ride_next_execute(recorded_client):
@@ -138,19 +119,6 @@ def test_host_tree_streams_byte_bounded_chunks(recorded_client, monkeypatch):
     stored = client.execute().require("t")
     assert [stored[i] for i in range(100)] == rows
     assert stored[100] == b""
-
-
-def test_resize_refuses_while_reads_are_staged():
-    with Client.local() as client:
-        _tree(client)
-        client.add_read_path("t", [0])
-        with pytest.raises(ValueError, match="'t'"):
-            client.resize("t", level=4)
-        assert client.level_of("t") == 3
-
-        assert client.execute().require("t")[0] == _row(1)
-        client.resize("t", level=4)
-        assert client.level_of("t") == 4
 
 
 def test_flush_and_close(recorded_client):

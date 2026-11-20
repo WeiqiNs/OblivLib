@@ -1,6 +1,6 @@
 import pytest
 
-from oblivlib.dependency import AVLData, BPlusData, Data, ListWrite
+from oblivlib.dependency import AVLData, BPlusData, Data
 
 
 def test_field_tuple_order_is_the_stored_format():
@@ -21,8 +21,3 @@ def test_data_requires_an_assigned_leaf():
     assert Data(key=1, leaf=0).require_leaf() == 0
     with pytest.raises(ValueError, match="no leaf"):
         Data(key=1).require_leaf()
-
-
-def test_list_write_rejects_a_negative_index():
-    with pytest.raises(ValueError, match="-1"):
-        ListWrite(index=-1, value=b"v")

@@ -18,10 +18,6 @@ class StashOverflowError(OblivlibError, MemoryError):
     pass
 
 
-class ScaleDownError(OblivlibError):
-    pass
-
-
 class ProtocolError(OblivlibError):
     pass
 

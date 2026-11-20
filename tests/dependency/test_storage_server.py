@@ -4,12 +4,8 @@ import pytest
 
 from oblivlib.dependency import (
     DuplicateLabelError,
-    ListPopBack,
-    ListPushFront,
-    ListWrite,
     ProtocolError,
     RowSizeError,
-    ScaleDownError,
     StorageError,
     UnknownLabelError,
 )
@@ -18,16 +14,12 @@ from oblivlib.dependency.protocol import (
     Batch,
     BatchReply,
     Close,
-    CreateList,
     CreateTree,
     Hello,
     HelloReply,
-    ListOps,
     Ok,
-    ReadList,
     ReadPath,
     Reply,
-    Resize,
     WritePath,
     WriteRange,
     expect_reply,
@@ -52,7 +44,7 @@ def _ok(reply: Reply) -> None:
     expect_reply(reply, Ok)
 
 
-def _read(server: StorageServer, session: str, *reads: ReadPath | ReadList) -> list[list[bytes]]:
+def _read(server: StorageServer, session: str, *reads: ReadPath) -> list[list[bytes]]:
     return expect_reply(server.handle(Batch(session=session, writes=[], reads=list(reads))), BatchReply).results
 
 
@@ -67,7 +59,7 @@ def test_hello_opens_sessions_and_checks_version(server):
     with pytest.raises(ProtocolError, match="version 2"):
         expect_reply(server.handle(Hello(version=2)), HelloReply)
     with pytest.raises(ProtocolError, match="unknown session"):
-        _ok(server.handle(CreateList(session="nope", label="l")))
+        _ok(server.handle(CreateTree(session="nope", label="t", level=2, row_bytes=ROW)))
 
 
 def test_create_tree_checks_shape(server):
@@ -93,41 +85,20 @@ def test_batch_is_validated_before_any_write(server):
     session = _open(server)
     for label in ("good", "t"):
         _ok(server.handle(CreateTree(session=session, label=label, level=2, row_bytes=ROW)))
-    _ok(server.handle(CreateList(session=session, label="l")))
     good = WritePath(label="good", leaves=[0], rows=[_row(9), _row(9)])
 
-    cases: list[tuple[list[WritePath | ListOps], list[ReadPath | ReadList], type[Exception]]] = [
+    cases: list[tuple[list[WritePath], list[ReadPath], type[Exception]]] = [
         ([WritePath(label="missing", leaves=[0], rows=[_row(1), _row(1)])], [], UnknownLabelError),
         ([WritePath(label="t", leaves=[2], rows=[_row(1), _row(1)])], [], ProtocolError),
         ([WritePath(label="t", leaves=[0], rows=[_row(1)])], [], ProtocolError),
         ([WritePath(label="t", leaves=[0], rows=[_row(1), b"short"])], [], RowSizeError),
-        ([ListOps(label="l", ops=[ListPushFront(b"a"), ListWrite(1, b"b")])], [], ProtocolError),
-        ([ListOps(label="l", ops=[ListPopBack()])], [], ProtocolError),
-        ([ListOps(label="l", ops=[ListPushFront(b"a")])], [ReadList(label="l", indices=[1])], ProtocolError),
         ([], [ReadPath(label="t", leaves=[-1])], ProtocolError),
-        ([], [ReadList(label="missing", indices=None)], UnknownLabelError),
+        ([], [ReadPath(label="missing", leaves=[0])], UnknownLabelError),
     ]
     for writes, reads, error in cases:
         with pytest.raises(error):
             expect_reply(server.handle(Batch(session=session, writes=[good, *writes], reads=reads)), BatchReply)
-        assert _read(server, session, ReadPath(label="good", leaves=[0]), ReadList(label="l", indices=None)) == [
-            [b"", b""],
-            [],
-        ]
-
-
-def test_list_ops_apply_in_order_before_reads(server):
-    session = _open(server)
-    _ok(server.handle(CreateList(session=session, label="l")))
-    batch = Batch(
-        session=session,
-        writes=[
-            ListOps(label="l", ops=[ListPushFront(b"a"), ListPushFront(b"b"), ListPushFront(b"c")]),
-            ListOps(label="l", ops=[ListPopBack(), ListWrite(0, b"z")]),
-        ],
-        reads=[ReadList(label="l", indices=None), ReadList(label="l", indices=[1])],
-    )
-    assert expect_reply(server.handle(batch), BatchReply).results == [[b"z", b"b"], [b"b"]]
+        assert _read(server, session, ReadPath(label="good", leaves=[0])) == [[b"", b""]]
 
 
 def test_variable_rows_are_memory_only(tmp_path):
@@ -143,22 +114,6 @@ def test_variable_rows_are_memory_only(tmp_path):
     with pytest.raises(ProtocolError, match="fixed-size"):
         _ok(disk.handle(CreateTree(session=_open(disk), label="t", level=2, row_bytes=None)))
     disk.close()
-
-
-def test_resize_grows_absent_and_refuses_dropping_present(server):
-    session = _open(server)
-    _ok(server.handle(CreateTree(session=session, label="t", level=2, row_bytes=ROW)))
-    _ok(server.handle(WriteRange(session=session, label="t", start=0, rows=[_row(1), _row(2), b""])))
-
-    _ok(server.handle(Resize(session=session, label="t", level=3)))
-    assert _read(server, session, ReadPath(label="t", leaves=[0, 3])) == [[_row(1), _row(2), b"", b"", b""]]
-
-    _ok(server.handle(Resize(session=session, label="t", level=2)))
-    with pytest.raises(ScaleDownError):
-        _ok(server.handle(Resize(session=session, label="t", level=1)))
-    with pytest.raises(ScaleDownError):
-        _ok(server.handle(Resize(session=session, label="t", level=0)))
-    assert _read(server, session, ReadPath(label="t", leaves=[0])) == [[_row(1), _row(2)]]
 
 
 def test_attach_adopts_file_and_rejects_unsafe_names(tmp_path):
@@ -195,7 +150,7 @@ def test_close_deletes_session_files_and_labels_are_per_session(tmp_path):
     for session in (first, second):
         _ok(server.handle(CreateTree(session=session, label="t", level=2, row_bytes=ROW)))
     with pytest.raises(DuplicateLabelError):
-        _ok(server.handle(CreateList(session=first, label="t")))
+        _ok(server.handle(CreateTree(session=first, label="t", level=2, row_bytes=ROW)))
     assert (store_dir / first).is_dir()
 
     _ok(server.handle(Close(session=first)))

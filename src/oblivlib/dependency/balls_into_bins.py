@@ -1,7 +1,7 @@
 import math
 
 
-def max_bucket_load(num_bins: int, security_bits: int = 128) -> int:
+def max_bin_load(num_bins: int, security_bits: int = 128) -> int:
     x = (math.log2(num_bins) + security_bits - 1) / math.e
     return math.ceil(math.e ** (lambert_w(x) + 1))
 

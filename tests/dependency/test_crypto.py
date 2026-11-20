@@ -3,7 +3,7 @@ import os
 import pytest
 from cryptography.exceptions import InvalidTag
 
-from oblivlib.dependency import AesGcm, Blake2Prf, FeistelPrp
+from oblivlib.dependency import AesGcm, Blake2Prf
 
 
 class TestAesGcm:
@@ -46,39 +46,3 @@ class TestPrf:
     def test_wrong_key_length_raises(self):
         with pytest.raises(ValueError, match="32 bytes"):
             Blake2Prf(key=bytes(16))
-
-
-class TestPrp:
-    @pytest.mark.parametrize("domain_size", [2, 37])
-    def test_bijection_with_inverse(self, domain_size):
-        prp = FeistelPrp(domain_size=domain_size)
-        outputs = [prp.permute(x) for x in range(domain_size)]
-        assert sorted(outputs) == list(range(domain_size))
-        assert [prp.inverse(y) for y in outputs] == list(range(domain_size))
-
-    def test_deterministic_with_fixed_key(self):
-        key = os.urandom(16)
-        prp_a = FeistelPrp(domain_size=100, key=key)
-        prp_b = FeistelPrp(domain_size=100, key=key)
-        assert [prp_a.permute(x) for x in range(100)] == [prp_b.permute(x) for x in range(100)]
-
-    def test_different_keys_differ(self):
-        prp_a = FeistelPrp(domain_size=100)
-        prp_b = FeistelPrp(domain_size=100)
-        assert [prp_a.permute(x) for x in range(100)] != [prp_b.permute(x) for x in range(100)]
-
-    def test_rejects_bad_parameters_and_inputs(self):
-        with pytest.raises(ValueError, match="Domain size"):
-            FeistelPrp(domain_size=1)
-        with pytest.raises(ValueError, match=r"at most 2\*\*512"):
-            FeistelPrp(domain_size=2**512 + 1)
-        widest = FeistelPrp(domain_size=2**512, key=bytes(16))
-        assert widest.inverse(widest.permute(5)) == 5
-        with pytest.raises(ValueError, match="at least 16 bytes"):
-            FeistelPrp(domain_size=10, key=bytes(8))
-        prp = FeistelPrp(domain_size=10)
-        for bad in (-1, 10, 11):
-            with pytest.raises(ValueError):
-                prp.permute(bad)
-            with pytest.raises(ValueError):
-                prp.inverse(bad)

@@ -3,10 +3,10 @@ from functools import cached_property
 from typing import Any, override
 
 from oblivlib.dependency import UNSET, Blake2Prf, Data, hash_data_to_map
+from oblivlib.dependency.balls_into_bins import max_bin_load
 from oblivlib.dependency.config import GroupOmapConfig, MulPathOramConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.layout import Bytes, Field, FixedBytes, Record, Seq
-from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.base_omap import BaseOmap
 from oblivlib.oram import MulPathOram, TreeBaseOram
 
@@ -60,7 +60,7 @@ class GroupOmap(BaseOmap):
 
     @staticmethod
     def _bucket_upper_bound(num_data: int) -> int:
-        return max_bucket_load(num_data)
+        return max_bin_load(num_data)
 
     @staticmethod
     def _metadata_layout(num_data: int, key_size: int) -> Record:

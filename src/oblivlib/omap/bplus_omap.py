@@ -4,9 +4,9 @@ from functools import cached_property
 from typing import Any, Protocol, override
 
 from oblivlib.dependency import BPlusData, BPlusTree, BPlusTreeNode, Data, KVPair
+from oblivlib.dependency.balls_into_bins import max_bin_load
 from oblivlib.dependency.config import BPlusOmapConfig
 from oblivlib.dependency.layout import Bytes, Field, Record, Seq, UInt, Variant
-from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
 
 _BLOCK_ID_BITS = 64
@@ -63,7 +63,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
     @override
     def update_mul_tree_height(self, num_tree: int) -> None:
-        tree_size = max_bucket_load(num_tree)
+        tree_size = max_bin_load(num_tree)
         self._max_height = bplus_max_levels(tree_size, self._order)
 
     @property

@@ -1,7 +1,7 @@
 import secrets
 import shutil
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -15,19 +15,13 @@ from oblivlib.dependency.protocol import (
     Batch,
     BatchReply,
     Close,
-    CreateList,
     CreateTree,
     Hello,
     HelloReply,
-    ListOps,
     Ok,
-    ReadList,
-    ReadOp,
     ReadPath,
     Reply,
     Request,
-    Resize,
-    WriteOp,
     WritePath,
     WriteRange,
     decode_reply,
@@ -37,14 +31,14 @@ from oblivlib.dependency.protocol import (
 from oblivlib.dependency.storage_server import StorageServer
 from oblivlib.dependency.transport import DEFAULT_TIMEOUT_MS, Transport, ZmqTransport
 from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage
-from oblivlib.dependency.types import ListOp, ListPopBack, PathRows
+from oblivlib.dependency.types import PathRows
 
 WRITE_RANGE_CHUNK_BYTES = 32 * 2**20
 
 
 @dataclass(frozen=True)
 class Metrics:
-    """``rounds`` counts the batches sent; ``payload_bytes`` the row and list-value bytes written and
+    """``rounds`` counts the batches sent; ``payload_bytes`` the row bytes written and
     read; ``wire_bytes`` the encoded message bytes a transport moved (zero in process)."""
 
     rounds: int
@@ -54,8 +48,8 @@ class Metrics:
 
 @dataclass(frozen=True)
 class ExecuteResult:
-    """The reads of one ``Client.execute()``, keyed by label: a path read maps each node's heap index to
-    its row (``b""`` for an absent node); a list read is the whole list, or ``{index: value}``."""
+    """The reads of one ``Client.execute()``, keyed by label: each path read maps each node's heap index to
+    its row (``b""`` for an absent node)."""
 
     results: dict[str, Any]
 
@@ -136,8 +130,7 @@ class Client:
     """The client-side handle to a storage server; every scheme does all its I/O through one.
 
     ``add_*`` calls only stage queries, keyed by storage label. ``execute()`` sends them as one batch
-    whose writes (path writes merged per label, a later write winning; list ops in staging order) apply
-    before its reads (deduplicated per label), and returns their ``ExecuteResult``. A failed batch raises
+    whose writes (merged per label, a later write winning) apply before its reads (deduplicated per label), and returns their ``ExecuteResult``. A failed batch raises
     the server's error and leaves nothing staged. An ``execute()`` with nothing staged is still a round.
 
     With ``defer_writes`` (the default), an ``execute()`` that stages only writes sends nothing: its writes
@@ -166,12 +159,9 @@ class Client:
 
         self._session: str | None = None
         self._levels: dict[str, int] = {}
-        self._lists: set[str] = set()
 
         self._read_paths: dict[str, set[int]] = {}
-        self._read_lists: dict[str, set[int] | None] = {}
         self._write_paths: dict[str, PathRows] = {}
-        self._write_lists: dict[str, list[ListOp]] = {}
 
         self._rounds = 0
         self._payload_bytes = 0
@@ -212,23 +202,9 @@ class Client:
             raise UnknownLabelError(f"Client: tree label {label!r} is not hosted by this client.")
         return self._levels[label]
 
-    def _require_list(self, label: str) -> None:
-        if label not in self._lists:
-            raise UnknownLabelError(f"Client: list label {label!r} is not hosted by this client.")
-
     def add_read_path(self, label: str, leaves: Iterable[int]) -> None:
         self.level_of(label)
         self._read_paths.setdefault(label, set()).update(leaves)
-
-    def add_read_list(self, label: str, indices: Iterable[int] | None) -> None:
-        """``indices=None`` reads the whole list; otherwise index calls accumulate."""
-        self._require_list(label)
-        staged = self._read_lists.get(label, set())
-        if indices is None or staged is None:
-            self._read_lists[label] = None
-            return
-        staged.update(indices)
-        self._read_lists[label] = staged
 
     def add_write_path(self, label: str, data: PathRows) -> None:
         """Stage rows for whole root-to-leaf paths: ``data`` must hold exactly the nodes of the paths to
@@ -237,10 +213,6 @@ class Client:
         if set(data) != set(path_indices(path_leaves(data, level), level)):
             raise ValueError(f"Client: a write to {label!r} must cover exactly the paths to its leaves.")
         self._write_paths.setdefault(label, {}).update(data)
-
-    def add_write_list(self, label: str, ops: Sequence[ListOp]) -> None:
-        self._require_list(label)
-        self._write_lists.setdefault(label, []).extend(ops)
 
     def execute(self) -> ExecuteResult:
         reads = self._take_reads()
@@ -264,19 +236,6 @@ class Client:
                 self._stream_rows(label, rows)
             case FileImage():
                 self._host_file(label, image)
-
-    def create_list(self, label: str) -> None:
-        self.flush()
-        self._expect_ok(CreateList(session=self._require_session(), label=label))
-        self._lists.add(label)
-
-    def resize(self, label: str, *, level: int) -> None:
-        if label in self._read_paths:
-            raise ValueError(f"Client: cannot resize {label!r} while reads of it are staged.")
-        self.flush()
-        self.level_of(label)
-        self._expect_ok(Resize(session=self._require_session(), label=label, level=level))
-        self._levels[label] = level
 
     def close(self) -> None:
         if self._closed:
@@ -351,54 +310,32 @@ class Client:
         self._payload_bytes += sum(len(row) for row in rows)
 
     def _has_pending_writes(self) -> bool:
-        return bool(self._write_paths or self._write_lists)
+        return bool(self._write_paths)
 
     def _write_path_op(self, label: str, data: PathRows) -> WritePath:
         level = self._levels[label]
         leaves = path_leaves(data, level)
         return WritePath(label=label, leaves=leaves, rows=[data[i] for i in path_indices(leaves, level)])
 
-    def _take_writes(self) -> list[WriteOp]:
-        writes: list[WriteOp] = [
-            *(self._write_path_op(label, data) for label, data in self._write_paths.items()),
-            *(ListOps(label=label, ops=ops) for label, ops in self._write_lists.items()),
-        ]
+    def _take_writes(self) -> list[WritePath]:
+        writes = [self._write_path_op(label, data) for label, data in self._write_paths.items()]
         self._write_paths = {}
-        self._write_lists = {}
         return writes
 
-    def _take_reads(self) -> list[ReadOp]:
-        reads: list[ReadOp] = [
-            *(ReadPath(label=label, leaves=sorted(leaves)) for label, leaves in self._read_paths.items()),
-            *(
-                ReadList(label=label, indices=None if indices is None else sorted(indices))
-                for label, indices in self._read_lists.items()
-            ),
-        ]
+    def _take_reads(self) -> list[ReadPath]:
+        reads = [ReadPath(label=label, leaves=sorted(leaves)) for label, leaves in self._read_paths.items()]
         self._read_paths = {}
-        self._read_lists = {}
         return reads
 
-    def _send_batch(self, writes: list[WriteOp], reads: list[ReadOp]) -> ExecuteResult:
+    def _send_batch(self, writes: list[WritePath], reads: list[ReadPath]) -> ExecuteResult:
         batch = Batch(session=self._require_session(), writes=writes, reads=reads)
         self._rounds += 1
         reply = expect_reply(self._backend.call(batch), BatchReply)
 
-        payload = 0
-        for op in writes:
-            if isinstance(op, WritePath):
-                payload += sum(len(row) for row in op.rows)
-            else:
-                payload += sum(len(list_op.value) for list_op in op.ops if not isinstance(list_op, ListPopBack))
-
+        payload = sum(len(row) for op in writes for row in op.rows)
         results: dict[str, Any] = {}
         for op, rows in zip(reads, reply.results, strict=True):
             payload += sum(len(row) for row in rows)
-            if isinstance(op, ReadPath):
-                results[op.label] = dict(zip(path_indices(op.leaves, self._levels[op.label]), rows, strict=True))
-            elif op.indices is None:
-                results[op.label] = rows
-            else:
-                results[op.label] = dict(zip(op.indices, rows, strict=True))
+            results[op.label] = dict(zip(path_indices(op.leaves, self._levels[op.label]), rows, strict=True))
         self._payload_bytes += payload
         return ExecuteResult(results)

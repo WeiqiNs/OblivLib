@@ -3,9 +3,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import override
 
-from oblivlib.dependency.errors import ProtocolError, RowSizeError, ScaleDownError
+from oblivlib.dependency.errors import RowSizeError
 from oblivlib.dependency.heap_index import tree_size
-from oblivlib.dependency.types import ListOp, ListPopBack, ListPushFront, ListWrite
 
 
 class _Region(ABC):
@@ -14,9 +13,6 @@ class _Region(ABC):
 
     @abstractmethod
     def write(self, offset: int, data: bytes) -> None: ...
-
-    @abstractmethod
-    def truncate(self, length: int) -> None: ...
 
     @abstractmethod
     def close(self) -> None: ...
@@ -35,11 +31,6 @@ class _MemoryRegion(_Region):
         self._buffer[offset : offset + len(data)] = data
 
     @override
-    def truncate(self, length: int) -> None:
-        del self._buffer[length:]
-        self._buffer.extend(bytes(length - len(self._buffer)))
-
-    @override
     def close(self) -> None:
         self._buffer = bytearray()
 
@@ -55,10 +46,6 @@ class _FileRegion(_Region):
     @override
     def write(self, offset: int, data: bytes) -> None:
         os.pwrite(self._fd, data, offset)
-
-    @override
-    def truncate(self, length: int) -> None:
-        os.ftruncate(self._fd, length)
 
     @override
     def close(self) -> None:
@@ -89,25 +76,10 @@ class TreeStore(ABC):
     def write_rows(self, indices: list[int], rows: list[bytes]) -> None: ...
 
     @abstractmethod
-    def _row_present(self, index: int) -> bool: ...
-
-    @abstractmethod
-    def _set_size(self, size: int) -> None: ...
-
-    @abstractmethod
     def close(self) -> None: ...
 
     def write_range(self, start: int, rows: list[bytes]) -> None:
         self.write_rows(list(range(start, start + len(rows))), rows)
-
-    def resize(self, level: int) -> None:
-        if level < 1:
-            raise ScaleDownError(f"{type(self).__name__}: cannot resize below level 1, got {level}.")
-        size = tree_size(level)
-        if any(self._row_present(index) for index in range(size, self.size)):
-            raise ScaleDownError(f"{type(self).__name__}: rows past level {level} are still present.")
-        self._set_size(size)
-        self._level = level
 
 
 class FixedRowStore(TreeStore):
@@ -125,10 +97,12 @@ class FixedRowStore(TreeStore):
 
     @classmethod
     def create_file(cls, path: Path, level: int, row_bytes: int) -> "FixedRowStore":
-        os.close(os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600))
-        store = cls(level, row_bytes, _FileRegion(path))
-        store._set_size(tree_size(level))
-        return store
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.ftruncate(fd, tree_size(level) * row_bytes)
+        finally:
+            os.close(fd)
+        return cls(level, row_bytes, _FileRegion(path))
 
     @classmethod
     def open_file(cls, path: Path, level: int, row_bytes: int) -> "FixedRowStore":
@@ -158,14 +132,6 @@ class FixedRowStore(TreeStore):
             self._region.write(index * self._row_bytes, row or self._zero_row)
 
     @override
-    def _row_present(self, index: int) -> bool:
-        return self._read_row(index) != b""
-
-    @override
-    def _set_size(self, size: int) -> None:
-        self._region.truncate(size * self._row_bytes)
-
-    @override
     def close(self) -> None:
         self._region.close()
 
@@ -191,51 +157,5 @@ class VariableRowStore(TreeStore):
             self._rows[index] = row
 
     @override
-    def _row_present(self, index: int) -> bool:
-        return self._rows[index] != b""
-
-    @override
-    def _set_size(self, size: int) -> None:
-        del self._rows[size:]
-        self._rows.extend([b""] * (size - len(self._rows)))
-
-    @override
     def close(self) -> None:
         self._rows = []
-
-
-class ListStore:
-    def __init__(self) -> None:
-        self._values: list[bytes] = []
-
-    def __len__(self) -> int:
-        return len(self._values)
-
-    def apply(self, op: ListOp) -> None:
-        match op:
-            case ListWrite(index=index, value=value):
-                self._values[index] = value
-            case ListPushFront(value=value):
-                self._values.insert(0, value)
-            case ListPopBack():
-                self._values.pop()
-
-    def read(self, indices: list[int] | None) -> list[bytes]:
-        if indices is None:
-            return list(self._values)
-        return [self._values[index] for index in indices]
-
-
-def simulate_list_length(length: int, ops: list[ListOp]) -> int:
-    for op in ops:
-        match op:
-            case ListWrite(index=index):
-                if index >= length:
-                    raise ProtocolError(f"ListWrite index {index} is out of range for a list of {length}.")
-            case ListPushFront():
-                length += 1
-            case ListPopBack():
-                if length == 0:
-                    raise ProtocolError("ListPopBack on an empty list.")
-                length -= 1
-    return length

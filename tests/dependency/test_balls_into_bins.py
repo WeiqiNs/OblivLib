@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from oblivlib.dependency.load_bound import lambert_w
+from oblivlib.dependency.balls_into_bins import lambert_w
 
 
 def test_lambert_w_satisfies_defining_equation():
