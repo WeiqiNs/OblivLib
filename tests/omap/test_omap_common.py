@@ -5,7 +5,17 @@ from typing import Any
 
 import pytest
 
-from oblivlib.dependency import Client, ContractError
+from oblivlib.dependency import (
+    AesGcm,
+    AvlOmapConfig,
+    BPlusOmapConfig,
+    Client,
+    ContractError,
+    GroupOmapConfig,
+    PathOramConfig,
+)
+from oblivlib.omap import AVLOmap, BPlusOmap, GroupOmap, OramOstOmap
+from oblivlib.oram import PathOram
 
 
 def _b(number: int) -> bytes:
@@ -271,3 +281,35 @@ class TestOmapObliviousness:
 
         rounds_off, rounds_on = assert_deferral_preserves_access(workload)
         assert rounds_on * 2 == rounds_off
+
+
+_ROW_LAYOUT_CONFIG: dict[str, Any] = {"num_data": 64, "data_size": 16, "key_size": 8, "encryptor": AesGcm()}
+
+
+@pytest.mark.parametrize(
+    ("make", "expected_row"),
+    [
+        pytest.param(lambda **kw: AVLOmap(AvlOmapConfig(**kw)), 241, id="avl"),
+        pytest.param(lambda **kw: BPlusOmap(BPlusOmapConfig(order=3, **kw)), 285, id="bplus_order_3"),
+    ],
+)
+def test_row_size_is_the_declared_node_layout(make, expected_row, client):
+    omap = make(client=client, **_ROW_LAYOUT_CONFIG)
+    assert omap._cipher.row_bytes == expected_row
+    pairs = [(b"%08d" % i, b"\xff" * 16) for i in range(32)]
+    omap.init_server_storage(pairs)
+    for key, value in pairs[:4]:
+        assert omap.search(key, b"\x00" * 16) == value
+
+
+def test_composed_map_slots_are_sized_from_their_declared_layouts(client):
+    avl = AVLOmap(AvlOmapConfig(client=client, **_ROW_LAYOUT_CONFIG))
+    bplus = BPlusOmap(BPlusOmapConfig(order=3, client=client, **_ROW_LAYOUT_CONFIG))
+    assert (OramOstOmap.oram_data_size(avl), OramOstOmap.oram_data_size(bplus)) == (11, 10)
+
+    upper_size = GroupOmap.upper_oram_data_size(num_data=64, key_size=8)
+    upper = PathOram(PathOramConfig(num_data=64, data_size=upper_size, client=client, encryptor=AesGcm()))
+    group = GroupOmap(GroupOmapConfig(client=client, **_ROW_LAYOUT_CONFIG), upper_oram=upper)
+    assert (upper_size, upper._cipher.row_bytes, group._lower_oram._cipher.row_bytes) == (456, 1869, 137)
+    group.init_server_storage([(b"%08d" % i, b"\xff" * 16) for i in range(32)])
+    assert group.search(b"%08d" % 3) == b"\xff" * 16

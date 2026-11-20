@@ -44,3 +44,7 @@ class TransportError(OblivlibError):
 
 class ContractError(OblivlibError, ValueError):
     pass
+
+
+class CapacityError(OblivlibError, ValueError):
+    pass

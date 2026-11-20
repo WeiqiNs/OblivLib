@@ -5,6 +5,7 @@ from typing import Any, cast, override
 from oblivlib.dependency import Data, KVPair
 from oblivlib.dependency.config import OmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
+from oblivlib.dependency.layout import Optional, Record
 from oblivlib.dependency.tree_builder import TreeImage
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.omap.base_omap import BaseOmap
@@ -111,9 +112,8 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         raise NotImplementedError
 
     @cached_property
-    @abstractmethod
-    def _max_block_size(self) -> int:
-        raise NotImplementedError
+    def root_layout(self) -> Optional[ROOT]:
+        return Optional(Record((self._key_field, self._leaf_field)))
 
     def _find_in_stash(self, key: Any) -> int:
         for i, node in enumerate(self._stash):

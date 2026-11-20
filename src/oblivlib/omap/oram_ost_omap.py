@@ -1,8 +1,6 @@
 from collections.abc import Callable
 from typing import Any, override
 
-import msgpack
-
 from oblivlib.dependency import Blake2Prf, hash_data_to_leaf, hash_data_to_map
 from oblivlib.dependency.config import OramOstOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
@@ -13,11 +11,11 @@ from oblivlib.oram.tree_base_oram import TreeBaseOram
 
 class OramOstOmap(BaseOmap):
     def __init__(self, config: OramOstOmapConfig, ost: OstBaseOmap[Any, Any], oram: TreeBaseOram[Any, Any]):
-        required = self.oram_data_size(ost._key_size)
+        required = self.oram_data_size(ost)
         if oram._data_size < required:
             raise ValueError(
                 f"OramOstOmap ORAM data_size={oram._data_size} is too small for an ODS root pointer; it must be at "
-                + f"least {required}. Size it with OramOstOmap.oram_data_size(key_size)."
+                + f"least {required}. Size it with OramOstOmap.oram_data_size(ost)."
             )
 
         self._config: OramOstOmapConfig = config
@@ -29,19 +27,14 @@ class OramOstOmap(BaseOmap):
         self._prf: Blake2Prf = Blake2Prf()
 
     @staticmethod
-    def oram_data_size(key_size: int) -> int:
-        return len(OramOstOmap._encode_root((bytes(key_size), 2**64 - 1)))
+    def oram_data_size(ost: OstBaseOmap[Any, Any]) -> int:
+        return ost.root_layout.size
 
-    @staticmethod
-    def _encode_root(root: ROOT | None) -> bytes:
-        return b"" if root is None else msgpack.packb(list(root))
+    def _encode_root(self, root: ROOT | None) -> bytes:
+        return self._ost.root_layout.encode(root)
 
-    @staticmethod
-    def _decode_root(value: bytes) -> ROOT | None:
-        if value == b"":
-            return None
-        key, leaf = msgpack.unpackb(value)
-        return key, leaf
+    def _decode_root(self, value: bytes) -> ROOT | None:
+        return None if value == b"" else self._ost.root_layout.decode(value)
 
     @property
     def _num_data(self) -> int:

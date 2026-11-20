@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from oblivlib.dependency import BPlusOmapCachedConfig, BPlusOmapConfig
+from oblivlib.dependency import AesGcm, BPlusOmapCachedConfig, BPlusOmapConfig
 from oblivlib.omap import BPlusOmap, BPlusOmapCached
 
 
@@ -25,3 +25,26 @@ def test_small_order_deletes_keep_the_tree_valid(client, check_bplus_invariants,
         if step % 20 == 0:
             check_bplus_invariants(omap, model)
     check_bplus_invariants(omap, model)
+
+
+@pytest.mark.parametrize("first_block_id", [0, 2**40])
+def test_insert_delete_churn_never_outgrows_the_row(client, first_block_id):
+    omap = BPlusOmap(
+        BPlusOmapConfig(order=3, num_data=64, key_size=10, data_size=10, client=client, encryptor=AesGcm())
+    )
+    omap._block_id = first_block_id
+    omap.init_server_storage()
+    model = {}
+    workload = random.Random(f"churn-{first_block_id}")
+    for _ in range(1500):
+        key = b"%010d" % workload.randrange(48)
+        if key in model and workload.random() < 0.5:
+            assert omap.delete(key) == model.pop(key)
+        elif key not in model:
+            model[key] = workload.randbytes(10)
+            omap.insert(key, model[key])
+        else:
+            assert omap.search(key) == model[key]
+    assert omap._block_id - first_block_id > 64
+    for key, value in model.items():
+        assert omap.search(key) == value

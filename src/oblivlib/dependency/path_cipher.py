@@ -1,24 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import override
+from typing import Any, override
 
-import msgpack
-
-from oblivlib.dependency.codec import BlockCodec
 from oblivlib.dependency.crypto import Encryptor
-from oblivlib.dependency.errors import RowSizeError
-from oblivlib.dependency.types import Bucket, PathData, PathRows
-
-_LENGTH_BYTES = 4
-_MAX_ARRAY_HEADER_BYTES = 5
+from oblivlib.dependency.layout import Field, Seq
+from oblivlib.dependency.types import Bucket, Data, PathData, PathRows
 
 
 class PathCipher(ABC):
-    """Turns a scheme's buckets into server rows and back. A bucket packs as a msgpack array of its
-    blocks; an absent row (``b""``) opens as an empty bucket. ``row_bytes`` is the fixed row length, or
-    ``None`` when rows vary in length."""
+    """Turns a scheme's buckets into server rows and back. A bucket is ``Seq(block, bucket_size)`` of
+    the scheme's block layout, so every bucket encodes to the same length; an absent row (``b""``)
+    opens as an empty bucket. ``row_bytes`` is the fixed row length, or ``None`` when the server keeps
+    the rows in a variable-row store."""
 
-    def __init__(self, codec: BlockCodec):
-        self._codec = codec
+    def __init__(self, block: Field[Any], bucket_size: int):
+        self._bucket: Seq[Data] = Seq(block, bucket_size)
 
     @property
     @abstractmethod
@@ -30,13 +25,10 @@ class PathCipher(ABC):
     @abstractmethod
     def _open_row(self, row: bytes) -> bytes: ...
 
-    def _pack(self, blocks: Bucket) -> bytes:
-        return msgpack.packb([self._codec.pack(data) for data in blocks])
-
     def open_bucket(self, row: bytes) -> Bucket:
         if row == b"":
             return []
-        return [self._codec.unpack(fields) for fields in msgpack.unpackb(self._open_row(row))]
+        return self._bucket.decode(self._open_row(row))
 
     def seal_path(self, path: PathData) -> PathRows:
         return {index: self.seal_bucket(bucket) for index, bucket in path.items()}
@@ -46,7 +38,7 @@ class PathCipher(ABC):
 
 
 class PlainPathCipher(PathCipher):
-    """Rows are the packed buckets themselves, of varying length: for debugging, memory servers only."""
+    """Rows are the encoded buckets themselves, unsealed: for debugging, memory servers only."""
 
     @property
     @override
@@ -55,7 +47,7 @@ class PlainPathCipher(PathCipher):
 
     @override
     def seal_bucket(self, blocks: Bucket) -> bytes:
-        return self._pack(blocks)
+        return self._bucket.encode(blocks)
 
     @override
     def _open_row(self, row: bytes) -> bytes:
@@ -63,15 +55,12 @@ class PlainPathCipher(PathCipher):
 
 
 class SealedPathCipher(PathCipher):
-    """Each row is ``enc(u32_be(len) || packed bucket || zero padding)``, padded to the capacity of a
-    full bucket of widest blocks, so every row has one length whatever it holds."""
+    """Each row is ``enc(encoded bucket)``; the bucket layout is fixed, so every row has one length."""
 
-    def __init__(self, codec: BlockCodec, encryptor: Encryptor, bucket_size: int):
-        super().__init__(codec)
+    def __init__(self, block: Field[Any], encryptor: Encryptor, bucket_size: int):
+        super().__init__(block, bucket_size)
         self._encryptor = encryptor
-        self._bucket_size = bucket_size
-        self._capacity = _MAX_ARRAY_HEADER_BYTES + bucket_size * codec.max_block_bytes
-        self._row_bytes = encryptor.ciphertext_length(_LENGTH_BYTES + self._capacity)
+        self._row_bytes = encryptor.ciphertext_length(self._bucket.size)
 
     @property
     @override
@@ -80,26 +69,14 @@ class SealedPathCipher(PathCipher):
 
     @override
     def seal_bucket(self, blocks: Bucket) -> bytes:
-        if len(blocks) > self._bucket_size:
-            raise RowSizeError(
-                f"{type(self).__name__}: {len(blocks)} blocks exceed the bucket size {self._bucket_size}."
-            )
-        packed = self._pack(blocks)
-        if len(packed) > self._capacity:
-            raise RowSizeError(
-                f"{type(self).__name__}: a {len(packed)}-byte bucket exceeds the {self._capacity}-byte row."
-            )
-        padding = bytes(self._capacity - len(packed))
-        return self._encryptor.enc(len(packed).to_bytes(_LENGTH_BYTES, "big") + packed + padding)
+        return self._encryptor.enc(self._bucket.encode(blocks))
 
     @override
     def _open_row(self, row: bytes) -> bytes:
-        plaintext = self._encryptor.dec(row)
-        length = int.from_bytes(plaintext[:_LENGTH_BYTES], "big")
-        return plaintext[_LENGTH_BYTES : _LENGTH_BYTES + length]
+        return self._encryptor.dec(row)
 
 
-def make_path_cipher(codec: BlockCodec, encryptor: Encryptor | None, bucket_size: int) -> PathCipher:
+def make_path_cipher(block: Field[Any], encryptor: Encryptor | None, bucket_size: int) -> PathCipher:
     if encryptor is None:
-        return PlainPathCipher(codec)
-    return SealedPathCipher(codec, encryptor, bucket_size)
+        return PlainPathCipher(block, bucket_size)
+    return SealedPathCipher(block, encryptor, bucket_size)

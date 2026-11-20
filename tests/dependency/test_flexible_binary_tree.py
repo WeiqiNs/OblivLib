@@ -3,11 +3,11 @@ import random
 import pytest
 
 from oblivlib.dependency import AesGcm, Client, Data, PathData, ScaleDownError
-from oblivlib.dependency.codec import DefaultCodec
 from oblivlib.dependency.flexible_binary_tree import FlexibleBinaryTree
+from oblivlib.dependency.layout import Bytes, UInt, block_layout
 from oblivlib.dependency.path_cipher import make_path_cipher
 
-_CODEC = DefaultCodec(max_block_bytes=128)
+_BLOCK = block_layout(UInt(16), UInt(16), Bytes(64))
 
 
 class _TreeFactory:
@@ -15,7 +15,7 @@ class _TreeFactory:
         self._mode = mode
 
     def create(self, num_data: int, *, blocks: list[Data]) -> tuple[FlexibleBinaryTree, list[Data]]:
-        cipher = make_path_cipher(_CODEC, None if self._mode == "memory-plain" else AesGcm(), bucket_size=2)
+        cipher = make_path_cipher(_BLOCK, None if self._mode == "memory-plain" else AesGcm(), bucket_size=2)
         return FlexibleBinaryTree.create(
             client=Client.local(), label="flex", num_data=num_data, bucket_size=2, cipher=cipher, blocks=blocks
         )
@@ -38,7 +38,7 @@ def _naive_path(leaf: int, level: int) -> list[int]:
 
 
 def _block(key: int, leaf: int = 0) -> Data:
-    return Data(key=key, leaf=leaf, value=f"v{key}")
+    return Data(key=key, leaf=leaf, value=b"v%d" % key)
 
 
 class TestFlexibleBinaryTree:

@@ -36,8 +36,8 @@ def _make_ods(kind, n, client, encryptor=None):
     )
 
 
-def _make_oram(kind, n, client, encryptor=None):
-    data_size = OramOstOmap.oram_data_size(key_size=10)
+def _make_oram(kind, n, client, ost, encryptor=None):
+    data_size = OramOstOmap.oram_data_size(ost)
     if kind == "da":
         return DAOram(DaOramConfig(num_data=n, data_size=data_size, client=client, encryptor=encryptor))
     if kind == "path":
@@ -46,9 +46,8 @@ def _make_oram(kind, n, client, encryptor=None):
 
 
 def _make_omap(ods_kind, oram_kind, client, n=64):
-    return OramOstOmap(
-        OramOstOmapConfig(num_data=n), ost=_make_ods(ods_kind, n, client), oram=_make_oram(oram_kind, n, client)
-    )
+    ost = _make_ods(ods_kind, n, client)
+    return OramOstOmap(OramOstOmapConfig(num_data=n), ost=ost, oram=_make_oram(oram_kind, n, client, ost))
 
 
 class TestOramOstOmapOracle:
@@ -97,10 +96,9 @@ class TestOramOstOmapInit:
     @pytest.mark.parametrize("ods_kind", ["avl", "bplus"])
     def test_encryption_round_trip(self, ods_kind, client, encryptor):
         n = 64
+        ost = _make_ods(ods_kind, n, client, encryptor=encryptor)
         omap = OramOstOmap(
-            OramOstOmapConfig(num_data=n),
-            ost=_make_ods(ods_kind, n, client, encryptor=encryptor),
-            oram=_make_oram("da", n, client, encryptor=AesGcm()),
+            OramOstOmapConfig(num_data=n), ost=ost, oram=_make_oram("da", n, client, ost, encryptor=AesGcm())
         )
         omap.init_server_storage()
         keys = [bytes([i]) * 10 for i in range(n)]
@@ -111,9 +109,10 @@ class TestOramOstOmapInit:
 
 
 def test_undersized_oram_raises(client):
-    oram = PathOram(PathOramConfig(num_data=64, data_size=OramOstOmap.oram_data_size(10) - 1, client=client))
+    ost = _make_ods("avl", 64, client)
+    oram = PathOram(PathOramConfig(num_data=64, data_size=OramOstOmap.oram_data_size(ost) - 1, client=client))
     with pytest.raises(ValueError, match="too small"):
-        OramOstOmap(OramOstOmapConfig(num_data=64), ost=_make_ods("avl", 64, client), oram=oram)
+        OramOstOmap(OramOstOmapConfig(num_data=64), ost=ost, oram=oram)
 
 
 def test_rejects_contract_violations(client):

@@ -4,10 +4,12 @@ from functools import cached_property
 from typing import Any, Protocol, cast, override
 
 from oblivlib.dependency import AVLData, AVLTree, AVLTreeNode, Data, KVPair
-from oblivlib.dependency.codec import BlockCodec, NodeCodec, packed_size
 from oblivlib.dependency.config import AvlOmapConfig
+from oblivlib.dependency.layout import Bytes, Field, Optional, Record, UInt
 from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
+
+_HEIGHT_BITS = 8
 
 
 class AVLNode(Protocol):
@@ -87,22 +89,14 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
     @cached_property
     @override
-    def _max_block_size(self) -> int:
-        node = AVLData(
-            value=bytes(self._data_size),
-            r_key=bytes(self._key_size),
-            r_leaf=self._leaf_range - 1,
-            r_height=self._max_height,
-            l_key=bytes(self._key_size),
-            l_leaf=self._leaf_range - 1,
-            l_height=self._max_height,
-        )
-        return packed_size([bytes(self._key_size), self._leaf_range - 1, node.to_fields()])
+    def _key_field(self) -> Field[Any]:
+        return Bytes(self._key_size)
 
-    @property
+    @cached_property
     @override
-    def _codec(self) -> BlockCodec:
-        return NodeCodec(self._max_block_size, AVLData)
+    def _value_field(self) -> Field[Any]:
+        child_key, child_leaf, height = Optional(self._key_field), Optional(self._leaf_field), UInt(_HEIGHT_BITS)
+        return Record((Bytes(self._data_size), child_key, child_leaf, height, child_key, child_leaf, height), AVLData)
 
     def _get_avl_data(self, key: Any, value: Any) -> Data:
         return Data(key=key, leaf=self._get_new_leaf(), value=AVLData(value=value))

@@ -4,13 +4,22 @@ from functools import cached_property
 from typing import Any, override
 
 from oblivlib.dependency import Data, InitData, PosMap
-from oblivlib.dependency.codec import packed_size
 from oblivlib.dependency.config import RecursiveOramConfig
+from oblivlib.dependency.layout import Array, Field, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_keys, pos_map_level_count
 
 
 class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
+    def __init__(self, config: RecursiveOramConfig, *, child_leaf_range: int):
+        super().__init__(config)
+        self._child_leaf_range = child_leaf_range
+
+    @cached_property
+    @override
+    def _value_field(self) -> Field[Any]:
+        return Array(UInt.covering(self._child_leaf_range - 1), self._config.compression_ratio)
+
     def _build_and_host(self, child_leaves: list[int]) -> list[int]:
         leaves = [self._get_new_leaf() for _ in range(self._num_data)]
         ratio = self._config.compression_ratio
@@ -60,26 +69,18 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel])
     def _compression_ratio(self) -> int:
         return self._config.compression_ratio
 
-    @cached_property
-    def _pos_map_oram_dummy_size(self) -> int:
-        return packed_size([self._leaf_range - 1] * self._compression_ratio)
-
     def _make_levels(self) -> list[RecursivePosMapLevel]:
-        levels = []
-        size = self._num_data
+        levels: list[RecursivePosMapLevel] = []
+        size, child_leaf_range = self._num_data, self._leaf_range
         count = pos_map_level_count(num_data=self._num_data, on_chip=self._on_chip_mem, ratio=self._compression_ratio)
         for i in range(count):
             size = -(-size // self._compression_ratio)
-            levels.append(
-                RecursivePosMapLevel(
-                    replace(
-                        self._config,
-                        num_data=size,
-                        name=f"{self._name}_pos_map_{count - i - 1}",
-                        data_size=self._pos_map_oram_dummy_size,
-                    )
-                )
+            level = RecursivePosMapLevel(
+                replace(self._config, num_data=size, name=f"{self._name}_pos_map_{count - i - 1}"),
+                child_leaf_range=child_leaf_range,
             )
+            levels.append(level)
+            child_leaf_range = level._leaf_range
         levels.reverse()
         return levels
 

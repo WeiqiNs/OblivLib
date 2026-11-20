@@ -4,10 +4,12 @@ from functools import cached_property
 from typing import Any, Protocol, cast, override
 
 from oblivlib.dependency import BPlusData, BPlusTree, BPlusTreeNode, Data, KVPair
-from oblivlib.dependency.codec import BlockCodec, NodeCodec, packed_size
 from oblivlib.dependency.config import BPlusOmapConfig
+from oblivlib.dependency.layout import Bytes, Field, Record, Seq, UInt, Variant
 from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
+
+_BLOCK_ID_BITS = 64
 
 
 class BPlusValue(Protocol):
@@ -24,7 +26,11 @@ class BPlusNode(Protocol):
 class LocalNodes(LocalNodesBase[BPlusNode]):
     @staticmethod
     def is_leaf_node(node: BPlusNode) -> bool:
-        return len(node.value.keys) == len(node.value.values)
+        return LocalNodes.is_leaf_node_value(node.value)
+
+    @staticmethod
+    def is_leaf_node_value(value: BPlusValue) -> bool:
+        return len(value.keys) == len(value.values)
 
     def require_leaf(self) -> BPlusNode:
         node = cast(BPlusNode | None, self.nodes.get(self.path[-1])) if self.path else None
@@ -63,18 +69,17 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
     @cached_property
     @override
-    def _max_block_size(self) -> int:
-        keys = [bytes(self._key_size)] * (self._order - 1)
-        internal = BPlusData(keys=keys, values=[[self._num_data - 1, self._leaf_range - 1]] * self._order)
-        leaf = BPlusData(keys=keys, values=[bytes(self._data_size)] * (self._order - 1))
-        return max(
-            packed_size([self._num_data - 1, self._leaf_range - 1, node.to_fields()]) for node in (internal, leaf)
-        )
+    def _key_field(self) -> Field[Any]:
+        return UInt(_BLOCK_ID_BITS)
 
-    @property
+    @cached_property
     @override
-    def _codec(self) -> BlockCodec:
-        return NodeCodec(self._max_block_size, BPlusData)
+    def _value_field(self) -> Field[Any]:
+        keys = Seq(Bytes(self._key_size), self._order - 1)
+        leaf_node = Record((keys, Seq(Bytes(self._data_size), self._order - 1)), BPlusData)
+        child = Record((self._key_field, self._leaf_field))
+        internal_node = Record((keys, Seq(child, self._order)), BPlusData)
+        return Variant((leaf_node, internal_node), lambda node: 0 if LocalNodes.is_leaf_node_value(node) else 1)
 
     def _get_bplus_data(self, keys: Any = None, values: Any = None) -> Data:
         data_block = Data(key=self._block_id, leaf=self._get_new_leaf(), value=BPlusData(keys=keys, values=values))

@@ -26,9 +26,7 @@ def run_omap(client: Client, num_data: int) -> None:
         AvlOmapConfig(num_data=num_data, key_size=KEY_SIZE, data_size=DATA_SIZE, client=client, encryptor=encryptor)
     )
     oram = DAOram(
-        DaOramConfig(
-            num_data=num_data, data_size=OramOstOmap.oram_data_size(KEY_SIZE), client=client, encryptor=encryptor
-        )
+        DaOramConfig(num_data=num_data, data_size=OramOstOmap.oram_data_size(ost), client=client, encryptor=encryptor)
     )
     omap = OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=ost, oram=oram)
     omap.init_server_storage()

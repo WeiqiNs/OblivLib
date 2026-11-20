@@ -36,6 +36,7 @@ from .crypto import (
     hash_data_to_map,
 )
 from .errors import (
+    CapacityError,
     ContractError,
     DuplicateLabelError,
     MissingResultError,
@@ -88,6 +89,7 @@ __all__ = [
     "PseudoRandomPermutation",
     "hash_data_to_leaf",
     "hash_data_to_map",
+    "CapacityError",
     "ContractError",
     "DuplicateLabelError",
     "MissingResultError",

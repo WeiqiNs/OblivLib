@@ -1,13 +1,20 @@
-import math
 from abc import ABC, abstractmethod
 from dataclasses import replace
+from functools import cache, cached_property
 from typing import Any, Protocol, override
 
 from oblivlib.dependency import Blake2Prf, Data, InitData
 from oblivlib.dependency.config import CounterOramConfig
-from oblivlib.dependency.helpers import binary_str_to_bytes
+from oblivlib.dependency.layout import BitFields, Field, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_level_count
+
+GC = 0
+
+
+@cache
+def _bit_fields(widths: tuple[int, ...]) -> BitFields:
+    return BitFields(widths)
 
 
 class CounterMixin[ConfigT: CounterOramConfig](Protocol):
@@ -29,12 +36,12 @@ class CounterMixin[ConfigT: CounterOramConfig](Protocol):
         return self._config.gc_length
 
     @property
-    def _count_length(self) -> int:
-        return self._config.count_length
+    def _counters(self) -> BitFields:
+        return _bit_fields(self._config.counter_widths)
 
-    @property
-    def _zero_counter(self) -> bytes:
-        return binary_str_to_bytes("0" * self._count_length)
+    @staticmethod
+    def _ic(offset: int) -> int:
+        return 1 + offset
 
     def _prf_leaf(self, *, key: int, gc: int, ic: int, level: int, num_data: int) -> int:
         message = (
@@ -56,14 +63,18 @@ class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT], C
         self._last_oram_data = last_oram_data
         self._last_oram_level = last_oram_level
 
+    @cached_property
+    @override
+    def _value_field(self) -> Field[Any]:
+        return UInt(self._config.count_length)
+
     def _build_and_host(self) -> None:
-        zero_counter = self._zero_counter
         self._host_tree(
             self._build_tree(
                 Data(
                     key=key,
                     leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data),
-                    value=zero_counter,
+                    value=0,
                 )
                 for key in range(self._num_data)
             )
@@ -83,7 +94,7 @@ class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
         self._levels = self._make_levels()
         smallest = self._levels[0] if self._levels else self
         self._last_oram_data, self._last_oram_level = smallest._num_data, smallest._level
-        self._on_chip_storage: list[bytes] = [self._zero_counter] * -(-self._last_oram_data // self._num_ic)
+        self._on_chip_storage: list[int] = [0] * -(-self._last_oram_data // self._num_ic)
 
     @abstractmethod
     def _new_level(self, config: ConfigT, *, last_oram_data: int, last_oram_level: int) -> LevelT: ...
@@ -103,7 +114,6 @@ class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
                     prf_key=self._prf.key,
                     num_data=-(-last_oram_data // self._num_ic),
                     name=f"{self._name}_pos_map_{count - i - 1}",
-                    data_size=math.ceil(self._count_length / 8),
                 ),
                 last_oram_data=last_oram_data,
                 last_oram_level=last_oram_level,

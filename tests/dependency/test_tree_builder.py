@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 
 from oblivlib.dependency import AesGcm, Data, DuplicateLabelError
-from oblivlib.dependency.codec import DefaultCodec
 from oblivlib.dependency.heap_index import tree_size
+from oblivlib.dependency.layout import Bytes, UInt, block_layout
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
 from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage, build_tree
 
-_CODEC = DefaultCodec(max_block_bytes=64)
+_BLOCK = block_layout(UInt(16), UInt(16), Bytes(32))
 
 
 def _rows(image: TreeImage) -> list[bytes]:
@@ -27,7 +27,7 @@ def _keys(cipher: PathCipher, image: TreeImage) -> list[list[int]]:
 
 @pytest.mark.parametrize("mode", ["memory_plain", "memory_sealed", "file_sealed"])
 def test_build_places_blocks_deepest_first_and_reports_overflow(mode, tmp_path):
-    cipher = make_path_cipher(_CODEC, None if mode == "memory_plain" else AesGcm(), bucket_size=1)
+    cipher = make_path_cipher(_BLOCK, None if mode == "memory_plain" else AesGcm(), bucket_size=1)
     blocks = [Data(key=key, leaf=0, value=b"v") for key in range(5)] + [Data(key=9, leaf=5, value=b"w")]
     build_file = tmp_path / "build.tree" if mode == "file_sealed" else None
 
@@ -43,11 +43,11 @@ def test_build_places_blocks_deepest_first_and_reports_overflow(mode, tmp_path):
 
 def test_build_file_needs_fixed_size_rows(tmp_path):
     with pytest.raises(ValueError, match="fixed-size"):
-        build_tree([], level=2, bucket_size=1, cipher=make_path_cipher(_CODEC, None, 1), build_file=tmp_path / "b")
+        build_tree([], level=2, bucket_size=1, cipher=make_path_cipher(_BLOCK, None, 1), build_file=tmp_path / "b")
 
 
 def test_three_handovers_produce_identical_server_state(tmp_path, handover_client):
-    cipher = make_path_cipher(_CODEC, AesGcm(), bucket_size=2)
+    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
     blocks = [Data(key=key, leaf=key % 8, value=bytes([key]) * 4) for key in range(12)]
     image = build_tree(blocks, level=4, bucket_size=2, cipher=cipher, build_file=tmp_path / "build.tree").image
     assert isinstance(image, FileImage)
@@ -75,7 +75,7 @@ def _open_fds() -> int:
 @pytest.mark.skipif(not Path("/proc/self/fd").exists(), reason="counts open descriptors through /proc")
 @pytest.mark.parametrize("fail_at", ["placement", "pre_sealing"])
 def test_a_failed_file_build_closes_its_file_and_leaves_it(tmp_path, fail_once, fail_at):
-    cipher = make_path_cipher(_CODEC, AesGcm(), bucket_size=2)
+    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
 
     def blocks():
         yield Data(key=0, leaf=0, value=b"v")
@@ -91,7 +91,7 @@ def test_a_failed_file_build_closes_its_file_and_leaves_it(tmp_path, fail_once, 
 
 
 def test_a_failed_adopt_attach_leaves_the_file_where_it_was(tmp_path, handover_client):
-    cipher = make_path_cipher(_CODEC, AesGcm(), bucket_size=2)
+    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
     client = handover_client("adopt")
     for name in ("first", "second"):
         build_tree([], level=3, bucket_size=2, cipher=cipher, build_file=tmp_path / f"{name}.tree")

@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from oblivlib.dependency.client import Client
-from oblivlib.dependency.codec import BlockCodec, DefaultCodec, packed_size
 from oblivlib.dependency.config import OramConfig
 from oblivlib.dependency.crypto import Encryptor
 from oblivlib.dependency.errors import StashOverflowError
 from oblivlib.dependency.heap_index import compute_level, empty_path, fill_data_to_path
+from oblivlib.dependency.layout import Bytes, Field, Record, UInt, block_layout
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
 from oblivlib.dependency.tree_builder import TreeImage, build_tree
 from oblivlib.dependency.types import Data, PathData
@@ -58,10 +58,6 @@ class TreeStorageBase[ConfigT: OramConfig]:
     @property
     def _client(self) -> Client:
         return self._config.client
-
-    @cached_property
-    def _max_block_bytes(self) -> int:
-        return packed_size([self._num_data - 1, self._leaf_range - 1, bytes(self._data_size)])
 
     @property
     def stash_size(self) -> int:
@@ -118,13 +114,25 @@ class TreeStorageBase[ConfigT: OramConfig]:
         self._stage_write_back()
         self._client.execute()
 
-    @property
-    def _codec(self) -> BlockCodec:
-        return DefaultCodec(self._max_block_bytes)
+    @cached_property
+    def _key_field(self) -> Field[Any]:
+        return UInt.covering(self._num_data - 1)
+
+    @cached_property
+    def _leaf_field(self) -> UInt:
+        return UInt.covering(self._leaf_range - 1)
+
+    @cached_property
+    def _value_field(self) -> Field[Any]:
+        return Bytes(self._data_size)
+
+    @cached_property
+    def _block_layout(self) -> Record:
+        return block_layout(self._key_field, self._leaf_field, self._value_field)
 
     @cached_property
     def _cipher(self) -> PathCipher:
-        return make_path_cipher(self._codec, self._encryptor, self._bucket_size)
+        return make_path_cipher(self._block_layout, self._encryptor, self._bucket_size)
 
     def _build_tree(self, blocks: Iterable[Data]) -> TreeImage:
         result = build_tree(

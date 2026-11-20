@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 ResetMethod = Literal["prob", "hard"]
 
+MIN_GC_LENGTH = 64
+
 
 def unique_name(prefix: str) -> Callable[[], str]:
     return lambda: f"{prefix}-{secrets.randbelow(1 << 32):08x}"
@@ -107,7 +109,9 @@ class CounterOramConfig(OramConfig):
     """Shared structure for the counter-based recursive schemes (DA, Freecursive).
 
     ``num_ic``: children per position-map block. ``ic_length`` / ``gc_length``: bit widths of the
-    individual and group counters. ``prf_key``: key of the leaf-deriving PRF; random when ``None``.
+    individual and group counters; ``gc_length`` is at least ``MIN_GC_LENGTH`` (64), so the group
+    counter, which grows at most once per access, cannot run out. ``prf_key``: key of the leaf-deriving
+    PRF; random when ``None``.
     """
 
     num_ic: int = 64
@@ -120,8 +124,12 @@ class CounterOramConfig(OramConfig):
         raise NotImplementedError
 
     @property
-    def count_length(self) -> int:
+    def counter_widths(self) -> tuple[int, ...]:
         raise NotImplementedError
+
+    @property
+    def count_length(self) -> int:
+        return sum(self.counter_widths)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -129,8 +137,8 @@ class CounterOramConfig(OramConfig):
             raise ValueError(f"num_ic must be >= 2, got {self.num_ic}.")
         if self.ic_length < 1:
             raise ValueError(f"ic_length must be >= 1, got {self.ic_length}.")
-        if self.gc_length < 1:
-            raise ValueError(f"gc_length must be >= 1, got {self.gc_length}.")
+        if self.gc_length < MIN_GC_LENGTH:
+            raise ValueError(f"gc_length must be >= {MIN_GC_LENGTH}, got {self.gc_length}.")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -147,8 +155,8 @@ class DaOramConfig(CounterOramConfig):
 
     @property
     @override
-    def count_length(self) -> int:
-        return self.gc_length + (self.ic_length + 1) * self.num_ic
+    def counter_widths(self) -> tuple[int, ...]:
+        return (self.gc_length, *[self.ic_length] * self.num_ic, *[1] * self.num_ic)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -171,7 +179,6 @@ class FreecursiveOramConfig(CounterOramConfig):
     name: str = field(default_factory=unique_name("fc"))
     num_ic: int = 48
     ic_length: int = 10
-    gc_length: int = 32
     on_chip_size: int = 10
     reset_method: ResetMethod = "prob"
     reset_prob: float | None = None
@@ -183,8 +190,8 @@ class FreecursiveOramConfig(CounterOramConfig):
 
     @property
     @override
-    def count_length(self) -> int:
-        return self.gc_length + self.ic_length * self.num_ic
+    def counter_widths(self) -> tuple[int, ...]:
+        return (self.gc_length, *[self.ic_length] * self.num_ic)
 
     def __post_init__(self) -> None:
         super().__post_init__()

@@ -1,25 +1,25 @@
 import os
+from functools import cached_property
 from typing import Any, override
-
-import msgpack
 
 from oblivlib.dependency import UNSET, Blake2Prf, Data, hash_data_to_map
 from oblivlib.dependency.config import GroupOmapConfig, MulPathOramConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
+from oblivlib.dependency.layout import Bytes, Field, FixedBytes, Record, Seq
 from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.base_omap import BaseOmap
 from oblivlib.oram import MulPathOram, TreeBaseOram
 
-_KEY_SLOT_OVERHEAD = 4
 
+class _KeyNamedMulPathOram(MulPathOram):
+    def __init__(self, config: MulPathOramConfig, *, key_size: int):
+        self._block_key_size = key_size
+        super().__init__(config)
 
-def _encode_metadata(seed: bytes, keys: list[bytes]) -> bytes:
-    return msgpack.packb([seed, keys])
-
-
-def _decode_metadata(value: bytes) -> tuple[bytes, list[bytes]]:
-    seed, keys = msgpack.unpackb(value)
-    return seed, keys
+    @cached_property
+    @override
+    def _key_field(self) -> Field[Any]:
+        return Bytes(self._block_key_size)
 
 
 class GroupOmap(BaseOmap):
@@ -34,6 +34,7 @@ class GroupOmap(BaseOmap):
         self._leaf_prf = Blake2Prf()
 
         self._upper_bound = self._bucket_upper_bound(config.num_data)
+        self._metadata = self._metadata_layout(config.num_data, config.key_size)
 
         required = self.upper_oram_data_size(config.num_data, config.key_size)
         if self._upper_oram._data_size < required:
@@ -43,17 +44,18 @@ class GroupOmap(BaseOmap):
                 + "GroupOmap.upper_oram_data_size(num_data, key_size)."
             )
 
-        self._lower_oram = MulPathOram(
+        self._lower_oram = _KeyNamedMulPathOram(
             MulPathOramConfig(
                 num_data=config.num_data,
-                data_size=config.data_size + config.key_size + _KEY_SLOT_OVERHEAD,
+                data_size=config.data_size,
                 client=config.client,
                 name=f"{config.name}_lower",
                 bucket_size=config.bucket_size,
                 stash_scale=config.stash_scale,
                 encryptor=config.encryptor,
                 stash_scale_multiplier=self._upper_bound,
-            )
+            ),
+            key_size=config.key_size,
         )
 
     @staticmethod
@@ -61,9 +63,19 @@ class GroupOmap(BaseOmap):
         return max_bucket_load(num_data)
 
     @staticmethod
+    def _metadata_layout(num_data: int, key_size: int) -> Record:
+        keys = Seq(Bytes(key_size), GroupOmap._bucket_upper_bound(num_data))
+        return Record((FixedBytes(GroupOmap.SEED_SIZE), keys))
+
+    @staticmethod
     def upper_oram_data_size(num_data: int, key_size: int) -> int:
-        upper_bound = GroupOmap._bucket_upper_bound(num_data)
-        return len(_encode_metadata(os.urandom(GroupOmap.SEED_SIZE), [os.urandom(key_size)] * upper_bound))
+        return GroupOmap._metadata_layout(num_data, key_size).size
+
+    def _encode_metadata(self, seed: bytes, keys: list[bytes]) -> bytes:
+        return self._metadata.encode((seed, keys))
+
+    def _decode_metadata(self, value: bytes) -> tuple[bytes, list[bytes]]:
+        return self._metadata.decode(value)
 
     @property
     def _name(self) -> str:
@@ -106,7 +118,7 @@ class GroupOmap(BaseOmap):
                 )
 
             seed = os.urandom(self.SEED_SIZE)
-            upper_data[bucket_id] = _encode_metadata(seed, [key for key, _ in bucket_items])
+            upper_data[bucket_id] = self._encode_metadata(seed, [key for key, _ in bucket_items])
             lower_blocks.extend(
                 Data(key=key, leaf=self._compute_path(seed, key), value=value) for key, value in bucket_items
             )
@@ -125,11 +137,11 @@ class GroupOmap(BaseOmap):
         self, bucket_id: int, update: tuple[bytes, bytes] | None = None
     ) -> tuple[list[bytes], dict[Any, Any]]:
         metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
-        seed, bucket_keys = _decode_metadata(metadata)
+        seed, bucket_keys = self._decode_metadata(metadata)
         try:
             new_seed = os.urandom(self.SEED_SIZE)
             values = self._read_bucket(seed, new_seed, bucket_keys)
-            metadata = _encode_metadata(new_seed, bucket_keys)
+            metadata = self._encode_metadata(new_seed, bucket_keys)
             if bucket_keys:
                 updates = dict([update]) if update is not None and update[0] in values else None
                 self._lower_oram._eviction_for_mul_keys(updates=updates)
@@ -153,7 +165,7 @@ class GroupOmap(BaseOmap):
 
         bucket_id = self._hash_key_to_bucket(key)
         metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
-        seed, bucket_keys = _decode_metadata(metadata)
+        seed, bucket_keys = self._decode_metadata(metadata)
         try:
             if len(bucket_keys) >= self._upper_bound:
                 raise MemoryError(f"Bucket {bucket_id} is full ({len(bucket_keys)} items), cannot insert")
@@ -162,9 +174,9 @@ class GroupOmap(BaseOmap):
                 self._lower_oram._insert_block(block)
             except BaseException:
                 if any(data is block for data in self._lower_oram._stash):
-                    metadata = _encode_metadata(seed, [*bucket_keys, key])
+                    metadata = self._encode_metadata(seed, [*bucket_keys, key])
                 raise
-            metadata = _encode_metadata(seed, [*bucket_keys, key])
+            metadata = self._encode_metadata(seed, [*bucket_keys, key])
         finally:
             self._upper_oram.eviction_with_update_stash(key=bucket_id, value=metadata)
 

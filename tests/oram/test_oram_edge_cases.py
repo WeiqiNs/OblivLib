@@ -5,16 +5,22 @@ from typing import Any
 import pytest
 
 from oblivlib.dependency import (
+    AesGcm,
+    CapacityError,
     ContractError,
     DaOramConfig,
     Data,
     FreecursiveOramConfig,
+    MulPathOramConfig,
     PathOramConfig,
     RecursiveOramConfig,
     StaticOramConfig,
+    config,
 )
-from oblivlib.oram import DAOram, FreecursiveOram, PathOram, RecursivePathOram, StaticOram
+from oblivlib.oram import DAOram, FreecursiveOram, MulPathOram, PathOram, RecursivePathOram, StaticOram
 from oblivlib.oram.tree_base_oram import pos_map_level_count
+
+_TINY_COUNTERS: dict[str, Any] = {"num_data": 64, "data_size": 4}
 
 RECURSIVE_POS_MAP_ORAMS = [
     (RecursivePathOram, RecursiveOramConfig),
@@ -122,6 +128,54 @@ def test_da_oram_resets_in_a_partly_filled_last_block(client):
         key = workload.choice([96, 97, 98, 99, 100, 101])
         assert oram.operate_on_key(key=key, value=b"%d" % step) == model.get(key, b"")
         model[key] = b"%d" % step
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda client: DAOram(DaOramConfig(num_ic=2, ic_length=1, gc_length=2, **_TINY_COUNTERS, client=client)),
+        lambda client: FreecursiveOram(
+            FreecursiveOramConfig(
+                num_ic=2, ic_length=1, gc_length=2, reset_method="hard", **_TINY_COUNTERS, client=client
+            )
+        ),
+        lambda client: FreecursiveOram(
+            FreecursiveOramConfig(num_ic=2, ic_length=1, gc_length=2, reset_prob=1.0, **_TINY_COUNTERS, client=client)
+        ),
+    ],
+    ids=["da", "freecursive_hard", "freecursive_prob"],
+)
+def test_a_group_counter_that_overflows_its_field_raises_capacity_error(monkeypatch, client, make):
+    monkeypatch.setattr(config, "MIN_GC_LENGTH", 1, raising=False)
+    oram = make(client)
+    oram.init_server_storage()
+    for step in range(3):
+        assert oram.operate_on_key(key=0, value=b"%d" % step) == (b"" if step == 0 else b"%d" % (step - 1))
+    with pytest.raises(CapacityError, match="bit field 0"):
+        for _ in range(500):
+            oram.operate_on_key(key=0)
+
+
+_ROW_LAYOUT_CONFIG: dict[str, Any] = {"num_data": 64, "data_size": 16, "encryptor": AesGcm()}
+
+
+@pytest.mark.parametrize(
+    ("make", "expected_rows"),
+    [
+        pytest.param(lambda **kw: PathOram(PathOramConfig(**kw)), [105], id="path"),
+        pytest.param(lambda **kw: StaticOram(StaticOramConfig(**kw)), [105], id="static"),
+        pytest.param(lambda **kw: MulPathOram(MulPathOramConfig(**kw)), [105], id="mul_path"),
+        pytest.param(lambda **kw: RecursivePathOram(RecursiveOramConfig(**kw)), [105, 53, 53], id="recursive"),
+        pytest.param(lambda **kw: DAOram(DaOramConfig(num_ic=4, **kw)), [105, 85], id="da"),
+        pytest.param(lambda **kw: FreecursiveOram(FreecursiveOramConfig(num_ic=4, **kw)), [105, 89], id="freecursive"),
+    ],
+)
+def test_row_size_is_the_declared_block_layout_of_every_tree(make, expected_rows, client):
+    oram = make(client=client, **_ROW_LAYOUT_CONFIG)
+    assert [oram._cipher.row_bytes] + [level._cipher.row_bytes for level in oram._levels] == expected_rows
+    oram.init_server_storage({key: b"\xff" * 16 for key in range(64)})
+    for key in (0, 63, 0):
+        assert oram.operate_on_key(key=key) == b"\xff" * 16
 
 
 def test_a_full_bucket_of_widest_blocks_seals_to_one_row(make_oram, client, encryptor):
