@@ -315,6 +315,16 @@ class BPlusOmapConfig(TreeOmapConfig):
         "insert": AccessBudget(2, -1),
         "delete": AccessBudget(2, -1),
     }
+    MIN_CACHED_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(1, 0),
+        "insert": AccessBudget(2, -1),
+        "delete": AccessBudget(2, -1),
+    }
+    MIN_CACHED_TWO_PATH_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(1, 0),
+        "insert": AccessBudget(1, 0),
+        "delete": AccessBudget(1, 0),
+    }
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
         "search": AccessBudget(2, 0),
         "insert": AccessBudget(3, 0),
@@ -329,6 +339,8 @@ class BPlusOmapConfig(TreeOmapConfig):
     @property
     @override
     def min_budgets(self) -> dict[OdsOp, AccessBudget]:
+        if self.cached:
+            return self.MIN_CACHED_TWO_PATH_BUDGETS if self.paths_per_round == 2 else self.MIN_CACHED_BUDGETS
         return self.MIN_TWO_PATH_BUDGETS if self.paths_per_round == 2 else self.MIN_BUDGETS
 
     def __post_init__(self) -> None:

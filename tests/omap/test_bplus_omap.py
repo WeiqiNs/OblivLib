@@ -15,7 +15,7 @@ def test_level_bound_is_the_fewest_keys_a_root_split_needs(order, num_keys, leve
     assert bplus_max_levels(num_keys, order) == levels
 
 
-def _witness_omap(client, order, num_data, paths_per_round):
+def _witness_omap(client, order, num_data, paths_per_round, *, cached=False):
     return BPlusOmap(
         BPlusOmapConfig(
             order=order,
@@ -25,6 +25,7 @@ def _witness_omap(client, order, num_data, paths_per_round):
             client=client,
             distinguishable=True,
             paths_per_round=paths_per_round,
+            cached=cached,
         )
     )
 
@@ -60,6 +61,70 @@ def test_sorted_inserts_reach_every_two_path_bplus_bound(client, order, num_data
     omap.delete(b"9999")
     assert (omap._op_fetches, omap._op_owed) == (height, 2 * height - 3)
     assert omap._op_fetches + -(-omap._op_owed // 2) == omap._budget == 2 * height - 1
+
+
+@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
+@pytest.mark.parametrize(
+    ("paths_per_round", "insert_rounds", "insert_carry", "delete_rounds", "delete_carry"),
+    [(2, 1, -3, 1, -3), (1, 2, -1, 2, -2)],
+    ids=["two_path", "one_path"],
+)
+def test_sorted_inserts_reach_every_cached_bplus_bound(
+    client, order, num_data, witness, paths_per_round, insert_rounds, insert_carry, delete_rounds, delete_carry
+):
+    omap = _witness_omap(client, order, num_data, paths_per_round, cached=True)
+    height = bplus_max_levels(num_data, order)
+    omap.init_server_storage()
+    for i in range(witness - 1):
+        omap.insert(b"%04d" % i, b"v")
+    omap.drain()
+    omap.insert(b"%04d" % (witness - 1), b"v")
+    assert omap._op_fetches == height
+    assert omap._budget == insert_rounds * height - (insert_rounds - 1)
+    assert omap._owed == (2 if paths_per_round == 2 else 1) * height + insert_carry
+    omap.drain()
+    omap.delete(b"9999")
+    assert omap._budget == delete_rounds * height - (delete_rounds - 1)
+    assert omap._owed == 2 * height + delete_carry == omap._carry_limit
+    assert omap.search(b"0000") == b"v"
+
+
+@pytest.mark.parametrize("paths_per_round", [1, 2])
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+def test_cached_bplus_matches_the_model_and_drains_in_a_fixed_count(
+    client, check_bplus_invariants, duplicate_blocks, paths_per_round, distinguishable
+):
+    omap = BPlusOmap(
+        BPlusOmapConfig(
+            order=3,
+            num_data=64,
+            key_size=4,
+            data_size=4,
+            client=client,
+            cached=True,
+            paths_per_round=paths_per_round,
+            distinguishable=distinguishable,
+        )
+    )
+    omap.init_server_storage()
+    rng = random.Random(paths_per_round)
+    model: dict[bytes, bytes] = {}
+    for step in range(800):
+        key, roll = b"%02d" % rng.randrange(64), rng.random()
+        if roll < 0.45 and key not in model:
+            omap.insert(key, b"%d" % step)
+            model[key] = b"%d" % step
+        elif roll < 0.75:
+            assert omap.delete(key) == model.pop(key, None)
+        else:
+            assert omap.search(key) == model.get(key)
+        assert omap._owed <= omap._carry_limit
+    rounds = client.metrics.rounds
+    omap.drain()
+    assert client.metrics.rounds - rounds == -(-omap._carry_limit // paths_per_round)
+    assert omap._owed == 0
+    check_bplus_invariants(omap, model)
+    assert not duplicate_blocks(omap)
 
 
 def test_a_one_leaf_tree_caps_its_rounds_at_one_path(client):

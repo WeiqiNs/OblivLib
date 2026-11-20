@@ -141,9 +141,11 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
 
     @property
     def _carry_limit(self) -> int:
-        if not self._config.cached:
-            return 0
-        return max(self._batch_size * (self._max_height - 1), self._max_height)
+        return self._cached_carry_limit() if self._config.cached else 0
+
+    @abstractmethod
+    def _cached_carry_limit(self) -> int:
+        raise NotImplementedError
 
     def drain(self) -> None:
         for _ in range(-(-self._carry_limit // self._widest_round)):

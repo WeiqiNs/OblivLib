@@ -51,7 +51,6 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"paths_per_round": 3}, "paths_per_round must be 1 or 2"),
         (AvlOmapConfig, _OMAP, {"paths_per_round": 2}, "paths_per_round"),
         (AvlOmapConfig, {**_OMAP, "cached": True}, {"delete_budget": AccessBudget(1, 9)}, r"a must be >= 3/2"),
-        (BPlusOmapConfig, {**_OMAP, "order": 3}, {"cached": True}, "cached"),
         (AvlOmapConfig, _OMAP, {"batch_size": 0}, "batch_size must be >= 1"),
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"batch_size": 2}, "batch_size"),
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
@@ -73,6 +72,11 @@ def test_a_budget_override_may_raise_a_minimum_but_keeps_the_others(client):
     assert textbook.paths_per_round == 1
     bplus = BPlusOmapConfig(**_OMAP, client=client, order=3)
     assert [bplus.budget(op).rounds(10) for op in ("search", "insert", "delete")] == [10, 19, 19]
+    cached_bplus = [BPlusOmapConfig(**_OMAP, client=client, order=3, cached=True, paths_per_round=p) for p in (2, 1)]
+    assert [[c.budget(op).rounds(10) for op in ("search", "insert", "delete")] for c in cached_bplus] == [
+        [10, 10, 10],
+        [10, 19, 19],
+    ]
     cached = AvlOmapConfig(**_OMAP, client=client, cached=True)
     assert [cached.budget(op).rounds(height) for op in ("search", "insert", "delete") for height in (7, 8)] == [
         7,

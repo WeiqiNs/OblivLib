@@ -107,6 +107,10 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         return LocalNodes()
 
     @override
+    def _cached_carry_limit(self) -> int:
+        return max(self._batch_size * (self._max_height - 1), self._max_height)
+
+    @override
     def update_mul_tree_height(self, num_tree: int) -> None:
         tree_size = max_bucket_load(num_tree)
         self._max_height = avl_max_height(tree_size)
