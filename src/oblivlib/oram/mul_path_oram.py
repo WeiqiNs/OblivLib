@@ -3,7 +3,7 @@ from typing import Any
 
 from oblivlib.dependency import UNSET, Data, DataMap, PosMap
 from oblivlib.dependency.config import MulPathOramConfig
-from oblivlib.dependency.contract import require_oram_key, require_value
+from oblivlib.dependency.contract import require_leaf, require_oram_key, require_value
 from oblivlib.oram.path_oram import PathOram
 
 
@@ -11,9 +11,14 @@ class MulPathOram(PathOram[MulPathOramConfig]):
     def __init__(self, config: MulPathOramConfig):
         super().__init__(replace(config, stash_scale=config.stash_scale * config.stash_scale_multiplier))
 
-    def _check_batch(self, key_value_map: dict[int, Any]) -> None:
+    def _check_batch(
+        self, key_value_map: dict[int, Any], key_path_map: PosMap | None, new_path_map: PosMap | None
+    ) -> None:
         for key, value in key_value_map.items():
             self._require_access(key, value)
+        for path_map in (key_path_map, new_path_map):
+            for leaf in (path_map or {}).values():
+                require_leaf(self._identity, leaf, self._leaf_range)
 
     def operate_on_keys(
         self,
@@ -21,7 +26,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         key_path_map: PosMap | None = None,
         new_path_map: PosMap | None = None,
     ) -> DataMap:
-        self._check_batch(key_value_map)
+        self._check_batch(key_value_map, key_path_map, new_path_map)
         return self._operate_on_keys(key_value_map, key_path_map, new_path_map)
 
     def _operate_on_keys(
@@ -42,7 +47,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         key_path_map: PosMap | None = None,
         new_path_map: PosMap | None = None,
     ) -> DataMap:
-        self._check_batch(key_value_map)
+        self._check_batch(key_value_map, key_path_map, new_path_map)
         return self._operate_on_keys_without_eviction(key_value_map, key_path_map, new_path_map)
 
     def _operate_on_keys_without_eviction(
@@ -79,16 +84,14 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         for key, value in (updates or {}).items():
             require_oram_key(self._identity, key, self._num_data)
             require_value(self._identity, value, self._data_size)
+        if not self._pending_leaves:
+            raise ValueError(f"{self._identity}: no access is waiting for its eviction.")
         self._eviction_for_mul_keys(updates)
 
     def _eviction_for_mul_keys(self, updates: dict[Any, Any] | None = None) -> None:
-        if updates:
-            for key, value in updates.items():
-                for data in self._stash:
-                    if data.key == key:
-                        data.value = value
-                        break
-
+        blocks = [(self._require_in_stash(key), value) for key, value in (updates or {}).items()]
+        for data, value in blocks:
+            data.value = value
         self._write_back()
 
     def _insert_block(self, block: Data) -> None:

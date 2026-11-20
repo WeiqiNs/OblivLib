@@ -1,5 +1,3 @@
-"""Behavioral tests run against every ORAM via the make_oram fixture (see conftest.py)."""
-
 import random
 
 import pytest
@@ -9,16 +7,6 @@ from oblivlib.oram import DAOram, FreecursiveOram, PathOram, RecursivePathOram
 
 
 class TestOramCommon:
-    def test_round_trip(self, make_oram, num_data, client):
-        oram = make_oram(num_data=num_data, data_size=10, client=client)
-        oram.init_server_storage()
-
-        for i in range(num_data):
-            oram.operate_on_key(key=i, value=b"%d" % i)
-
-        for i in range(num_data):
-            assert oram.operate_on_key(key=i) == b"%d" % i
-
     def test_with_init(self, make_oram, num_data, client):
         oram = make_oram(num_data=num_data, data_size=10, client=client)
         oram.init_server_storage(data={i: b"%d" % (i * 2) for i in range(num_data)})

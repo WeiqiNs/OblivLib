@@ -79,7 +79,7 @@ class TreeStorageBase[ConfigT: OramConfig]:
 
     def _absorb_path(self, path: PathRows) -> None:
         for bucket in self._cipher.open_path(path).values():
-            self._stash.extend(data for data in bucket if data.key is not None)
+            self._stash.extend(bucket)
         self._check_stash()
 
     def _require_in_stash(self, key: int) -> Data:

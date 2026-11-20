@@ -1,6 +1,8 @@
 import random
 
-from oblivlib.dependency import UNSET, MulPathOramConfig
+import pytest
+
+from oblivlib.dependency import UNSET, ContractError, MulPathOramConfig
 from oblivlib.oram import MulPathOram
 
 
@@ -29,9 +31,10 @@ class TestMulPathOram:
         for i in range(num_data):
             oram.operate_on_key(key=i, value=b"%d" % i)
 
+        rng = random.Random(3)
         for _ in range(10):
-            batch_size = random.randint(2, min(10, num_data))
-            keys = random.sample(range(num_data), batch_size)
+            batch_size = rng.randint(2, min(10, num_data))
+            keys = rng.sample(range(num_data), batch_size)
 
             results = oram.operate_on_keys(key_value_map={k: UNSET for k in keys})
 
@@ -56,6 +59,48 @@ class TestMulPathOram:
         oram.eviction_for_mul_keys()
         assert oram._pos_map == positions
         assert oram.operate_on_key(key=1) == b"one"
+
+    @pytest.mark.parametrize("bad_leaf", [64, -5, "1"])
+    @pytest.mark.parametrize("path_map", ["key_path_map", "new_path_map"])
+    @pytest.mark.parametrize("split", [False, True])
+    def test_out_of_range_leaves_raise_before_any_state_changes(self, client, bad_leaf, path_map, split):
+        oram = MulPathOram(MulPathOramConfig(num_data=64, data_size=10, client=client, stash_scale_multiplier=3))
+        oram.init_server_storage(data={1: b"one"})
+        positions = dict(oram._pos_map)
+        rounds = client.metrics.rounds
+        operate = oram.operate_on_keys_without_eviction if split else oram.operate_on_keys
+
+        with pytest.raises(ContractError, match=r"a leaf must be an int in \[0, 64\)"):
+            operate({1: b"uno"}, **{path_map: {1: bad_leaf}})
+
+        assert client.metrics.rounds == rounds
+        assert oram._pos_map == positions
+        assert oram.operate_on_keys({1: UNSET}) == {1: b"one"}
+
+    def test_batch_contract_violations_raise_before_any_round(self, client):
+        oram = MulPathOram(MulPathOramConfig(num_data=64, data_size=10, client=client, stash_scale_multiplier=3))
+        oram.init_server_storage(data={1: b"one"})
+        rounds = client.metrics.rounds
+
+        for batch in ({64: UNSET}, {1: "one"}, {1: b"x" * 11}):
+            with pytest.raises(ContractError):
+                oram.operate_on_keys(batch)
+            with pytest.raises(ContractError):
+                oram.operate_on_keys_without_eviction(batch)
+        assert oram.operate_on_keys({}) == {}
+        assert client.metrics.rounds == rounds
+
+        oram.operate_on_keys_without_eviction({1: UNSET})
+        for updates in ({64: b"v"}, {1: "one"}, {1: b"x" * 11}):
+            with pytest.raises(ContractError):
+                oram.eviction_for_mul_keys(updates)
+        with pytest.raises(KeyError, match="Key 2 not found"):
+            oram.eviction_for_mul_keys({1: b"uno", 2: b"two"})
+        oram.eviction_for_mul_keys()
+        assert oram.operate_on_keys({1: UNSET, 2: UNSET}) == {1: b"one", 2: b""}
+        with pytest.raises(ValueError, match="no access is waiting"):
+            oram.eviction_for_mul_keys({1: b"uno"})
+        assert oram.operate_on_keys({1: UNSET}) == {1: b"one"}
 
     def test_without_eviction(self, num_data, client):
         oram = MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale_multiplier=3))

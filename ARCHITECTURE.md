@@ -275,7 +275,8 @@ both higher layers depend downward on it rather than on each other.
 ### `TreeBaseOram` and the access protocol
 
 Adds eviction and one access template. The position map belongs to the schemes that keep one
-(`PathOram` and its subclasses, and `RecursivePathOram`'s on-chip map); DA and Freecursive derive leaves
+(`PathOram` and its subclasses other than `StaticOram`, whose `_new_pos_map` is empty, and
+`RecursivePathOram`'s on-chip map); DA and Freecursive derive leaves
 from a PRF. Each scheme implements a single hook, `_operate_on_key_without_eviction(key, value)`: it
 finds the key's leaves (and does any position-map level I/O), then calls `_read_block`, which reads those
 paths in one batch, pulls their real blocks into the stash, reads the key (optionally overwriting it),
@@ -317,9 +318,9 @@ placements on a laminar matroid) and is ~15% faster at realistic stash sizes. Do
 | Scheme | Idea |
 |---|---|
 | `PathOram` | Random leaf reassignment on every access. |
-| `MulPathOram` | Reads/evicts several paths per batch (`operate_on_keys*`, `eviction_for_mul_keys`, each checking the contract before its underscore twin). `stash_scale_multiplier` is baked into `stash_scale` at construction. A batch given explicit read paths (`key_path_map`) leaves the position map alone: the caller owns those keys' positions, so it should also pass `new_path_map`, or the random new leaves are recorded nowhere (`GroupOmap` passes both). |
+| `MulPathOram` | Reads/evicts several paths per batch (`operate_on_keys*`, `eviction_for_mul_keys`, each checking the contract, including every leaf in `key_path_map`/`new_path_map`, before its underscore twin; `eviction_for_mul_keys` raises `KeyError` for an update whose key is not in the stash, before changing any value). `stash_scale_multiplier` is baked into `stash_scale` at construction. A batch given explicit read paths (`key_path_map`) leaves the position map alone: the caller owns those keys' positions, so it should also pass `new_path_map`, or the random new leaves are recorded nowhere (`GroupOmap` passes both). |
 | `StaticOram` | Leaves fixed by `PRF(key)`: the "new" leaf equals the current one. |
-| `RecursivePathOram` | Position map compressed into a chain of smaller ORAMs, each block holding `compression_ratio` child leaves; only the smallest map (≤ `on_chip_mem`) stays on chip. A short final block is padded with random leaves. |
+| `RecursivePathOram` | Position map compressed into a chain of smaller ORAMs, each block holding `compression_ratio` child leaves; only the smallest map (≤ `on_chip_mem`) stays on chip. A short final block is padded with filler entries that no key ever reads. |
 | `DAOram`, `FreecursiveOram` | Leaves are `PRF(num_data ‖ key ‖ GC ‖ IC) mod leaf_range`, with fixed-width big-endian fields and `num_data` the size of the tree whose leaf it is; position-map blocks hold counters instead of leaves (below). |
 
 ### Counter blocks (DA / Freecursive)
@@ -563,7 +564,7 @@ disk.
   config check); `FlexibleBinaryTree` runs over memory-plain and memory-encrypted trees, since it has no
   storage-specific code. Test order mirrors source order. Trivial helpers covered transitively get no
   dedicated test. Code whose public behavior the ORAM/OMAP layers own (`contract.py`,
-  `TreeStorageBase`, the composed maps' key hashing, `max_bucket_load`) is tested there, not here.
+  `TreeStorageBase`, the composed maps' key hashing, `max_bucket_load`) is tested through those layers; `test_tree_storage_base.py` and `test_load_bound.py` add only the stash bound, `_require_in_stash`, default names, and `lambert_w`.
 - `tests/oram/`: `make_oram` parametrizes over `ORAM_SPECS` (Freecursive twice, prob/hard). Adding one
   `ORAM_SPECS` line enrols a scheme in the whole common suite, which checks every scheme against a dict
   model and checks that a split access (`operate_on_key_without_eviction` + `eviction_with_update_stash`)
@@ -577,5 +578,3 @@ disk.
   they are *collected* only for variants that claim the property, and count path reads through a
   recording client. Cached variants are excluded by construction, so there are no standing skips.
   Composed maps have their own files.
-
-Uncovered: an empty `operate_on_keys({})` batch.

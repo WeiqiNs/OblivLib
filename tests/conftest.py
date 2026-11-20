@@ -26,8 +26,6 @@ AccessShape = tuple[dict[str, frozenset[int]], dict[str, tuple[int, ...]]]
 
 
 class RecordingBackend(Backend):
-    """Delegates to ``inner`` and records every message it forwards."""
-
     def __init__(self, inner: Backend):
         self._inner = inner
         self.messages: list[Request] = []
@@ -63,9 +61,6 @@ def _access_shape(batch: Batch) -> AccessShape:
 
 
 def _coalesce(shapes: list[AccessShape]) -> list[AccessShape]:
-    """What deferral should turn a sequence of undeferred batches into: each run of batches without
-    reads folds into the next batch's writes (leaves unioned per label), while an empty batch with no
-    writes pending is still sent."""
     coalesced: list[AccessShape] = []
     pending: dict[str, frozenset[int]] = {}
     for writes, reads in shapes:
@@ -111,7 +106,6 @@ def remote_client():
 
 @pytest.fixture
 def recorded_client():
-    """Factory for a ``Client`` over a ``RecordingBackend``; returns ``(client, recorder)``."""
 
     def make(*, defer_writes: bool = True, server: StorageServer | None = None) -> tuple[Client, RecordingBackend]:
         recorder = RecordingBackend(LocalBackend(server or StorageServer()))
@@ -122,9 +116,6 @@ def recorded_client():
 
 @pytest.fixture
 def handover_client(tmp_path):
-    """Factory ``handover_client(mode)``: a ``Client`` whose ``host_tree`` hands a build file over by
-    ``mode``: ``"adopt"`` (a local server moves it in), ``"attach"`` (shipped into the server's directory,
-    then attached), or ``"stream"`` (sent as rows)."""
 
     def make(mode: Literal["adopt", "attach", "stream"]) -> Client:
         server_dir = tmp_path / f"{mode}_server"
@@ -146,8 +137,6 @@ def handover_client(tmp_path):
 
 @pytest.fixture
 def seeded_access(monkeypatch, recorded_client):
-    """Run ``workload(client)`` under seed 7 on a recording client; returns every batch's access shape and
-    the rounds the workload took before its final flush."""
 
     def run(workload: Callable[[Client], None], *, defer_writes: bool = True) -> tuple[list[AccessShape], int]:
         _seed(monkeypatch, 7)
@@ -162,9 +151,6 @@ def seeded_access(monkeypatch, recorded_client):
 
 @pytest.fixture
 def assert_deferral_preserves_access(seeded_access):
-    """Run ``workload(client)`` twice under the same seed, with write deferral off and on, and assert the
-    deferred batches are exactly the undeferred ones coalesced. Returns the rounds each run took before
-    its final flush, as ``(off, on)``."""
 
     def run(workload: Callable[[Client], None]) -> tuple[int, int]:
         shapes_off, rounds_off = seeded_access(workload, defer_writes=False)

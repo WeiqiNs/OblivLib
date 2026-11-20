@@ -10,8 +10,9 @@ from oblivlib.dependency import (
     FreecursiveOramConfig,
     PathOramConfig,
     RecursiveOramConfig,
+    StaticOramConfig,
 )
-from oblivlib.oram import DAOram, FreecursiveOram, PathOram, RecursivePathOram
+from oblivlib.oram import DAOram, FreecursiveOram, PathOram, RecursivePathOram, StaticOram
 from oblivlib.oram.tree_base_oram import pos_map_level_count
 
 RECURSIVE_POS_MAP_ORAMS = [
@@ -70,7 +71,8 @@ def test_init_rejects_duplicate_keys_and_contract_violations(client, pairs, matc
 
 @pytest.mark.parametrize(("cls", "config_cls"), RECURSIVE_POS_MAP_ORAMS)
 def test_num_data_at_most_on_chip_raises(cls, config_cls, client):
-    with pytest.raises(ValueError):
+    cls(config_cls(num_data=11, data_size=10, client=client))
+    with pytest.raises(ValueError, match=r"num_data \(8\) must be greater than"):
         cls(config_cls(num_data=8, data_size=10, client=client))
 
 
@@ -80,6 +82,19 @@ def test_num_data_at_most_on_chip_raises(cls, config_cls, client):
 )
 def test_pos_map_level_count_is_exact(num_data, on_chip, ratio, expected):
     assert pos_map_level_count(num_data=num_data, on_chip=on_chip, ratio=ratio) == expected
+
+
+def test_static_oram_never_samples_a_random_leaf(monkeypatch, client):
+    config = StaticOramConfig(num_data=64, data_size=10, client=client)
+
+    def no_random_leaf(_: int) -> int:
+        raise AssertionError("StaticOram drew a random leaf.")
+
+    monkeypatch.setattr(secrets, "randbelow", no_random_leaf)
+    oram = StaticOram(config)
+    oram.init_server_storage(data={3: b"three"})
+    assert oram.operate_on_key(3, b"tres") == b"three"
+    assert oram.operate_on_key(3) == b"tres"
 
 
 def test_da_oram_reset_block_left_in_pos_map_stash(monkeypatch, client):
@@ -128,6 +143,9 @@ def test_new_access_while_one_is_pending_raises(make_oram, client):
         oram.operate_on_key(4)
     with pytest.raises(ValueError, match="still waiting for its eviction"):
         oram.operate_on_key_without_eviction(4)
+    for key, value in [(64, b"tres"), (3, "tres"), (3, b"x" * 11)]:
+        with pytest.raises(ContractError):
+            oram.eviction_with_update_stash(key, value)
     oram.eviction_with_update_stash(3, b"tres")
     assert oram.operate_on_key(3) == b"tres"
 

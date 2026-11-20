@@ -8,7 +8,10 @@ class PathOram[ConfigT: OramConfig](TreeBaseOram[ConfigT, Never]):
     def __init__(self, config: ConfigT):
         super().__init__(config)
 
-        self._pos_map: PosMap = {i: self._get_new_leaf() for i in range(self._num_data)}
+        self._pos_map: PosMap = self._new_pos_map()
+
+    def _new_pos_map(self) -> PosMap:
+        return {i: self._get_new_leaf() for i in range(self._num_data)}
 
     @override
     def _initial_leaf(self, key: int) -> int:
