@@ -13,6 +13,7 @@ from oblivlib.dependency import (
     DaOramConfig,
     PathOramConfig,
     RecursiveOramConfig,
+    StashOverflowError,
 )
 from oblivlib.omap import AVLOmap, AVLOmapCached, BPlusOmap, BPlusOmapCached, OramOstOmap, OramOstOmapConfig
 from oblivlib.oram import DAOram, PathOram, RecursivePathOram
@@ -50,16 +51,13 @@ def _make_omap(ods_kind, oram_kind, client, n=64):
 
 
 class TestOramOstOmapOracle:
-    """Model oracle over ODS x ORAM: the composition must match a plain dict under interleaved
-    insert / search / delete, including searches of keys whose hash bucket is still empty."""
-
     @pytest.mark.parametrize("ods_kind", ["avl", "avl_cached", "bplus", "bplus_cached"])
     @pytest.mark.parametrize("oram_kind", ["da", "path", "recursive"])
     def test_oracle(self, ods_kind, oram_kind, client):
         n = 64
         omap = _make_omap(ods_kind, oram_kind, client, n)
         omap.init_server_storage()
-        rng = random.Random(hash((ods_kind, oram_kind)) & 0xFFFF)
+        rng = random.Random(f"{ods_kind}-{oram_kind}")
         model = {}
         keyspace = [b"k%d" % i for i in range(n)]
         for _ in range(n * 4):
@@ -79,8 +77,6 @@ class TestOramOstOmapOracle:
 
 
 class TestOramOstOmapInit:
-    """Bulk-init via init_server_storage(data=...); the oracle above only exercises empty init."""
-
     @pytest.mark.parametrize("ods_kind", ["avl", "avl_cached", "bplus", "bplus_cached"])
     @pytest.mark.parametrize("oram_kind", ["da", "path", "recursive"])
     def test_with_init(self, ods_kind, oram_kind, client):
@@ -147,3 +143,27 @@ def test_write_deferral_preserves_access_sequence(assert_deferral_preserves_acce
 
     rounds_off, rounds_on = assert_deferral_preserves_access(workload)
     assert rounds_on * 2 == rounds_off
+
+
+def test_a_failed_tree_op_still_finishes_the_oram_access(fail_once, client):
+    omap = _make_omap("avl", "path", client)
+    omap.init_server_storage(data=[(b"k%d" % i, b"v%d" % i) for i in range(20)])
+    fail_once(omap._ost, "_insert")
+
+    with pytest.raises(RuntimeError, match="injected"):
+        omap.insert(key=b"new", value=b"x")
+
+    for i in range(20):
+        assert omap.search(key=b"k%d" % i) == b"v%d" % i
+    omap.insert(key=b"new", value=b"x")
+    assert omap.search(key=b"new") == b"x"
+
+
+def test_overfilled_map_keeps_raising_the_real_error(client):
+    omap = _make_omap("avl", "path", client, n=16)
+    omap.init_server_storage()
+    with pytest.raises(StashOverflowError):
+        for i in range(10_000):
+            omap.insert(key=b"%d" % i, value=b"v")
+    with pytest.raises(StashOverflowError):
+        omap.search(key=b"0")

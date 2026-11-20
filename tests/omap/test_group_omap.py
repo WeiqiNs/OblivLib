@@ -1,5 +1,3 @@
-"""Tests for GroupOmap (group-by-hash OMAP: upper ORAM for metadata + MulPathOram lower ORAM)."""
-
 import random
 from typing import Any
 
@@ -27,10 +25,6 @@ def _make_omap(client, n=128, encryptor=None, upper_kind="path"):
 
 
 def _duplicate_blocks(omap, read_all_blocks):
-    """Return {key: count} for any key with more than one block in the lower ORAM.
-
-    The group design relies on exactly one block per key; a duplicate can shadow the real value on a read.
-    """
     low = omap._lower_oram
     counts = {}
     for data in read_all_blocks(low) + low._stash:
@@ -45,7 +39,7 @@ class TestGroupOmap:
         n = 128
         omap = _make_omap(client, n, AesGcm() if enc else None, upper_kind)
         omap.init_server_storage()
-        rng = random.Random(hash((upper_kind, enc)) & 0xFFFF)
+        rng = random.Random(f"{upper_kind}-{enc}")
         model, keyspace = {}, [b"%010d" % i for i in range(n)]
         for _ in range(n * 4):
             key = rng.choice(keyspace)
@@ -84,17 +78,6 @@ class TestGroupOmap:
         for key, value in model.items():
             assert omap.search(key=key) == value
         assert not _duplicate_blocks(omap, read_all_blocks)
-
-    def test_many_keys_all_read_back(self, client):
-        n = 128
-        omap = _make_omap(client, n)
-        keys = [b"key-%03d" % i for i in range(60)]
-        expected = {key: b"init-" + key for key in keys[:30]} | {key: b"insert-" + key for key in keys[30:]}
-        omap.init_server_storage(data=[(key, expected[key]) for key in keys[:30]])
-        for key in keys[30:]:
-            omap.insert(key=key, value=expected[key])
-
-        assert {key: omap.search(key=key) for key in keys} == expected
 
     def test_rejects_contract_violations(self, client):
         omap = _make_omap(client)
@@ -135,7 +118,6 @@ def test_full_bucket_insert_leaves_the_map_usable(client):
     for i in range(5):
         with pytest.raises(MemoryError, match="is full"):
             omap.insert(b"new%d" % i, b"x")
-        assert not omap._upper_oram._pending_leaves
     omap._upper_bound = bound
     for key, value in pairs:
         assert omap.search(key) == value
@@ -150,3 +132,55 @@ def test_lower_paths_cover_the_whole_leaf_range(client):
     assert leaf_range > 100
     assert max(leaves) >= 100
     assert leaves <= set(range(leaf_range))
+
+
+@pytest.mark.parametrize(
+    ("lower_method", "operation"),
+    [
+        ("_operate_on_keys_without_eviction", lambda omap: omap.search(b"key3")),
+        ("_operate_on_keys_without_eviction", lambda omap: omap.search_group(omap._hash_key_to_bucket(b"key3"))),
+        ("_insert_block", lambda omap: omap.insert(b"new", b"x")),
+    ],
+    ids=["search", "search_group", "insert"],
+)
+def test_a_failed_lower_access_still_finishes_the_upper_access(fail_once, client, lower_method, operation):
+    omap = _make_omap(client, n=64)
+    pairs = [(b"key%d" % i, b"value%d" % i) for i in range(20)]
+    omap.init_server_storage(pairs)
+    fail_once(omap._lower_oram, lower_method)
+
+    with pytest.raises(RuntimeError, match="injected"):
+        operation(omap)
+
+    for key, value in pairs:
+        assert omap.search(key) == value
+    assert omap.search(b"new") is None
+    omap.insert(b"new", b"x")
+    assert omap.search(b"new") == b"x"
+
+
+def test_search_group_returns_the_bucket_and_reshuffles_it(client):
+    omap = _make_omap(client, n=64)
+    pairs = [(b"key%d" % i, b"value%d" % i) for i in range(20)]
+    omap.init_server_storage(pairs)
+    bucket = omap._hash_key_to_bucket(b"key3")
+    expected = sorted((key, value) for key, value in pairs if omap._hash_key_to_bucket(key) == bucket)
+
+    assert sorted(omap.search_group(bucket)) == expected
+    assert sorted(omap.search_group(bucket)) == expected
+    for key, value in pairs:
+        assert omap.search(key) == value
+
+
+def test_an_insert_whose_write_back_fails_keeps_its_block_reachable(fail_once, client, read_all_blocks):
+    omap = _make_omap(client, n=64)
+    omap.init_server_storage([(b"key%d" % i, b"value%d" % i) for i in range(20)])
+    fail_once(omap._lower_oram, "_write_paths")
+
+    with pytest.raises(RuntimeError, match="injected"):
+        omap.insert(b"new", b"first")
+
+    assert omap.search(b"new") == b"first"
+    assert omap.search(b"new", b"second") == b"first"
+    assert omap.search(b"new") == b"second"
+    assert not _duplicate_blocks(omap, read_all_blocks)

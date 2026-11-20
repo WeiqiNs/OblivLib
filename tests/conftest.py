@@ -164,3 +164,20 @@ def assert_deferral_preserves_access(seeded_access):
 @pytest.fixture
 def encryptor():
     return AesGcm()
+
+
+@pytest.fixture
+def fail_once(monkeypatch):
+    def patch(target, name):
+        original = getattr(target, name)
+        calls = []
+
+        def failing(*args, **kwargs):
+            if not calls:
+                calls.append(1)
+                raise RuntimeError("injected")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(target, name, failing)
+
+    return patch

@@ -293,7 +293,11 @@ compose the two:
   fused access. An ORAM holds one pending access, so nothing else may run on the same instance between
   the two halves (another access could evict the pending block, or drop the pending paths' write-back).
   Starting another access while one is pending raises a `ValueError` before any I/O, and
-  `GroupOmap.insert` finishes its upper access before raising its full-bucket `MemoryError`.
+  `OramOstOmap` and `GroupOmap` finish their outer ORAM access in a `finally`, so an inner op that raises
+  (a full GroupOmap bucket's `MemoryError`, a failed tree op or lower access) still writes the slot back:
+  the current ODS root for `OramOstOmap`; for `GroupOmap`, the new seed once the lower read has remapped
+  the bucket, and on a failed insert the new key only while its block is still in the lower stash. A lower
+  eviction that raises still leaves the lower ORAM's own access pending.
   `eviction_with_update_stash` with no access pending raises a
   `ValueError` before touching the stash.
 
@@ -566,6 +570,9 @@ disk.
   evicted, fetched nodes stay in `local`, and `root` may name a stale leaf; later ops raise or lose
   nodes. A `StashOverflowError` repeats on every later op. `num_data` bounds sizing but is never
   enforced, so overfilling a map ends this way rather than with a `ContractError`.
+- **`GroupOmap` gaps:** inserting a key already present stores a second block (undefined behaviour,
+  as for the ODS maps); `GroupOmapConfig.distinguishable` is ignored; the lower `MulPathOram` builds a
+  `num_data` position map that `GroupOmap` never reads.
 - **Composed-map capacity errors** (a full GroupOmap bucket) raise a bare `MemoryError` once the upper
   access completes; no lower access is made, so the server sees the failed insert as a shorter op.
 - **Not yet built:** a round driver and handle API for schemes, retrying or resending a lost batch, and

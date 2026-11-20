@@ -115,13 +115,27 @@ class GroupOmap(BaseOmap):
         self._lower_oram._host_tree(self._lower_oram._build_tree(lower_blocks))
 
     def _read_bucket(self, seed: bytes, new_seed: bytes, keys: list[bytes]) -> dict[Any, Any]:
-        if not keys:
-            return {}
         return self._lower_oram._operate_on_keys_without_eviction(
             key_value_map=dict.fromkeys(keys, UNSET),
             key_path_map={key: self._compute_path(seed, key) for key in keys},
             new_path_map={key: self._compute_path(new_seed, key) for key in keys},
         )
+
+    def _access_bucket(
+        self, bucket_id: int, update: tuple[bytes, bytes] | None = None
+    ) -> tuple[list[bytes], dict[Any, Any]]:
+        metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
+        seed, bucket_keys = _decode_metadata(metadata)
+        try:
+            new_seed = os.urandom(self.SEED_SIZE)
+            values = self._read_bucket(seed, new_seed, bucket_keys)
+            metadata = _encode_metadata(new_seed, bucket_keys)
+            if bucket_keys:
+                updates = dict([update]) if update is not None and update[0] in values else None
+                self._lower_oram._eviction_for_mul_keys(updates=updates)
+        finally:
+            self._upper_oram.eviction_with_update_stash(key=bucket_id, value=metadata)
+        return bucket_keys, values
 
     @override
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
@@ -129,18 +143,8 @@ class GroupOmap(BaseOmap):
         if value is not None:
             require_value(self._identity, value, self._data_size)
 
-        bucket_id = self._hash_key_to_bucket(key)
-        seed, bucket_keys = _decode_metadata(self._upper_oram.operate_on_key_without_eviction(key=bucket_id))
-
-        new_seed = os.urandom(self.SEED_SIZE)
-        found_value = self._read_bucket(seed, new_seed, bucket_keys).get(key)
-
-        if bucket_keys:
-            updates = {key: value} if value is not None and found_value is not None else None
-            self._lower_oram._eviction_for_mul_keys(updates=updates)
-
-        self._upper_oram.eviction_with_update_stash(key=bucket_id, value=_encode_metadata(new_seed, bucket_keys))
-        return found_value
+        _, values = self._access_bucket(self._hash_key_to_bucket(key), None if value is None else (key, value))
+        return values.get(key)
 
     @override
     def insert(self, key: bytes, value: bytes) -> None:
@@ -148,25 +152,22 @@ class GroupOmap(BaseOmap):
         require_value(self._identity, value, self._data_size)
 
         bucket_id = self._hash_key_to_bucket(key)
-        seed, bucket_keys = _decode_metadata(self._upper_oram.operate_on_key_without_eviction(key=bucket_id))
-
-        if len(bucket_keys) >= self._upper_bound:
-            self._upper_oram.eviction_with_update_stash(key=bucket_id, value=_encode_metadata(seed, bucket_keys))
-            raise MemoryError(f"Bucket {bucket_id} is full ({len(bucket_keys)} items), cannot insert")
-
-        self._lower_oram._insert_block(Data(key=key, leaf=self._compute_path(seed, key), value=value))
-
-        bucket_keys.append(key)
-        self._upper_oram.eviction_with_update_stash(key=bucket_id, value=_encode_metadata(seed, bucket_keys))
+        metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
+        seed, bucket_keys = _decode_metadata(metadata)
+        try:
+            if len(bucket_keys) >= self._upper_bound:
+                raise MemoryError(f"Bucket {bucket_id} is full ({len(bucket_keys)} items), cannot insert")
+            block = Data(key=key, leaf=self._compute_path(seed, key), value=value)
+            try:
+                self._lower_oram._insert_block(block)
+            except BaseException:
+                if any(data is block for data in self._lower_oram._stash):
+                    metadata = _encode_metadata(seed, [*bucket_keys, key])
+                raise
+            metadata = _encode_metadata(seed, [*bucket_keys, key])
+        finally:
+            self._upper_oram.eviction_with_update_stash(key=bucket_id, value=metadata)
 
     def search_group(self, bucket_id: int) -> list[tuple[bytes, bytes]]:
-        seed, bucket_keys = _decode_metadata(self._upper_oram.operate_on_key_without_eviction(key=bucket_id))
-
-        new_seed = os.urandom(self.SEED_SIZE)
-        values = self._read_bucket(seed, new_seed, bucket_keys)
-
-        if bucket_keys:
-            self._lower_oram._eviction_for_mul_keys()
-        self._upper_oram.eviction_with_update_stash(key=bucket_id, value=_encode_metadata(new_seed, bucket_keys))
-
+        bucket_keys, values = self._access_bucket(bucket_id)
         return [(key, values[key]) for key in bucket_keys]
