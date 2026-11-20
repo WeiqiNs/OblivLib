@@ -111,9 +111,7 @@ class CounterOramConfig(OramConfig):
     """Shared structure for the counter-based recursive schemes (DA, Freecursive).
 
     ``num_ic``: children per position-map block. ``ic_length`` / ``gc_length``: bit widths of the
-    individual and group counters; ``gc_length`` is at least ``MIN_GC_LENGTH`` (64), so the group
-    counter, which grows at most once per access, cannot run out. ``prf_key``: key of the leaf-deriving
-    PRF; random when ``None``.
+    individual and group counters. ``prf_key``: key of the leaf-deriving PRF; random when ``None``.
     """
 
     num_ic: int = 64
@@ -226,8 +224,6 @@ class OmapConfig(OramConfig):
 
 @dataclass(frozen=True)
 class AccessBudget:
-    """``a * h + b`` path accesses for a tree whose height bound is ``h``."""
-
     a: int
     b: int
 
@@ -237,11 +233,6 @@ class AccessBudget:
 
 @dataclass(frozen=True, kw_only=True)
 class TreeOmapConfig(OmapConfig):
-    """``search_budget`` / ``insert_budget`` / ``delete_budget``: path accesses each op pads to, as
-    ``AccessBudget(a, b)``; ``None`` is the map's proven minimum (``MIN_BUDGETS``). An override may only
-    raise a budget: ``a`` and ``a + b`` must reach the minimum's. ``textbook`` builds the config with
-    ``TEXTBOOK_BUDGETS``."""
-
     MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
 
