@@ -32,7 +32,6 @@ class BPlusTree:
     def __init__(self, order: int, leaf_range: int):
         self._order = order
         self._mid = order // 2
-        self._min_keys = (order - 1) // 2
         self._leaf_range = leaf_range
 
     def _get_new_leaf(self) -> int:
@@ -48,13 +47,6 @@ class BPlusTree:
         return len(node.keys)
 
     @staticmethod
-    def _find_leaf(key: Any, root: BPlusTreeNode) -> BPlusTreeNode:
-        cur_node = root
-        while not cur_node.is_leaf:
-            cur_node = cur_node.values[BPlusTree._child_index(node=cur_node, key=key)]
-        return cur_node
-
-    @staticmethod
     def _find_leaf_path(key: Any, root: BPlusTreeNode) -> list[BPlusTreeNode]:
         result = [root]
         cur_node = root
@@ -62,15 +54,6 @@ class BPlusTree:
             cur_node = cur_node.values[BPlusTree._child_index(node=cur_node, key=key)]
             result.append(cur_node)
         return result
-
-    def search(self, key: Any, root: BPlusTreeNode) -> Any:
-        leaf = self._find_leaf(root=root, key=key)
-
-        for index, each_key in enumerate(leaf.keys):
-            if key == each_key:
-                return leaf.values[index]
-
-        raise KeyError(f"The key {key} is not found.")
 
     def _split_node(self, node: BPlusTreeNode) -> BPlusTreeNode:
         right_node = BPlusTreeNode()
@@ -125,118 +108,6 @@ class BPlusTree:
                 break
 
         return root
-
-    def recursive_insert(self, root: BPlusTreeNode, kv_pair: KVPair) -> BPlusTreeNode:
-        self._recursive_insert(node=root, kv_pair=kv_pair)
-        if len(root.keys) >= self._order:
-            return self._create_parent(child_node=root)
-        return root
-
-    def _recursive_insert(self, node: BPlusTreeNode, kv_pair: KVPair) -> None:
-        if node.is_leaf:
-            node.add_kv_pair(kv_pair=kv_pair)
-            return
-
-        child = node.values[self._child_index(node=node, key=kv_pair.key)]
-        self._recursive_insert(node=child, kv_pair=kv_pair)
-        if len(child.keys) >= self._order:
-            self._insert_in_parent(child_node=child, parent_node=node)
-
-    def _fix_underflow(self, parent: BPlusTreeNode, child_index: int) -> None:
-        is_left = child_index > 0
-        sibling_index = child_index - 1 if is_left else child_index + 1
-        node = parent.values[child_index]
-        sibling = parent.values[sibling_index]
-
-        if len(sibling.keys) > self._min_keys:
-            if is_left:
-                if node.is_leaf:
-                    node.keys.insert(0, sibling.keys.pop())
-                    node.values.insert(0, sibling.values.pop())
-                    parent.keys[child_index - 1] = node.keys[0]
-                else:
-                    node.keys.insert(0, parent.keys[child_index - 1])
-                    node.values.insert(0, sibling.values.pop())
-                    parent.keys[child_index - 1] = sibling.keys.pop()
-            else:
-                if node.is_leaf:
-                    node.keys.append(sibling.keys.pop(0))
-                    node.values.append(sibling.values.pop(0))
-                    parent.keys[child_index] = sibling.keys[0]
-                else:
-                    node.keys.append(parent.keys[child_index])
-                    node.values.append(sibling.values.pop(0))
-                    parent.keys[child_index] = sibling.keys.pop(0)
-            return
-
-        if is_left:
-            if not node.is_leaf:
-                sibling.keys.append(parent.keys[child_index - 1])
-            sibling.keys.extend(node.keys)
-            sibling.values.extend(node.values)
-            parent.keys.pop(child_index - 1)
-            parent.values.pop(child_index)
-        else:
-            if not node.is_leaf:
-                node.keys.append(parent.keys[child_index])
-            node.keys.extend(sibling.keys)
-            node.values.extend(sibling.values)
-            parent.keys.pop(child_index)
-            parent.values.pop(child_index + 1)
-
-    def delete(self, root: BPlusTreeNode | None, key: Any) -> BPlusTreeNode | None:
-        if root is None:
-            return None
-
-        local: list[tuple[BPlusTreeNode, int]] = []
-        current = root
-        while not current.is_leaf:
-            child_index = self._child_index(node=current, key=key)
-            local.append((current, child_index))
-            current = current.values[child_index]
-        leaf = current
-
-        key_index = next((i for i, k in enumerate(leaf.keys) if k == key), None)
-        if key_index is None:
-            return root
-        leaf.keys.pop(key_index)
-        leaf.values.pop(key_index)
-
-        if not local:
-            return None if not leaf.keys else root
-
-        node = leaf
-        for parent, child_index in reversed(local):
-            if len(node.keys) >= self._min_keys:
-                break
-            self._fix_underflow(parent=parent, child_index=child_index)
-            node = parent
-
-        if not root.keys:
-            return None if root.is_leaf else root.values[0]
-        return root
-
-    def recursive_delete(self, root: BPlusTreeNode | None, key: Any) -> BPlusTreeNode | None:
-        if root is None:
-            return None
-        self._recursive_delete(node=root, key=key)
-        if not root.keys:
-            return None if root.is_leaf else root.values[0]
-        return root
-
-    def _recursive_delete(self, node: BPlusTreeNode, key: Any) -> None:
-        if node.is_leaf:
-            key_index = next((i for i, k in enumerate(node.keys) if k == key), None)
-            if key_index is not None:
-                node.keys.pop(key_index)
-                node.values.pop(key_index)
-            return
-
-        child_index = self._child_index(node=node, key=key)
-        child = node.values[child_index]
-        self._recursive_delete(node=child, key=key)
-        if len(child.keys) < self._min_keys:
-            self._fix_underflow(parent=node, child_index=child_index)
 
     def get_data_list(self, root: BPlusTreeNode, block_id: int = 0) -> list[Data]:
         root.id = block_id

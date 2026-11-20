@@ -268,8 +268,6 @@ class TreeOmapConfig(OmapConfig):
             raise ValueError(f"paths_per_round must be {allowed}, got {self.paths_per_round}.")
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}.")
-        if self.cached and not self.MIN_CACHED_BUDGETS:
-            raise ValueError(f"{type(self).__name__} does not support cached=True yet.")
         for op in ODS_OPS:
             given, least = self.budget(op), self.minimums(cached=self.cached)[op]
             if given.a < least.a or given.a + given.b < least.a + least.b:

@@ -4,7 +4,6 @@ from functools import cached_property
 from typing import Any, Protocol, override
 
 from oblivlib.dependency import BPlusData, BPlusTree, BPlusTreeNode, Data, KVPair
-from oblivlib.dependency.balls_into_bins import max_bin_load
 from oblivlib.dependency.config import BPlusOmapConfig
 from oblivlib.dependency.layout import Bytes, Field, Record, Seq, UInt, Variant
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
@@ -50,8 +49,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         self._mid: int = config.order // 2
         self._block_id: int = 0
 
-        self._max_height: int = bplus_max_levels(self._num_data, config.order)
-
     @override
     def _new_local(self) -> LocalNodes:
         return LocalNodes()
@@ -62,13 +59,16 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         return self._order
 
     @override
-    def update_mul_tree_height(self, num_tree: int) -> None:
-        tree_size = max_bin_load(num_tree)
-        self._max_height = bplus_max_levels(tree_size, self._order)
+    def _height_bound(self, num_nodes: int) -> int:
+        return bplus_max_levels(num_nodes, self._order)
 
     @property
     def _order(self) -> int:
         return self._config.order
+
+    @property
+    def _min_keys(self) -> int:
+        return (self._order - 1) // 2
 
     @cached_property
     @override
@@ -101,21 +101,13 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         assert root.id is not None and root.leaf is not None
         return blocks, (root.id, root.leaf)
 
+    @override
     def _descend(
-        self, keys: Sequence[Any], *, hold: bool, on_leaf: Callable[[int, BPlusNode], None] | None = None
+        self, keys: Sequence[Any], *, hold: bool, on_stop: Callable[[int, BPlusNode], None] | None = None
     ) -> None:
-        if self._local:
-            raise MemoryError("The local storage was not emptied before this operation.")
-        root = self.root
-        assert root is not None
-
-        self._fetch_node(key=root[0], leaf=root[1])
-        node = self._local.require(root[0])
-        node.leaf = self._get_new_leaf()
-        self.root = (node.key, node.leaf)
-
-        at = [root[0]] * len(keys)
-        level = [root[0]]
+        root_key = self._fetch_root().key
+        at = [root_key] * len(keys)
+        level = [root_key]
         while not self._local.is_leaf_node(self._local.require(at[0])):
             requests: dict[Any, tuple[int, Any, int]] = {}
             for lane, node_key in enumerate(at):
@@ -129,13 +121,11 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
                 at[lane] = child_key
             if not hold:
                 self._return_local(level)
-            self._fetch_nodes([(child_key, leaf, parent_key) for child_key, (leaf, parent_key, _) in requests.items()])
-            for child_key, (_, _, new_leaf) in requests.items():
-                self._local.require(child_key).leaf = new_leaf
+            self._fetch_rehomed(requests)
             level = list(requests)
-        if on_leaf is not None:
+        if on_stop is not None:
             for lane, node_key in enumerate(at):
-                on_leaf(lane, self._local.require(node_key))
+                on_stop(lane, self._local.require(node_key))
 
     def _path_to(self, key: Any) -> None:
         assert self.root is not None
@@ -165,44 +155,23 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         self._local.keep(right_node)
         return right_node.key, right_node.require_leaf()
 
-    def _insert_in_parent(self, child_node: BPlusNode, parent_node: BPlusNode) -> None:
-        insert_key = child_node.value.keys[self._mid]
-        right_node = self._split_node(node=child_node)
-
-        index = bisect_right(parent_node.value.keys, insert_key)
-        parent_node.value.keys.insert(index, insert_key)
-        parent_node.value.values.insert(index + 1, right_node)
-
-    def _create_parent(self, child_node: BPlusNode) -> None:
-        insert_key = child_node.value.keys[self._mid]
-        right_node = self._split_node(node=child_node)
-
-        values = [(child_node.key, child_node.leaf), right_node]
-        parent_node = self._get_bplus_data(keys=[insert_key], values=values)
-        self._local.keep(parent_node)
-
-        assert parent_node.leaf is not None
-        self.root = (parent_node.key, parent_node.leaf)
-
-    def _perform_insertion(self):
+    def _perform_insertion(self) -> None:
         path = self._local.path
-        index = len(path) - 1
-
-        while index >= 0:
-            node_key = path[index]
-            node = self._local.require(node_key)
-
-            if len(node.value.keys) >= self._order:
-                if index > 0:
-                    parent_key = path[index - 1]
-                    parent_node = self._local.require(parent_key)
-                    self._insert_in_parent(child_node=node, parent_node=parent_node)
-                    index -= 1
-                else:
-                    self._create_parent(child_node=node)
-                    break
+        for index in range(len(path) - 1, -1, -1):
+            node = self._local.require(path[index])
+            if len(node.value.keys) < self._order:
+                return
+            insert_key = node.value.keys[self._mid]
+            right_node = self._split_node(node=node)
+            if index == 0:
+                parent = self._get_bplus_data(keys=[insert_key], values=[(node.key, node.leaf), right_node])
+                self._local.keep(parent)
+                self.root = (parent.key, parent.require_leaf())
             else:
-                break
+                parent_node = self._local.require(path[index - 1])
+                position = bisect_right(parent_node.value.keys, insert_key)
+                parent_node.value.keys.insert(position, insert_key)
+                parent_node.value.values.insert(position + 1, right_node)
 
     def _find_path_with_siblings(
         self, key: Any
@@ -211,16 +180,10 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         child_indices: list[int] = []
         siblings: dict[int, BPlusNode] = {}
         sibling_indices: dict[int, int] = {}
-        min_keys = (self._order - 1) // 2
         level = 0
 
-        root = self.root
-        assert root is not None
-
-        self._fetch_node(key=root[0], leaf=root[1])
-        node = self._local.pop(root[0])
-        node.leaf = self._get_new_leaf()
-        self.root = (node.key, node.leaf)
+        node = self._fetch_root()
+        self._local.pop(node.key)
         path_nodes[level] = node
 
         while not self._local.is_leaf_node(node):
@@ -232,7 +195,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             siblings[level + 1] = sibling_node
             sibling_indices[level + 1] = sibling_index
             level += 1
-            if len(child_node.value.keys) > min_keys:
+            if len(child_node.value.keys) > self._min_keys:
                 self._return_to_stash([*path_nodes.values(), *siblings.values()])
                 path_nodes.clear()
                 siblings.clear()
@@ -262,118 +225,89 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         siblings: dict[int, BPlusNode],
         sibling_indices: dict[int, int],
     ) -> Any:
-        min_keys = (self._order - 1) // 2
-
         leaf_level = len(child_indices)
         leaf = path_nodes[leaf_level]
+        key_index = next((index for index, each_key in enumerate(leaf.value.keys) if each_key == key), None)
+        if key_index is None:
+            return None
+        leaf.value.keys.pop(key_index)
+        deleted_value = leaf.value.values.pop(key_index)
 
-        key_index = None
-        deleted_value = None
-        for i, k in enumerate(leaf.value.keys):
-            if k == key:
-                key_index = i
-                deleted_value = leaf.value.values[i]
+        if not child_indices:
+            if not leaf.value.keys:
+                self.root = None
+                del path_nodes[leaf_level]
+            return deleted_value
+
+        node_level = leaf_level
+        node = leaf
+        for level in range(len(child_indices) - 1, -1, -1):
+            if len(node.value.keys) >= self._min_keys:
+                break
+            parent = path_nodes[level]
+            child_index = child_indices[level]
+            child_level = level + 1
+            sibling = siblings[child_level]
+            is_left_sibling = sibling_indices[child_level] < child_index
+            is_leaf = self._local.is_leaf_node(node)
+
+            if len(sibling.value.keys) > self._min_keys:
+                if is_left_sibling:
+                    if is_leaf:
+                        node.value.keys.insert(0, sibling.value.keys.pop())
+                        node.value.values.insert(0, sibling.value.values.pop())
+                        parent.value.keys[child_index - 1] = node.value.keys[0]
+                    else:
+                        node.value.keys.insert(0, parent.value.keys[child_index - 1])
+                        node.value.values.insert(0, sibling.value.values.pop())
+                        parent.value.keys[child_index - 1] = sibling.value.keys.pop()
+                else:
+                    if is_leaf:
+                        node.value.keys.append(sibling.value.keys.pop(0))
+                        node.value.values.append(sibling.value.values.pop(0))
+                        parent.value.keys[child_index] = sibling.value.keys[0]
+                    else:
+                        node.value.keys.append(parent.value.keys[child_index])
+                        node.value.values.append(sibling.value.values.pop(0))
+                        parent.value.keys[child_index] = sibling.value.keys.pop(0)
                 break
 
-        if key_index is not None:
-            leaf.value.keys.pop(key_index)
-            leaf.value.values.pop(key_index)
-
-            if not child_indices:
-                if len(leaf.value.keys) == 0:
-                    self.root = None
-                    del path_nodes[leaf_level]
+            if is_left_sibling:
+                if not is_leaf:
+                    sibling.value.keys.append(parent.value.keys[child_index - 1])
+                sibling.value.keys.extend(node.value.keys)
+                sibling.value.values.extend(node.value.values)
+                parent.value.keys.pop(child_index - 1)
+                parent.value.values.pop(child_index)
+                del path_nodes[node_level]
             else:
-                node_level = leaf_level
-                node = leaf
-                for level in range(len(child_indices) - 1, -1, -1):
-                    if len(node.value.keys) >= min_keys:
-                        break
-                    parent = path_nodes[level]
-                    child_index = child_indices[level]
-                    child_level = level + 1
-                    sibling = siblings[child_level]
-                    sib_index = sibling_indices[child_level]
-                    is_left_sibling = sib_index < child_index
-                    is_leaf = len(node.value.keys) == len(node.value.values)
+                if not is_leaf:
+                    node.value.keys.append(parent.value.keys[child_index])
+                node.value.keys.extend(sibling.value.keys)
+                node.value.values.extend(sibling.value.values)
+                parent.value.keys.pop(child_index)
+                parent.value.values.pop(child_index + 1)
+                del siblings[child_level]
 
-                    if len(sibling.value.keys) > min_keys:
-                        if is_left_sibling:
-                            if is_leaf:
-                                node.value.keys.insert(0, sibling.value.keys.pop())
-                                node.value.values.insert(0, sibling.value.values.pop())
-                                parent.value.keys[child_index - 1] = node.value.keys[0]
-                            else:
-                                node.value.keys.insert(0, parent.value.keys[child_index - 1])
-                                node.value.values.insert(0, sibling.value.values.pop())
-                                parent.value.keys[child_index - 1] = sibling.value.keys.pop()
-                        else:
-                            if is_leaf:
-                                node.value.keys.append(sibling.value.keys.pop(0))
-                                node.value.values.append(sibling.value.values.pop(0))
-                                parent.value.keys[child_index] = sibling.value.keys[0]
-                            else:
-                                node.value.keys.append(parent.value.keys[child_index])
-                                node.value.values.append(sibling.value.values.pop(0))
-                                parent.value.keys[child_index] = sibling.value.keys.pop(0)
-                        break
+            node_level = level
+            node = parent
 
-                    if is_left_sibling:
-                        if is_leaf:
-                            sibling.value.keys.extend(node.value.keys)
-                            sibling.value.values.extend(node.value.values)
-                        else:
-                            sibling.value.keys.append(parent.value.keys[child_index - 1])
-                            sibling.value.keys.extend(node.value.keys)
-                            sibling.value.values.extend(node.value.values)
-                        parent.value.keys.pop(child_index - 1)
-                        parent.value.values.pop(child_index)
-                        del path_nodes[node_level]
-                    else:
-                        if is_leaf:
-                            node.value.keys.extend(sibling.value.keys)
-                            node.value.values.extend(sibling.value.values)
-                        else:
-                            node.value.keys.append(parent.value.keys[child_index])
-                            node.value.keys.extend(sibling.value.keys)
-                            node.value.values.extend(sibling.value.values)
-                        parent.value.keys.pop(child_index)
-                        parent.value.values.pop(child_index + 1)
-                        del siblings[child_level]
-
-                    node_level = level
-                    node = parent
-
-                root_node = path_nodes.get(0)
-                if root_node is not None and len(root_node.value.keys) == 0:
-                    child_key, child_leaf = root_node.value.values[0]
-                    self.root = (child_key, child_leaf)
-                    del path_nodes[0]
-
+        root_node = path_nodes.get(0)
+        if root_node is not None and not root_node.value.keys:
+            child_key, child_leaf = root_node.value.values[0]
+            self.root = (child_key, child_leaf)
+            del path_nodes[0]
         return deleted_value
 
     @override
-    def _search_many(self, pairs: Sequence[tuple[Any, Any]]) -> list[Any]:
-        self._begin_op("search")
-        results: list[Any] = [None] * len(pairs)
-        lanes = [lane for lane, (key, _) in enumerate(pairs) if key is not None]
-        if not lanes or self.root is None:
-            self._finish_op()
-            return results
-
-        def on_leaf(index: int, leaf: BPlusNode) -> None:
-            key, value = pairs[lanes[index]]
-            for position, each_key in enumerate(leaf.value.keys):
-                if key == each_key:
-                    results[lanes[index]] = leaf.value.values[position]
-                    if value is not None:
-                        leaf.value.values[position] = value
-                    break
-
-        self._descend([pairs[lane][0] for lane in lanes], hold=False, on_leaf=on_leaf)
-        self._flush_local_to_stash()
-        self._finish_op()
-        return results
+    def _swap_value(self, node: BPlusNode, key: Any, value: Any) -> Any:
+        if key not in node.value.keys:
+            return None
+        position = node.value.keys.index(key)
+        found = node.value.values[position]
+        if value is not None:
+            node.value.values[position] = value
+        return found
 
     @override
     def _insert_many(self, pairs: Sequence[tuple[Any, Any]]) -> None:
@@ -408,8 +342,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
         if self._short_circuit_read(key=key):
             return None
-        if self._local:
-            raise MemoryError("The local storage was not emptied before this operation.")
 
         path_nodes, child_indices, siblings, sibling_indices = self._find_path_with_siblings(key=key)
         deleted_value = self._apply_delete(
