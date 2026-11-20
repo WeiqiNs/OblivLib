@@ -278,7 +278,7 @@ class AvlOmapConfig(TreeOmapConfig):
     MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
         "search": AccessBudget(1, 0),
         "insert": AccessBudget(2, 0),
-        "delete": AccessBudget(3, -2),
+        "delete": AccessBudget(2, 0),
     }
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
         "search": AccessBudget(3, 1),

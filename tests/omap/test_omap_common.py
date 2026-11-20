@@ -262,7 +262,7 @@ class TestOmapStash:
                 assert omap.delete(key) == model.pop(key, None)
             else:
                 assert omap.search(key) == model.get(key)
-            assert omap._op_owed <= omap._op_padding
+            assert omap._op_owed <= omap._budget - omap._op_fetches
         assert omap._max_stash <= omap._stash_capacity
 
 

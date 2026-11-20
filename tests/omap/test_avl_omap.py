@@ -38,6 +38,16 @@ def _rotation_chain(height):
     return (_fibonacci(height - 1, mirror=True), _rotation_chain(height - 2))
 
 
+def _balanced_spine(height):
+    if height == 1:
+        return (None, None)
+    return (_fibonacci(height - 1), _balanced_spine(height - 1))
+
+
+def _worst_insert_tree(height):
+    return (_fibonacci(height - 2), _balanced_spine(height - 1))
+
+
 def _worst_delete_tree(height):
     if height % 2:
         return _rotation_chain(height)
@@ -80,8 +90,10 @@ def test_each_avl_bound_is_reached(client, height):
     assert (omap._op_fetches, omap._op_owed) == (height, 0)
     assert _work(omap) == omap._budget
 
-    omap = _build(client, fibonacci_nodes + 1, tree, scale=2)
-    omap.insert(_key(2 * tree[deepest] + 1), b"v")
+    spine = _keys_by_path(_worst_insert_tree(height))
+    omap = _build(client, len(spine) + 1, spine, scale=2)
+    assert avl_max_height(len(spine) + 1) == height
+    omap.insert(_key(2 * spine["R" * (height - 1)] + 1), b"v")
     assert (omap._op_fetches, omap._op_owed) == (height, height)
     assert _work(omap) == omap._budget
 
@@ -91,8 +103,8 @@ def test_each_avl_bound_is_reached(client, height):
     end_of_short_path = max((path for path in worst if set(path) <= {"R"}), key=len)
     omap.delete(_key(worst[end_of_short_path]))
     fetches = avl_delete_fetches(height)
-    assert (omap._op_fetches, omap._op_owed) == (fetches, fetches - 2)
-    assert _work(omap) == 2 * fetches - 2 <= omap._budget
+    assert (omap._op_fetches, omap._op_owed) == (fetches, 2 * height - fetches)
+    assert _work(omap) == omap._budget
 
 
 def _omap(client, num_data: int) -> AVLOmap:
@@ -113,23 +125,21 @@ def test_delete_miss_moves_the_root(client):
     assert moved >= 18
 
 
-def _record_flushes(omap: AVLOmap) -> list[dict[bytes, tuple[int | None, bytes | None, int]]]:
-    flushes: list[dict[bytes, tuple[int | None, bytes | None, int]]] = []
-    flush = omap._flush_local_to_stash
+def _record_returns(omap: AVLOmap) -> dict[bytes, tuple[int | None, bytes | None, int]]:
+    returned: dict[bytes, tuple[int | None, bytes | None, int]] = {}
+    return_to_stash = omap._return_to_stash
 
-    def recording_flush():
-        flushes.append(
-            {key: (node.leaf, node.value.l_key, node.value.l_height) for key, node in omap._local.nodes.items()}
-        )
-        flush()
+    def recording_return(blocks):
+        returned.update({node.key: (node.leaf, node.value.l_key, node.value.l_height) for node in blocks})
+        return_to_stash(blocks)
 
-    omap._flush_local_to_stash = recording_flush
-    return flushes
+    omap._return_to_stash = recording_return
+    return returned
 
 
 def test_rebalance_fetches_get_fresh_leaves(client):
     omap = _omap(client, num_data=2048)
-    flushes = _record_flushes(omap)
+    returned = _record_returns(omap)
     fetched: list[tuple[bytes, int]] = []
     fetch = omap._fetch_for_rebalance
 
@@ -143,13 +153,12 @@ def test_rebalance_fetches_get_fresh_leaves(client):
     total = stale = 0
     for i in keys[:600]:
         fetched.clear()
-        flushes.clear()
+        returned.clear()
         assert omap.delete(_key(i)) == _key(i)
-        written = flushes[-1] if flushes else {}
         for key, leaf in fetched:
-            if key in written:
+            if key in returned:
                 total += 1
-                stale += written[key][0] == leaf
+                stale += returned[key][0] == leaf
     assert total > 50
     assert stale <= 2
 
@@ -159,8 +168,8 @@ def test_two_children_delete_keeps_the_height_of_an_empty_key_child(client):
     omap.init_server_storage()
     for key in [b"05", b"02", b"08", b"01", b"03", b"09", b""]:
         omap.insert(key, b"v")
-    flushes = _record_flushes(omap)
+    returned = _record_returns(omap)
     assert omap.delete(b"02") == b"v"
-    _, l_key, l_height = flushes[-1][b"01"]
+    _, l_key, l_height = returned[b"01"]
     assert l_key == b""
     assert l_height == 1

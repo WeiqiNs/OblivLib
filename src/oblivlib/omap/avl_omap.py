@@ -84,6 +84,12 @@ class LocalNodes(LocalNodesBase[AVLNode]):
                 self.parent_of[key] = new_key
 
 
+def _balance(node: AVLNode) -> int:
+    l_height = node.value.l_height if node.value.l_key is not None else 0
+    r_height = node.value.r_height if node.value.r_key is not None else 0
+    return l_height - r_height
+
+
 class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
     def __init__(self, config: AvlOmapConfig):
         super().__init__(config)
@@ -169,7 +175,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         return pivot.key, pivot.leaf, new_height
 
     def _fetch_for_rebalance(self, key: Any, leaf: int | None, parent_key: Any) -> None:
-        self._move_node_to_local(key=key, leaf=leaf, parent_key=parent_key)
+        self._fetch_node(key=key, leaf=leaf, parent_key=parent_key)
         self._local.refresh_leaf(key, self._get_new_leaf)
 
     def _balance_node(self, node_key: Any, is_delete: bool = False) -> tuple[Any, int, int]:
@@ -231,61 +237,49 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
                     parent.value.l_leaf = leaf
                     parent.value.l_height = height
 
+            if is_delete and idx > 0:
+                ancestors = set(self._local.path[:idx])
+                self._return_local([node for node in self._local.nodes if node not in ancestors])
             idx -= 1
 
         root_node = self._local.get_root()
         if root_node:
             self.root = (root_node.key, root_node.leaf)
 
-    def _descend_and_link(self, key: Any, data_block: Data) -> None:
+    def _descend(self, key: Any, keep_from: Callable[[list[AVLNode]], int] | None = None) -> AVLNode:
         root = self.root
         assert root is not None
-        self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None)
-        current_key = root[0]
+        new_leaf = self._get_new_leaf()
+        self._fetch_node(key=root[0], leaf=root[1])
+        node = self._local.require(root[0])
+        node.leaf = new_leaf
+        self.root = (node.key, new_leaf)
 
-        while True:
-            node = self._local.require(current_key)
-
-            if node.key < key:
-                if node.value.r_key is not None:
-                    self._move_node_to_local(key=node.value.r_key, leaf=node.value.r_leaf, parent_key=current_key)
-                    current_key = node.value.r_key
-                else:
-                    node.value.r_key = data_block.key
-                    break
-            else:
-                if node.value.l_key is not None:
-                    self._move_node_to_local(key=node.value.l_key, leaf=node.value.l_leaf, parent_key=current_key)
-                    current_key = node.value.l_key
-                else:
-                    node.value.l_key = data_block.key
-                    break
-
-        self._local.add(node=data_block, parent_key=current_key)
-
-    def _descend_to_key(self, key: Any) -> Any:
-        root = self.root
-        assert root is not None
-        self._move_node_to_local(key=root[0], leaf=root[1], parent_key=None)
-        current_key = root[0]
-
-        node = self._local.require(current_key)
         while node.key != key:
-            if node.key < key:
-                if node.value.r_key is not None:
-                    self._move_node_to_local(key=node.value.r_key, leaf=node.value.r_leaf, parent_key=current_key)
-                    current_key = node.value.r_key
-                else:
-                    break
+            go_right = node.key < key
+            child_key = node.value.r_key if go_right else node.value.l_key
+            if child_key is None:
+                break
+            child_leaf = node.value.r_leaf if go_right else node.value.l_leaf
+            new_leaf = self._get_new_leaf()
+            if go_right:
+                node.value.r_leaf = new_leaf
             else:
-                if node.value.l_key is not None:
-                    self._move_node_to_local(key=node.value.l_key, leaf=node.value.l_leaf, parent_key=current_key)
-                    current_key = node.value.l_key
-                else:
-                    break
-            node = self._local.require(current_key)
+                node.value.l_leaf = new_leaf
+            if keep_from is None:
+                self._return_local([node.key])
+            self._fetch_node(key=child_key, leaf=child_leaf, parent_key=node.key)
+            node = self._local.require(child_key)
+            node.leaf = new_leaf
+            if keep_from is not None:
+                path = [self._local.require(path_key) for path_key in self._local.path]
+                self._return_local(self._local.path[: keep_from(path)])
+        return node
 
-        return current_key
+    @staticmethod
+    def _keep_from_rotation_parent(path: list[AVLNode]) -> int:
+        unbalanced = [i for i, node in enumerate(path) if _balance(node) != 0]
+        return max(unbalanced[-1] - 1, 0) if unbalanced else 0
 
     def _delete_at_node(self, node_key: Any) -> tuple[Any, bool]:
         node = self._local.require(node_key)
@@ -322,14 +316,14 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
             traverse_key = node.value.l_key if use_predecessor else node.value.r_key
             traverse_leaf = node.value.l_leaf if use_predecessor else node.value.r_leaf
-            self._move_node_to_local(key=traverse_key, leaf=traverse_leaf, parent_key=node_key)
+            self._fetch_node(key=traverse_key, leaf=traverse_leaf, parent_key=node_key)
             current = self._local.require(traverse_key)
             parent_of_replacement_key = node_key
 
             next_key = current.value.r_key if use_predecessor else current.value.l_key
             while next_key is not None:
                 next_leaf = current.value.r_leaf if use_predecessor else current.value.l_leaf
-                self._move_node_to_local(key=next_key, leaf=next_leaf, parent_key=traverse_key)
+                self._fetch_node(key=next_key, leaf=next_leaf, parent_key=traverse_key)
                 parent_of_replacement_key = traverse_key
                 traverse_key = next_key
                 current = self._local.require(traverse_key)
@@ -356,59 +350,18 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
         return deleted_value, False
 
-    def _post_op_fixup(self, is_delete: bool = False) -> None:
-        self._update_height()
-        self._local.update_all_leaves(self._get_new_leaf)
-        self._balance_local(is_delete=is_delete)
-
     @override
     def _search(self, key: Any, value: Any = None) -> Any:
         self._begin_op("search")
         if self._short_circuit_read(key=key):
             return None
 
-        root = self.root
-        assert root is not None
-        self._move_node_to_local_without_eviction(key=root[0], leaf=root[1], parent_key=None)
-        current_key = root[0]
+        node = self._descend(key)
+        search_value = node.value.value if node.key == key else None
+        if value is not None and node.key == key:
+            node.value.value = value
 
-        child_leaf = self._get_new_leaf()
-        self.root = (root[0], child_leaf)
-
-        current = self._local.require(current_key)
-        while current.key != key:
-            go_right = current.key < key
-            next_key = current.value.r_key if go_right else current.value.l_key
-
-            if next_key is None:
-                break
-
-            next_leaf = current.value.r_leaf if go_right else current.value.l_leaf
-            assert next_leaf is not None
-            current.leaf = child_leaf
-            child_leaf = self._get_new_leaf()
-            if go_right:
-                current.value.r_leaf = child_leaf
-            else:
-                current.value.l_leaf = child_leaf
-
-            self._local.remove(current_key)
-            self._return_to_stash([current])
-            self._write_paths()
-
-            self._move_node_to_local_without_eviction(key=next_key, leaf=next_leaf, parent_key=current_key)
-            current_key = next_key
-            current = self._local.require(current_key)
-
-        search_value = current.value.value if current.key == key else None
-        if value is not None and current.key == key:
-            current.value.value = value
-
-        current.leaf = child_leaf
-        self._local.clear()
-        self._return_to_stash([current])
-        self._write_paths()
-
+        self._flush_local_to_stash()
         self._pad_to()
         return search_value
 
@@ -430,8 +383,14 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if self._local:
             raise MemoryError("The local storage was not emptied before this operation.")
 
-        self._descend_and_link(key=key, data_block=data_block)
-        self._post_op_fixup()
+        parent = self._descend(key, keep_from=self._keep_from_rotation_parent)
+        if parent.key < key:
+            parent.value.r_key, parent.value.r_leaf = data_block.key, data_block.leaf
+        else:
+            parent.value.l_key, parent.value.l_leaf = data_block.key, data_block.leaf
+        self._local.add(node=data_block, parent_key=parent.key)
+        self._update_height()
+        self._balance_local()
 
         self._flush_local_to_stash()
         self._pad_to()
@@ -442,23 +401,20 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if self._short_circuit_read(key=key):
             return None
 
-        current_key = self._descend_to_key(key=key)
-        node = self._local.require(current_key)
-
+        node = self._descend(key, keep_from=lambda _: 0)
         if node.key != key:
-            self._local.update_all_leaves(self._get_new_leaf)
-            root_node = self._local.require_root()
-            self.root = (root_node.key, root_node.leaf)
             self._flush_local_to_stash()
             self._pad_to()
             return None
 
-        deleted_value, done = self._delete_at_node(node_key=current_key)
+        deleted_value, done = self._delete_at_node(node_key=node.key)
         if done:
             self._pad_to()
             return deleted_value
 
-        self._post_op_fixup(is_delete=True)
+        self._update_height()
+        self._local.update_all_leaves(self._get_new_leaf)
+        self._balance_local(is_delete=True)
 
         self._flush_local_to_stash()
         self._pad_to()

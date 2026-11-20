@@ -147,7 +147,7 @@ OMAP_SPECS = [
         OmapSpec(
             AVLOmap,
             AvlOmapConfig,
-            budgets={"search": 8, "insert": 16, "delete": 22, "hidden": 22},
+            budgets={"search": 8, "insert": 16, "delete": 16, "hidden": 16},
             invariant_checker=verify_avl_invariants,
         ),
         id="avl",

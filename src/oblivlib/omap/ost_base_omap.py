@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from functools import cached_property
 from typing import Any, cast, override
 
@@ -73,6 +73,12 @@ class LocalNodesBase[NodeT]:
                 self.root_key = None
         return node
 
+    def pop(self, key: Any) -> NodeT:
+        node = self.remove(key)
+        if node is None:
+            raise KeyError(f"Node {key} is not loaded in local.")
+        return cast(NodeT, node)
+
     def clear(self) -> None:
         self.nodes.clear()
         self.parent_of.clear()
@@ -94,7 +100,6 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._op_fetches: int = 0
         self._op_debt: int = 0
         self._op_owed: int = 0
-        self._op_padding: int = 0
 
     @abstractmethod
     def _new_local(self) -> LocalT:
@@ -128,7 +133,6 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         if self._op_accesses >= self._budget:
             raise ValueError(f"{self._identity}: the op needs more than its {self._budget} path accesses.")
         self._op_accesses += 1
-        self._op_fetches += 1
         return self._open_paths([leaf])
 
     def _return_to_stash(self, blocks: Sequence[Any]) -> None:
@@ -152,10 +156,10 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._return_to_stash(self._local.to_list())
         self._local.clear()
 
-    def _move_node_to_local(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
-        self._move_node_to_local_without_eviction(key=key, leaf=leaf, parent_key=parent_key)
+    def _return_local(self, keys: Iterable[Any]) -> None:
+        self._return_to_stash([self._local.pop(key) for key in list(keys)])
 
-    def _move_node_to_local_without_eviction(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
+    def _fetch_node(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         found = False
 
         assert leaf is not None
@@ -191,14 +195,13 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         else:
             self._budget = max(config.budget(each).accesses(height) for each in ODS_OPS)
         self._op_accesses = 0
-        self._op_fetches = 0
         self._op_debt = 0
 
     def _pad_to(self) -> None:
         pending = bool(self._unwritten_leaves)
         self._stage_write_back()
         padding = self._budget - self._op_accesses
-        self._op_owed, self._op_padding = self._op_debt, padding
+        self._op_fetches, self._op_owed = self._op_accesses, self._op_debt
         if self._op_owed > padding:
             raise ValueError(
                 f"{self._identity}: {self._op_owed} blocks returned to the stash still need an eviction of "

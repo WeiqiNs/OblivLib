@@ -40,7 +40,7 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (AvlOmapConfig, _OMAP, {"key_size": 0}, "key_size"),
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"order": 2}, "order"),
         (AvlOmapConfig, _OMAP, {"insert_budget": AccessBudget(1, 9)}, r"a must be >= 2"),
-        (AvlOmapConfig, _OMAP, {"delete_budget": AccessBudget(3, -3)}, r"a \+ b >= 1"),
+        (AvlOmapConfig, _OMAP, {"delete_budget": AccessBudget(3, -2)}, r"a \+ b >= 2"),
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"delete_budget": AccessBudget(3, 9)}, r"a must be >= 4"),
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
     ],
@@ -54,7 +54,7 @@ def test_config_rejects_each_invalid_field(client, config_cls, valid, invalid, m
 
 
 def test_a_budget_override_may_raise_a_minimum_but_keeps_the_others(client):
-    config = AvlOmapConfig(**_OMAP, client=client, delete_budget=AccessBudget(4, -3), search_budget=AccessBudget(1, 5))
-    assert [config.budget(op).accesses(10) for op in ("search", "insert", "delete")] == [15, 20, 37]
+    config = AvlOmapConfig(**_OMAP, client=client, delete_budget=AccessBudget(3, -1), search_budget=AccessBudget(1, 5))
+    assert [config.budget(op).accesses(10) for op in ("search", "insert", "delete")] == [15, 20, 29]
     textbook = BPlusOmapConfig.textbook(**_OMAP, client=client, order=3)
     assert [textbook.budget(op).accesses(10) for op in ("search", "insert", "delete")] == [20, 30, 37]
