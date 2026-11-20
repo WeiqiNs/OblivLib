@@ -4,7 +4,7 @@ import pytest
 
 from oblivlib.dependency import AvlOmapConfig
 from oblivlib.omap import AVLOmap
-from oblivlib.omap.avl_omap import avl_max_height
+from oblivlib.omap.avl_omap import avl_delete_fetches, avl_max_height
 
 
 def _key(i: int) -> bytes:
@@ -16,6 +16,83 @@ def _key(i: int) -> bytes:
 )
 def test_height_bound_is_the_tallest_avl_tree_with_that_many_nodes(num_nodes, height):
     assert avl_max_height(num_nodes) == height
+
+
+@pytest.mark.parametrize(("height", "fetches"), [(1, 1), (2, 2), (3, 4), (4, 5), (5, 7), (8, 11), (11, 16)])
+def test_delete_fetch_bound_is_the_longest_path_plus_two_fetches_per_rotation(height, fetches):
+    assert avl_delete_fetches(height) == fetches
+
+
+def _fibonacci(height, *, mirror=False):
+    if height <= 0:
+        return None
+    taller, shorter = _fibonacci(height - 1, mirror=mirror), _fibonacci(height - 2, mirror=mirror)
+    return (shorter, taller) if mirror else (taller, shorter)
+
+
+def _rotation_chain(height):
+    if height <= 0:
+        return None
+    if height == 1:
+        return (None, None)
+    return (_fibonacci(height - 1, mirror=True), _rotation_chain(height - 2))
+
+
+def _worst_delete_tree(height):
+    if height % 2:
+        return _rotation_chain(height)
+    return (_fibonacci(height - 2), _rotation_chain(height - 1))
+
+
+def _keys_by_path(tree):
+    keys = {}
+
+    def walk(node, path):
+        if node is not None:
+            walk(node[0], path + "L")
+            keys[path] = len(keys)
+            walk(node[1], path + "R")
+
+    walk(tree, "")
+    return keys
+
+
+def _build(client, num_data, keys_by_path, scale=1):
+    omap = AVLOmap(AvlOmapConfig(num_data=num_data, key_size=8, data_size=8, client=client, distinguishable=True))
+    omap.init_server_storage()
+    for path in sorted(keys_by_path, key=lambda path: (len(path), path)):
+        omap.insert(_key(scale * keys_by_path[path]), b"v")
+    return omap
+
+
+def _work(omap):
+    return omap._op_fetches + omap._op_owed
+
+
+@pytest.mark.parametrize("height", [3, 5, 6, 8])
+def test_each_avl_bound_is_reached(client, height):
+    tree = _keys_by_path(_fibonacci(height))
+    deepest = max(tree, key=len)
+    fibonacci_nodes = len(tree)
+
+    omap = _build(client, fibonacci_nodes, tree)
+    omap.search(_key(tree[deepest]))
+    assert (omap._op_fetches, omap._op_owed) == (height, 0)
+    assert _work(omap) == omap._budget
+
+    omap = _build(client, fibonacci_nodes + 1, tree, scale=2)
+    omap.insert(_key(2 * tree[deepest] + 1), b"v")
+    assert (omap._op_fetches, omap._op_owed) == (height, height)
+    assert _work(omap) == omap._budget
+
+    worst = _keys_by_path(_worst_delete_tree(height))
+    omap = _build(client, len(worst), worst)
+    assert len(worst) == fibonacci_nodes
+    end_of_short_path = max((path for path in worst if set(path) <= {"R"}), key=len)
+    omap.delete(_key(worst[end_of_short_path]))
+    fetches = avl_delete_fetches(height)
+    assert (omap._op_fetches, omap._op_owed) == (fetches, fetches - 2)
+    assert _work(omap) == 2 * fetches - 2 <= omap._budget
 
 
 def _omap(client, num_data: int) -> AVLOmap:

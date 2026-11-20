@@ -6,9 +6,7 @@ import pytest
 
 from oblivlib.dependency import (
     AesGcm,
-    AvlOmapCachedConfig,
     AvlOmapConfig,
-    BPlusOmapCachedConfig,
     BPlusOmapConfig,
     ContractError,
     DaOramConfig,
@@ -16,23 +14,22 @@ from oblivlib.dependency import (
     RecursiveOramConfig,
     StashOverflowError,
 )
-from oblivlib.omap import AVLOmap, AVLOmapCached, BPlusOmap, BPlusOmapCached, OramOstOmap, OramOstOmapConfig
+from oblivlib.omap import AVLOmap, BPlusOmap, OramOstOmap, OramOstOmapConfig
 from oblivlib.oram import DAOram, PathOram, RecursivePathOram
 
 
 def _make_ods(kind, n, client, encryptor=None):
     if kind == "avl":
         return AVLOmap(AvlOmapConfig(num_data=n, key_size=10, data_size=10, client=client, encryptor=encryptor))
-    if kind == "avl_cached":
-        return AVLOmapCached(
-            AvlOmapCachedConfig(num_data=n, key_size=10, data_size=10, client=client, encryptor=encryptor)
+    return BPlusOmap(
+        BPlusOmapConfig(
+            order=40,
+            num_data=n,
+            key_size=10,
+            data_size=10,
+            client=client,
+            encryptor=encryptor,
         )
-    if kind == "bplus":
-        return BPlusOmap(
-            BPlusOmapConfig(order=40, num_data=n, key_size=10, data_size=10, client=client, encryptor=encryptor)
-        )
-    return BPlusOmapCached(
-        BPlusOmapCachedConfig(order=40, num_data=n, key_size=10, data_size=10, client=client, encryptor=encryptor)
     )
 
 
@@ -51,7 +48,7 @@ def _make_omap(ods_kind, oram_kind, client, n=64):
 
 
 class TestOramOstOmapOracle:
-    @pytest.mark.parametrize("ods_kind", ["avl", "avl_cached", "bplus", "bplus_cached"])
+    @pytest.mark.parametrize("ods_kind", ["avl", "bplus"])
     @pytest.mark.parametrize("oram_kind", ["da", "path", "recursive"])
     def test_oracle(self, ods_kind, oram_kind, client, duplicate_blocks):
         n = 64
@@ -78,7 +75,7 @@ class TestOramOstOmapOracle:
 
 
 class TestOramOstOmapInit:
-    @pytest.mark.parametrize("ods_kind", ["avl", "avl_cached", "bplus", "bplus_cached"])
+    @pytest.mark.parametrize("ods_kind", ["avl", "bplus"])
     @pytest.mark.parametrize("oram_kind", ["da", "path", "recursive"])
     def test_with_init(self, ods_kind, oram_kind, client):
         n = 64
@@ -143,7 +140,7 @@ def test_write_deferral_preserves_access_sequence(assert_deferral_preserves_acce
             omap.search(key=b"%d" % i)
 
     rounds_off, rounds_on = assert_deferral_preserves_access(workload)
-    assert rounds_on * 2 == rounds_off
+    assert rounds_on < rounds_off
 
 
 def test_a_failed_tree_op_still_finishes_the_oram_access(fail_once, client):

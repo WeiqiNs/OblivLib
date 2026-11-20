@@ -2,25 +2,62 @@ import random
 
 import pytest
 
-from oblivlib.dependency import AesGcm, BPlusOmapCachedConfig, BPlusOmapConfig
-from oblivlib.omap import BPlusOmap, BPlusOmapCached
+from oblivlib.dependency import AesGcm, BPlusOmapConfig
+from oblivlib.omap import BPlusOmap
 from oblivlib.omap.bplus_omap import bplus_max_levels
 
 
 @pytest.mark.parametrize(
     ("order", "num_keys", "levels"),
-    [(3, 1, 1), (3, 3, 2), (3, 4, 3), (3, 7, 3), (3, 8, 4), (4, 8, 4), (5, 11, 2), (5, 12, 3), (5, 36, 4)],
+    [(3, 2, 1), (3, 3, 2), (3, 4, 2), (3, 5, 3), (3, 9, 4), (3, 17, 5), (4, 6, 2), (4, 7, 3), (5, 12, 2), (5, 13, 3)],
 )
-def test_level_bound_is_the_tallest_tree_the_fill_invariants_allow(order, num_keys, levels):
+def test_level_bound_is_the_fewest_keys_a_root_split_needs(order, num_keys, levels):
     assert bplus_max_levels(num_keys, order) == levels
 
 
+@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
+def test_sorted_inserts_reach_every_bplus_bound(client, order, num_data, witness):
+    omap = BPlusOmap(
+        BPlusOmapConfig(
+            order=order,
+            num_data=num_data,
+            key_size=4,
+            data_size=4,
+            client=client,
+            distinguishable=True,
+        )
+    )
+    height = bplus_max_levels(num_data, order)
+    assert bplus_max_levels(num_data + 1, order) == height + 1
+    omap.init_server_storage()
+    for i in range(witness):
+        omap.insert(b"%04d" % i, b"v")
+    assert (omap._op_fetches, omap._op_owed) == (height, 2 * height - 2)
+    assert omap._op_fetches + omap._op_owed == omap._budget == 3 * height - 2
+    omap.search(b"0000")
+    assert omap._op_fetches == omap._budget == height
+    omap.delete(b"9999")
+    assert (omap._op_fetches, omap._op_owed) == (2 * height - 1, 2 * height - 2)
+    assert omap._op_fetches + omap._op_owed == omap._budget == 4 * height - 3
+
+
+def test_an_even_order_tree_reaches_its_level_bound_through_deletes(client):
+    omap = BPlusOmap(BPlusOmapConfig(order=4, num_data=7, key_size=4, data_size=4, client=client))
+    omap.init_server_storage()
+    history = [("i", 3), ("i", 34), ("i", 37), ("i", 32), ("i", 5), ("i", 4), ("i", 35), ("d", 32)]
+    history += [("i", 36), ("d", 3), ("d", 36), ("d", 34), ("i", 25), ("i", 14), ("i", 8)]
+    for op, key in history:
+        if op == "i":
+            omap.insert(b"%04d" % key, b"v")
+        else:
+            omap.delete(b"%04d" % key)
+    omap.search(b"0004")
+    assert omap._op_fetches == bplus_max_levels(7, 4) == 3
+
+
 @pytest.mark.parametrize("order", [3, 4])
-@pytest.mark.parametrize(
-    ("cls", "config_cls"), [(BPlusOmap, BPlusOmapConfig), (BPlusOmapCached, BPlusOmapCachedConfig)]
-)
-def test_small_order_deletes_keep_the_tree_valid(client, check_bplus_invariants, order, cls, config_cls):
-    omap = cls(config_cls(num_data=64, key_size=4, data_size=4, client=client, order=order, stash_scale=20))
+def test_small_order_deletes_keep_the_tree_valid(client, check_bplus_invariants, order):
+    omap = BPlusOmap(BPlusOmapConfig(num_data=64, key_size=4, data_size=4, client=client, order=order))
     omap.init_server_storage()
     rng = random.Random(order)
     model: dict[bytes, bytes] = {}
@@ -34,27 +71,6 @@ def test_small_order_deletes_keep_the_tree_valid(client, check_bplus_invariants,
         if step % 20 == 0:
             check_bplus_invariants(omap, model)
     check_bplus_invariants(omap, model)
-
-
-@pytest.mark.parametrize("num_data", [64, 128])
-@pytest.mark.parametrize("order", [3, 5])
-@pytest.mark.parametrize("reverse", [False, True], ids=["sorted", "reverse"])
-@pytest.mark.parametrize(
-    ("cls", "config_cls"), [(BPlusOmap, BPlusOmapConfig), (BPlusOmapCached, BPlusOmapCachedConfig)]
-)
-def test_ordered_inserts_and_deletes_keep_the_stash_bounded(client, cls, config_cls, reverse, order, num_data):
-    omap = cls(config_cls(order=order, num_data=num_data, key_size=8, data_size=4, client=client))
-    omap.init_server_storage()
-    keys = [b"%08d" % i for i in range(num_data)]
-    keys = keys[::-1] if reverse else keys
-    for key in keys:
-        omap.insert(key, key[-4:])
-    for key in keys[::3]:
-        assert omap.search(key) == key[-4:]
-    for key in keys:
-        assert omap.delete(key) == key[-4:]
-    assert omap.root is None
-    assert omap._max_stash <= omap._stash_capacity
 
 
 @pytest.mark.parametrize("first_block_id", [0, 2**40])

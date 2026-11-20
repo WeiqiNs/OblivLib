@@ -1,8 +1,8 @@
 import pytest
 
-from oblivlib.dependency import AvlOmapCachedConfig, AvlOmapConfig, BPlusOmapCachedConfig, BPlusOmapConfig
+from oblivlib.dependency import AvlOmapConfig, BPlusOmapConfig
 from oblivlib.dependency.protocol import ReadPath
-from oblivlib.omap import AVLOmap, AVLOmapCached, BPlusOmap, BPlusOmapCached
+from oblivlib.omap import AVLOmap, BPlusOmap
 
 
 class ReadCounter:
@@ -115,6 +115,10 @@ def verify_bplus_invariants(omap, model):
     )
 
 
+def _textbook(config_cls):
+    return {f"{op}_budget": budget for op, budget in config_cls.TEXTBOOK_BUDGETS.items()}
+
+
 class OmapSpec:
     def __init__(
         self,
@@ -143,25 +147,26 @@ OMAP_SPECS = [
         OmapSpec(
             AVLOmap,
             AvlOmapConfig,
-            budgets={"search": 8, "insert": 8, "delete": 22},
+            budgets={"search": 8, "insert": 16, "delete": 22, "hidden": 22},
             invariant_checker=verify_avl_invariants,
         ),
         id="avl",
     ),
     pytest.param(
         OmapSpec(
-            AVLOmapCached,
-            AvlOmapCachedConfig,
-            budgets={"search": 8, "insert": 8, "delete": 22},
+            AVLOmap,
+            AvlOmapConfig,
+            budgets={"search": 25, "insert": 24, "delete": 26, "hidden": 26},
             invariant_checker=verify_avl_invariants,
+            extra=_textbook(AvlOmapConfig),
         ),
-        id="avl_cached",
+        id="avl_textbook",
     ),
     pytest.param(
         OmapSpec(
             BPlusOmap,
             BPlusOmapConfig,
-            budgets={"search": 4, "insert": 4, "delete": 7},
+            budgets={"search": 4, "insert": 10, "delete": 13, "hidden": 13},
             invariant_checker=verify_bplus_invariants,
             extra={"order": 5},
         ),
@@ -169,13 +174,13 @@ OMAP_SPECS = [
     ),
     pytest.param(
         OmapSpec(
-            BPlusOmapCached,
-            BPlusOmapCachedConfig,
-            budgets={"search": 4, "insert": 4, "delete": 4},
+            BPlusOmap,
+            BPlusOmapConfig,
+            budgets={"search": 8, "insert": 12, "delete": 13, "hidden": 13},
             invariant_checker=verify_bplus_invariants,
-            extra={"order": 5},
+            extra={"order": 5, **_textbook(BPlusOmapConfig)},
         ),
-        id="bplus_cached",
+        id="bplus_textbook",
     ),
 ]
 

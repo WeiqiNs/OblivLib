@@ -1,6 +1,9 @@
+from typing import Any
+
 import pytest
 
 from oblivlib.dependency import (
+    AccessBudget,
     AvlOmapConfig,
     BPlusOmapConfig,
     DaOramConfig,
@@ -10,8 +13,8 @@ from oblivlib.dependency import (
     RecursiveOramConfig,
 )
 
-_ORAM = {"num_data": 16, "data_size": 10}
-_OMAP = {**_ORAM, "key_size": 4}
+_ORAM: dict[str, Any] = {"num_data": 16, "data_size": 10}
+_OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
 
 
 @pytest.mark.parametrize(
@@ -36,6 +39,9 @@ _OMAP = {**_ORAM, "key_size": 4}
         (FreecursiveOramConfig, _ORAM, {"reset_method": "soft"}, "reset_method"),
         (AvlOmapConfig, _OMAP, {"key_size": 0}, "key_size"),
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"order": 2}, "order"),
+        (AvlOmapConfig, _OMAP, {"insert_budget": AccessBudget(1, 9)}, r"a must be >= 2"),
+        (AvlOmapConfig, _OMAP, {"delete_budget": AccessBudget(3, -3)}, r"a \+ b >= 1"),
+        (BPlusOmapConfig, {**_OMAP, "order": 3}, {"delete_budget": AccessBudget(3, 9)}, r"a must be >= 4"),
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
     ],
 )
@@ -45,3 +51,10 @@ def test_config_rejects_each_invalid_field(client, config_cls, valid, invalid, m
     config_cls(**valid)
     with pytest.raises(ValueError, match=message):
         config_cls(**{**valid, **invalid})
+
+
+def test_a_budget_override_may_raise_a_minimum_but_keeps_the_others(client):
+    config = AvlOmapConfig(**_OMAP, client=client, delete_budget=AccessBudget(4, -3), search_budget=AccessBudget(1, 5))
+    assert [config.budget(op).accesses(10) for op in ("search", "insert", "delete")] == [15, 20, 37]
+    textbook = BPlusOmapConfig.textbook(**_OMAP, client=client, order=3)
+    assert [textbook.budget(op).accesses(10) for op in ("search", "insert", "delete")] == [20, 30, 37]

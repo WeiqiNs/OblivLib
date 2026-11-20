@@ -9,9 +9,8 @@ from .avl_tree import AVLData, AVLTree, AVLTreeNode
 from .bplus_tree import BPlusData, BPlusTree, BPlusTreeNode
 from .client import Backend, Client, ExecuteResult, LocalBackend, Metrics, TransportBackend
 from .config import (
-    AvlOmapCachedConfig,
+    AccessBudget,
     AvlOmapConfig,
-    BPlusOmapCachedConfig,
     BPlusOmapConfig,
     CounterOramConfig,
     DaOramConfig,
@@ -24,6 +23,7 @@ from .config import (
     PathOramConfig,
     RecursiveOramConfig,
     StaticOramConfig,
+    TreeOmapConfig,
 )
 from .crypto import (
     AesGcm,
@@ -69,6 +69,7 @@ from .types import (
 )
 
 __all__ = [
+    "AccessBudget",
     "AVLData",
     "AVLTree",
     "AVLTreeNode",
@@ -126,9 +127,7 @@ __all__ = [
     "PathData",
     "PathRows",
     "PosMap",
-    "AvlOmapCachedConfig",
     "AvlOmapConfig",
-    "BPlusOmapCachedConfig",
     "BPlusOmapConfig",
     "CounterOramConfig",
     "DaOramConfig",
@@ -141,4 +140,5 @@ __all__ = [
     "PathOramConfig",
     "RecursiveOramConfig",
     "StaticOramConfig",
+    "TreeOmapConfig",
 ]

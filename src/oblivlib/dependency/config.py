@@ -12,13 +12,15 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, get_args, override
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_args, override
 
 if TYPE_CHECKING:
     from oblivlib.dependency.client import Client
     from oblivlib.dependency.crypto import Encryptor
 
 ResetMethod = Literal["prob", "hard"]
+OdsOp = Literal["search", "insert", "delete"]
+ODS_OPS: tuple[OdsOp, ...] = ("search", "insert", "delete")
 
 MIN_GC_LENGTH = 64
 
@@ -222,19 +224,85 @@ class OmapConfig(OramConfig):
             raise ValueError(f"key_size must be >= 1, got {self.key_size}.")
 
 
+@dataclass(frozen=True)
+class AccessBudget:
+    """``a * h + b`` path accesses for a tree whose height bound is ``h``."""
+
+    a: int
+    b: int
+
+    def accesses(self, height: int) -> int:
+        return self.a * height + self.b
+
+
 @dataclass(frozen=True, kw_only=True)
-class AvlOmapConfig(OmapConfig):
+class TreeOmapConfig(OmapConfig):
+    """``search_budget`` / ``insert_budget`` / ``delete_budget``: path accesses each op pads to, as
+    ``AccessBudget(a, b)``; ``None`` is the map's proven minimum (``MIN_BUDGETS``). An override may only
+    raise a budget: ``a`` and ``a + b`` must reach the minimum's. ``textbook`` builds the config with
+    ``TEXTBOOK_BUDGETS``."""
+
+    MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
+    TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
+
+    search_budget: AccessBudget | None = None
+    insert_budget: AccessBudget | None = None
+    delete_budget: AccessBudget | None = None
+
+    def budget(self, op: OdsOp) -> AccessBudget:
+        return getattr(self, f"{op}_budget") or self.MIN_BUDGETS[op]
+
+    @classmethod
+    def textbook(cls, **kwargs: Any) -> Self:
+        budgets = cls.TEXTBOOK_BUDGETS
+        return cls(
+            **kwargs,
+            search_budget=budgets["search"],
+            insert_budget=budgets["insert"],
+            delete_budget=budgets["delete"],
+        )
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        for op in ODS_OPS:
+            given, least = self.budget(op), self.MIN_BUDGETS[op]
+            if given.a < least.a or given.a + given.b < least.a + least.b:
+                raise ValueError(
+                    f"{op}_budget {given} is below the proven minimum {least}: a must be >= {least.a} and "
+                    + f"a + b >= {least.a + least.b}."
+                )
+
+
+@dataclass(frozen=True, kw_only=True)
+class AvlOmapConfig(TreeOmapConfig):
+    MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(1, 0),
+        "insert": AccessBudget(2, 0),
+        "delete": AccessBudget(3, -2),
+    }
+    TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(3, 1),
+        "insert": AccessBudget(3, 0),
+        "delete": AccessBudget(3, 2),
+    }
+
     name: str = field(default_factory=unique_name("avl"))
 
 
 @dataclass(frozen=True, kw_only=True)
-class AvlOmapCachedConfig(AvlOmapConfig):
-    name: str = field(default_factory=unique_name("avl_opt"))
-
-
-@dataclass(frozen=True, kw_only=True)
-class BPlusOmapConfig(OmapConfig):
+class BPlusOmapConfig(TreeOmapConfig):
     """``order``: maximum children per internal node (at least 3)."""
+
+    MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(1, 0),
+        "insert": AccessBudget(3, -2),
+        "delete": AccessBudget(4, -3),
+    }
+    TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(2, 0),
+        "insert": AccessBudget(3, 0),
+        "delete": AccessBudget(4, -3),
+    }
 
     name: str = field(default_factory=unique_name("bplus"))
     order: int
@@ -243,11 +311,6 @@ class BPlusOmapConfig(OmapConfig):
         super().__post_init__()
         if self.order < 3:
             raise ValueError(f"order must be >= 3, got {self.order}.")
-
-
-@dataclass(frozen=True, kw_only=True)
-class BPlusOmapCachedConfig(BPlusOmapConfig):
-    name: str = field(default_factory=unique_name("bplus_opt"))
 
 
 @dataclass(frozen=True, kw_only=True)

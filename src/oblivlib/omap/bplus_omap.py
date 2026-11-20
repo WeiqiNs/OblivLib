@@ -13,10 +13,11 @@ _BLOCK_ID_BITS = 64
 
 def bplus_max_levels(num_keys: int, order: int) -> int:
     fanout = -(-order // 2)
-    levels, fewest_keys = 1, 2 * (fanout - 1)
-    while fewest_keys <= num_keys:
+    levels, split_keys, subtree_keys = 1, order, fanout - 1
+    while split_keys <= num_keys:
         levels += 1
-        fewest_keys *= fanout
+        split_keys += (order - 1) * subtree_keys
+        subtree_keys *= fanout
     return levels
 
 
@@ -126,7 +127,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
             child_key, child_leaf = node.value.values[child_index]
             node.value.values[child_index] = (child_key, new_leaf)
-            self._stash.append(self._local.remove(node.key))
+            self._return_to_stash([self._local.pop(node.key)])
             self._write_paths()
             self._move_node_to_local_without_eviction(key=child_key, leaf=child_leaf, parent_key=None)
 
@@ -172,7 +173,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             node.value.keys = node.value.keys[: self._mid]
             node.value.values = node.value.values[: self._mid + 1]
 
-        self._stash.append(right_node)
+        self._return_to_stash([right_node])
         return right_node.key, right_node.require_leaf()
 
     def _insert_in_parent(self, child_node: BPlusNode, parent_node: BPlusNode) -> None:
@@ -189,7 +190,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
         values = [(child_node.key, child_node.leaf), right_node]
         parent_node = self._get_bplus_data(keys=[insert_key], values=values)
-        self._stash.append(parent_node)
+        self._return_to_stash([parent_node])
 
         assert parent_node.leaf is not None
         self.root = (parent_node.key, parent_node.leaf)
@@ -374,15 +375,9 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         return deleted_value
 
     @override
-    def _op_round_bounds(self) -> dict[str, int]:
-        h = self._max_height
-        return {"search": h, "insert": h, "delete": 2 * h - 1}
-
-    @override
     def _search(self, key: Any, value: Any = None) -> Any:
-        self._op_rounds = 0
-        budget = self._op_budget("search")
-        if self._short_circuit_read(key=key, num_round=budget):
+        self._begin_op("search")
+        if self._short_circuit_read(key=key):
             return None
 
         self._find_leaf(key=key)
@@ -399,44 +394,42 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
         self._flush_local_to_stash()
         self._write_paths()
-        self._pad_to(budget)
+        self._pad_to()
 
         return search_value
 
     @override
     def _insert(self, key: Any, value: Any = None) -> None:
-        self._op_rounds = 0
-        budget = self._op_budget("insert")
+        self._begin_op("insert")
         if key is None:
-            self._pad_to(budget)
+            self._pad_to()
             return
 
         if self.root is None:
             data_block = self._get_bplus_data(keys=[key], values=[value])
-            self._stash.append(data_block)
+            self._return_to_stash([data_block])
             assert data_block.leaf is not None
             self.root = (data_block.key, data_block.leaf)
-            self._pad_to(budget)
+            self._pad_to()
             return
 
         self._find_leaf_to_local(key=key)
         self._insert_into_loaded_leaf(key=key, value=value)
 
         self._flush_local_to_stash()
-        self._pad_to(budget)
+        self._pad_to()
 
     @override
     def _delete(self, key: Any) -> Any:
-        self._op_rounds = 0
-        budget = self._op_budget("delete")
+        self._begin_op("delete")
 
-        if self._short_circuit_read(key=key, num_round=budget):
+        if self._short_circuit_read(key=key):
             return None
         if self._local:
             raise MemoryError("The local storage was not emptied before this operation.")
-        return self._delete_with_siblings(key, budget)
+        return self._delete_with_siblings(key)
 
-    def _delete_with_siblings(self, key: Any, budget: int) -> Any:
+    def _delete_with_siblings(self, key: Any) -> Any:
         path_nodes, child_indices, siblings, sibling_indices = self._find_path_with_siblings(key=key)
         deleted_value = self._apply_delete(
             key=key,
@@ -446,10 +439,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             sibling_indices=sibling_indices,
         )
 
-        for node in path_nodes.values():
-            self._stash.append(node)
-        for sib in siblings.values():
-            self._stash.append(sib)
-        self._pad_to(budget)
+        self._return_to_stash([*path_nodes.values(), *siblings.values()])
+        self._pad_to()
 
         return deleted_value

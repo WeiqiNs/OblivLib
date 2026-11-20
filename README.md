@@ -32,11 +32,12 @@ Related publications by the maintainers:
 - [ORAM + search-tree framework](https://dl.acm.org/doi/10.14778/3712221.3712235), composing
   any ORAM with any tree OMAP: [`oram_ost_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/oram_ost_omap.py)
 - Group-by-hash OMAP: [`group_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/group_omap.py)
-- Cache-optimized AVL and B+ variants (serve recently used nodes from the client; per-op oblivious like the others):
-  [`avl_omap_cache.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/avl_omap_cache.py), [`bplus_omap_cache.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/bplus_omap_cache.py)
 
 Tree OMAPs hide the operation type by default (`distinguishable=False`); set it to `True` to let each
-operation pad only to its own bound.
+operation pad only to its own bound. Every search, insert, and delete pads to a fixed number of path
+accesses, `a * h + b` for a tree of height bound `h`. The defaults are the proven minimums; raise one
+with `AvlOmapConfig(..., insert_budget=AccessBudget(3, 0))`, or use `AvlOmapConfig.textbook(...)` /
+`BPlusOmapConfig.textbook(...)` for the budgets of the original held-node implementation.
 
 ## Installation
 

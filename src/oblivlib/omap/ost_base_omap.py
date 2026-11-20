@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from functools import cached_property
 from typing import Any, cast, override
 
-from oblivlib.dependency import Data, KVPair
-from oblivlib.dependency.config import OmapConfig
+from oblivlib.dependency import Data, KVPair, PathData
+from oblivlib.dependency.config import ODS_OPS, OdsOp, TreeOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.layout import Optional, Record
 from oblivlib.dependency.tree_builder import TreeImage
@@ -79,13 +80,21 @@ class LocalNodesBase[NodeT]:
         self.path.clear()
 
 
-class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStorageBase[OmapConfigT], BaseOmap, ABC):
+class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
+    TreeStorageBase[OmapConfigT], BaseOmap, ABC
+):
     def __init__(self, config: OmapConfigT):
         super().__init__(config)
 
         self._root: ROOT | None = None
         self._local: LocalT = self._new_local()
-        self._op_rounds: int = 0
+        self._max_height: int = 1
+        self._budget: int = 0
+        self._op_accesses: int = 0
+        self._op_fetches: int = 0
+        self._op_debt: int = 0
+        self._op_owed: int = 0
+        self._op_padding: int = 0
 
     @abstractmethod
     def _new_local(self) -> LocalT:
@@ -115,17 +124,23 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
     def root_layout(self) -> Optional[ROOT]:
         return Optional(Record((self._key_field, self._leaf_field)))
 
-    @property
-    def _round_width(self) -> int:
-        return 1
+    def _fetch_path(self, leaf: int) -> PathData:
+        if self._op_accesses >= self._budget:
+            raise ValueError(f"{self._identity}: the op needs more than its {self._budget} path accesses.")
+        self._op_accesses += 1
+        self._op_fetches += 1
+        return self._open_paths([leaf])
 
-    def _round_leaves(self, leaves: list[int]) -> list[int]:
-        chosen = list(dict.fromkeys(leaves))
-        while len(chosen) < min(self._round_width, self._leaf_range):
-            leaf = self._get_new_leaf()
-            if leaf not in chosen:
-                chosen.append(leaf)
-        return chosen
+    def _return_to_stash(self, blocks: Sequence[Any]) -> None:
+        self._stash += blocks
+        self._op_debt += len(blocks)
+        self._check_stash()
+
+    @override
+    def _stage_write_back(self) -> None:
+        if self._unwritten_leaves:
+            super()._stage_write_back()
+            self._op_debt = max(0, self._op_debt - 1)
 
     def _find_in_stash(self, key: Any) -> int:
         for i, node in enumerate(self._stash):
@@ -134,22 +149,17 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         return -1
 
     def _flush_local_to_stash(self) -> None:
-        self._stash += self._local.to_list()
+        self._return_to_stash(self._local.to_list())
         self._local.clear()
 
     def _move_node_to_local(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
-        assert leaf is not None
         self._move_node_to_local_without_eviction(key=key, leaf=leaf, parent_key=parent_key)
-
-        self._write_paths()
 
     def _move_node_to_local_without_eviction(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         found = False
 
-        self._op_rounds += 1
-
         assert leaf is not None
-        for bucket in self._open_paths(self._round_leaves([leaf])).values():
+        for bucket in self._fetch_path(leaf).values():
             for data in bucket:
                 if data.key == key:
                     self._local.add(node=data, parent_key=parent_key)
@@ -168,32 +178,38 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
 
             raise KeyError(f"The search key {key} is not found.")
 
-    def _perform_dummy_operation(self, num_round: int) -> None:
-        if num_round < 0:
-            raise ValueError("The height is not enough, as the number of dummy operation required is negative.")
-
-        for _ in range(num_round):
-            self._read_paths(self._round_leaves([]))
-            self._write_paths()
-
-    def _short_circuit_read(self, key: Any, num_round: int) -> bool:
+    def _short_circuit_read(self, key: Any) -> bool:
         if key is None or self.root is None:
-            self._perform_dummy_operation(num_round=num_round)
+            self._pad_to()
             return True
         return False
 
-    @abstractmethod
-    def _op_round_bounds(self) -> dict[str, int]:
-        raise NotImplementedError
-
-    def _op_budget(self, op: str) -> int:
-        bounds = self._op_round_bounds()
+    def _begin_op(self, op: OdsOp) -> None:
+        config, height = self._config, self._max_height
         if self._distinguishable:
-            return bounds[op]
-        return max(bounds.values())
+            self._budget = config.budget(op).accesses(height)
+        else:
+            self._budget = max(config.budget(each).accesses(height) for each in ODS_OPS)
+        self._op_accesses = 0
+        self._op_fetches = 0
+        self._op_debt = 0
 
-    def _pad_to(self, budget: int) -> None:
-        self._perform_dummy_operation(num_round=budget - self._op_rounds)
+    def _pad_to(self) -> None:
+        pending = bool(self._unwritten_leaves)
+        self._stage_write_back()
+        padding = self._budget - self._op_accesses
+        self._op_owed, self._op_padding = self._op_debt, padding
+        if self._op_owed > padding:
+            raise ValueError(
+                f"{self._identity}: {self._op_owed} blocks returned to the stash still need an eviction of "
+                + f"their own, but only {padding} of the {self._budget} path accesses remain."
+            )
+        for _ in range(padding):
+            self._op_accesses += 1
+            self._read_paths([self._get_new_leaf()])
+            self._write_paths()
+        if pending and not padding:
+            self._client.execute()
 
     @abstractmethod
     def _build_ods_blocks(self, data: list[KVPair]) -> tuple[list[Data], ROOT]:

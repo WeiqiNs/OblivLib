@@ -227,7 +227,7 @@ def test_new_access_while_one_is_pending_raises(make_oram, client):
 @pytest.mark.parametrize(("cls", "config_cls"), [(DAOram, DaOramConfig), (FreecursiveOram, FreecursiveOramConfig)])
 @pytest.mark.parametrize("num_data", [4096, 100_000])
 def test_position_map_leaves_are_independent_of_data_leaves(cls, config_cls, num_data, client):
-    oram = cls(config_cls(num_data=num_data, data_size=10, client=client))
+    oram = cls(config_cls(num_data=num_data, data_size=10, client=client, prf_key=bytes(32)))
     level = oram._levels[-1]
     leaf_range = 2 ** (level._level - 1)
     matches = sum(

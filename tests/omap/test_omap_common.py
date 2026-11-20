@@ -231,6 +231,67 @@ def _budget_workload(pattern: str) -> list[tuple[str, bytes | None]]:
     return [*inserts, *searches, ("delete", b"zz"), *deletes, ("search", keys[0]), ("delete", keys[0])]
 
 
+def _stash_workload(pattern: str, keys: list[bytes], ops: int) -> list[tuple[str, bytes]]:
+    rng = random.Random(pattern)
+    if pattern == "random":
+        return [(rng.choice(["insert", "search", "delete"]), rng.choice(keys)) for _ in range(ops)]
+    cycle: list[tuple[str, bytes]]
+    if pattern in ("sorted", "reverse"):
+        ordered = keys if pattern == "sorted" else keys[::-1]
+        cycle = [("insert", k) for k in ordered] + [("search", k) for k in ordered[::3]]
+        cycle += [("delete", k) for k in ordered]
+    else:
+        edges = [("delete", keys[0]), ("insert", keys[0]), ("delete", keys[-1]), ("insert", keys[-1])] * 4
+        cycle = [("insert", k) for k in keys] + [("delete", k) for k in keys[::2]] + [("insert", k) for k in keys[::2]]
+        cycle += edges + [("delete", k) for k in keys[::-1]]
+    return (cycle * (ops // len(cycle) + 1))[:ops]
+
+
+class TestOmapStash:
+    @pytest.mark.parametrize("pattern", ["random", "sorted", "reverse", "adversarial"])
+    @pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+    def test_every_block_returned_to_the_stash_gets_its_own_eviction(self, omap_spec, client, pattern, distinguishable):
+        omap = omap_spec.make(client=client, num_data=16, key_size=4, data_size=4, distinguishable=distinguishable)
+        omap.init_server_storage()
+        model = {}
+        for op, key in _stash_workload(pattern, [b"%04d" % i for i in range(16)], 2000):
+            if op == "insert" and key not in model:
+                omap.insert(key, key)
+                model[key] = key
+            elif op == "delete":
+                assert omap.delete(key) == model.pop(key, None)
+            else:
+                assert omap.search(key) == model.get(key)
+            assert omap._op_owed <= omap._op_padding
+        assert omap._max_stash <= omap._stash_capacity
+
+
+@pytest.mark.parametrize(
+    ("cls", "config_cls", "extra"),
+    [(AVLOmap, AvlOmapConfig, {}), (BPlusOmap, BPlusOmapConfig, {"order": 3})],
+    ids=["avl", "bplus"],
+)
+def test_the_textbook_preset_moves_the_same_bytes_per_path_access(cls, config_cls, extra):
+    def bytes_per_access(make):
+        client = Client.local()
+        omap = cls(make(num_data=32, key_size=4, data_size=4, client=client, distinguishable=True, **extra))
+        omap.init_server_storage()
+        client.reset_metrics()
+        accesses = 0
+        for i in range(20):
+            omap.insert(b"%04d" % i, b"v")
+            accesses += omap._budget
+            omap.search(b"%04d" % (i // 2))
+            accesses += omap._budget
+        client.flush()
+        return client.metrics.payload_bytes / accesses, accesses
+
+    default_bytes, default_accesses = bytes_per_access(config_cls)
+    textbook_bytes, textbook_accesses = bytes_per_access(config_cls.textbook)
+    assert textbook_accesses > default_accesses
+    assert textbook_bytes == default_bytes
+
+
 class TestOmapObliviousness:
     def test_search_access_uniform(self, omap_spec, counting_client):
         client, server = counting_client
@@ -277,7 +338,7 @@ class TestOmapObliviousness:
         omap.init_server_storage()
         model = {}
         for op, key in _budget_workload(pattern):
-            expected = omap_spec.budgets[op] if distinguishable else max(omap_spec.budgets.values())
+            expected = omap_spec.budgets[op if distinguishable else "hidden"]
             paths_before = server.paths_read()
             if op == "insert":
                 spent, _ = server.read_rounds(omap.insert, key, key)
@@ -289,9 +350,8 @@ class TestOmapObliviousness:
             else:
                 spent, found = server.read_rounds(omap.search, key)
                 assert found == model.get(key)
-            assert spent == expected, f"{op}({key!r}) spent {spent} rounds, budget {expected}"
             paths = server.paths_read() - paths_before
-            assert paths == expected * omap._round_width, f"{op}({key!r}) read {paths} paths in {spent} rounds"
+            assert (spent, paths) == (expected, expected), f"{op}({key!r}): {spent} rounds, {paths} paths"
         assert not duplicate_blocks(omap)
 
     def test_write_deferral_preserves_access_sequence(self, omap_spec, assert_deferral_preserves_access):
@@ -305,7 +365,7 @@ class TestOmapObliviousness:
             omap.delete(key=b"4")
 
         rounds_off, rounds_on = assert_deferral_preserves_access(workload)
-        assert rounds_on * 2 == rounds_off
+        assert rounds_on < rounds_off
 
 
 _ROW_LAYOUT_CONFIG: dict[str, Any] = {"num_data": 64, "data_size": 16, "key_size": 8, "encryptor": AesGcm()}

@@ -11,6 +11,10 @@ from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
 _HEIGHT_BITS = 8
 
 
+def avl_delete_fetches(height: int) -> int:
+    return max(path + 2 * min(height - path, path - 1) for path in range(1, height + 1))
+
+
 def avl_max_height(num_nodes: int) -> int:
     height, fewest, previous = 1, 1, 0
     while True:
@@ -358,15 +362,9 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         self._balance_local(is_delete=is_delete)
 
     @override
-    def _op_round_bounds(self) -> dict[str, int]:
-        h = self._max_height
-        return {"search": h, "insert": h, "delete": 3 * h - 2}
-
-    @override
     def _search(self, key: Any, value: Any = None) -> Any:
-        self._op_rounds = 0
-        budget = self._op_budget("search")
-        if self._short_circuit_read(key=key, num_round=budget):
+        self._begin_op("search")
+        if self._short_circuit_read(key=key):
             return None
 
         root = self.root
@@ -395,7 +393,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
                 current.value.l_leaf = child_leaf
 
             self._local.remove(current_key)
-            self._stash.append(current)
+            self._return_to_stash([current])
             self._write_paths()
 
             self._move_node_to_local_without_eviction(key=next_key, leaf=next_leaf, parent_key=current_key)
@@ -408,26 +406,25 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
         current.leaf = child_leaf
         self._local.clear()
-        self._stash.append(current)
+        self._return_to_stash([current])
         self._write_paths()
 
-        self._pad_to(budget)
+        self._pad_to()
         return search_value
 
     @override
     def _insert(self, key: Any, value: Any = None) -> None:
-        self._op_rounds = 0
-        budget = self._op_budget("insert")
+        self._begin_op("insert")
         if key is None:
-            self._pad_to(budget)
+            self._pad_to()
             return
         data_block = self._get_avl_data(key=key, value=value)
 
         if self.root is None:
-            self._stash.append(data_block)
+            self._return_to_stash([data_block])
             assert data_block.leaf is not None
             self.root = (data_block.key, data_block.leaf)
-            self._pad_to(budget)
+            self._pad_to()
             return
 
         if self._local:
@@ -437,13 +434,12 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         self._post_op_fixup()
 
         self._flush_local_to_stash()
-        self._pad_to(budget)
+        self._pad_to()
 
     @override
     def _delete(self, key: Any) -> Any:
-        self._op_rounds = 0
-        budget = self._op_budget("delete")
-        if self._short_circuit_read(key=key, num_round=budget):
+        self._begin_op("delete")
+        if self._short_circuit_read(key=key):
             return None
 
         current_key = self._descend_to_key(key=key)
@@ -454,16 +450,16 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
             root_node = self._local.require_root()
             self.root = (root_node.key, root_node.leaf)
             self._flush_local_to_stash()
-            self._pad_to(budget)
+            self._pad_to()
             return None
 
         deleted_value, done = self._delete_at_node(node_key=current_key)
         if done:
-            self._pad_to(budget)
+            self._pad_to()
             return deleted_value
 
         self._post_op_fixup(is_delete=True)
 
         self._flush_local_to_stash()
-        self._pad_to(budget)
+        self._pad_to()
         return deleted_value
