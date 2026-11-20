@@ -43,7 +43,7 @@ two paths by default (`paths_per_round=2`), which lowers insert and delete from 
 `AvlOmapConfig(..., cached=True)` (also on B+, where it brings every operation to `h` rounds) lets an operation leave a bounded number of evictions (at most about `k * h`) to the next ones, which
 lowers insert to `h + 1` and delete to `floor((3h - 1) / 2)` rounds; call `drain()` before shutdown or
 handover to settle them in a fixed number of rounds.
-`AvlOmapConfig(..., batch_size=k)` adds `search_batch` / `insert_batch` for up to `k` keys in the
+`batch_size=k` (AVL and B+) adds `search_batch` / `insert_batch` for up to `k` keys in the
 same number of rounds as one key, each round reading up to `k` paths.
 
 ## Installation

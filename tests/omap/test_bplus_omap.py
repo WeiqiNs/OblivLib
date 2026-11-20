@@ -155,6 +155,85 @@ def test_every_bplus_op_reads_two_paths_in_each_of_the_same_rounds(recorded_clie
         assert widths == [2] * omap._budget
 
 
+def _batch_bplus(client, *, batch_size, num_data=64, **config):
+    omap = BPlusOmap(
+        BPlusOmapConfig(
+            order=3, num_data=num_data, key_size=4, data_size=4, client=client, batch_size=batch_size, **config
+        )
+    )
+    omap.init_server_storage()
+    return omap
+
+
+def test_every_op_of_a_batched_bplus_reads_the_same_widths(recorded_client):
+    client, recorder = recorded_client()
+    omap = _batch_bplus(client, batch_size=4)
+    omap.insert_batch([(b"%04d" % i, b"v") for i in range(0, 8, 2)])
+    for i in range(8, 40, 2):
+        omap.insert(b"%04d" % i, b"v")
+    height = omap._max_height
+    expected = [2 * min(3**r, 4) for r in range(height)] + [8] * (omap._budget - height)
+    ops = [
+        lambda: omap.search_batch([(b"0002", None), (b"0009", None), (b"0020", b"w")]),
+        lambda: omap.search(b"0004"),
+        lambda: omap.insert_batch([(b"0001", b"v"), (b"0013", b"v"), (b"0031", b"v")]),
+        lambda: omap.insert(b"0041", b"v"),
+        lambda: omap.delete(b"0006"),
+        lambda: omap.delete(b"9999"),
+    ]
+    for op in ops:
+        before = len(recorder.batches)
+        op()
+        widths = [len(read.leaves) for batch in recorder.batches[before:] for read in batch.reads]
+        assert widths == expected
+    assert omap.search(b"0020") == b"w"
+
+
+@pytest.mark.parametrize("paths_per_round", [1, 2])
+@pytest.mark.parametrize("cached", [False, True], ids=["uncached", "cached"])
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+def test_batched_bplus_matches_the_model(
+    client, check_bplus_invariants, duplicate_blocks, paths_per_round, cached, distinguishable
+):
+    omap = _batch_bplus(
+        client, batch_size=5, paths_per_round=paths_per_round, cached=cached, distinguishable=distinguishable
+    )
+    rng = random.Random(paths_per_round + 2 * cached)
+    model: dict[bytes, bytes] = {}
+    for step in range(300):
+        roll = rng.random()
+        free = [i for i in range(64) if b"%04d" % i not in model]
+        if roll < 0.4 and free:
+            pairs = [(b"%04d" % i, b"%d" % step) for i in rng.sample(free, min(len(free), rng.randint(1, 5)))]
+            omap.insert_batch(pairs)
+            model.update(pairs)
+        elif roll < 0.8:
+            pairs = [(b"%04d" % rng.randrange(64), rng.choice([None, b"u%d" % step])) for _ in range(rng.randint(1, 5))]
+            expected = []
+            for key, value in pairs:
+                expected.append(model.get(key))
+                if value is not None and key in model:
+                    model[key] = value
+            assert omap.search_batch(pairs) == expected
+        else:
+            key = b"%04d" % rng.randrange(64)
+            assert omap.delete(key) == model.pop(key, None)
+        assert omap._owed <= omap._carry_limit
+    omap.drain()
+    assert omap._owed == 0
+    check_bplus_invariants(omap, model)
+    assert not duplicate_blocks(omap)
+
+
+def test_a_batch_of_sorted_keys_splits_one_leaf_repeatedly(client, check_bplus_invariants):
+    omap = _batch_bplus(client, batch_size=8)
+    pairs = [(b"%04d" % i, b"v") for i in range(8)]
+    omap.insert_batch(pairs)
+    check_bplus_invariants(omap, dict(pairs))
+    omap.insert_batch([(b"%04d" % i, b"w") for i in range(8, 16)])
+    check_bplus_invariants(omap, {**dict(pairs), **{b"%04d" % i: b"w" for i in range(8, 16)}})
+
+
 def test_an_even_order_tree_reaches_its_level_bound_through_deletes(client):
     omap = BPlusOmap(BPlusOmapConfig(order=4, num_data=7, key_size=4, data_size=4, client=client))
     omap.init_server_storage()

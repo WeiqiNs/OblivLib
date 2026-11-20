@@ -337,16 +337,19 @@ class BPlusOmapConfig(TreeOmapConfig):
 
     @override
     def minimums(self, *, cached: bool) -> dict[OdsOp, AccessBudget]:
-        if cached:
-            return self.MIN_CACHED_TWO_PATH_BUDGETS if self.paths_per_round == 2 else self.MIN_CACHED_BUDGETS
-        return self.MIN_TWO_PATH_BUDGETS if self.paths_per_round == 2 else self.MIN_BUDGETS
+        two_path = self.paths_per_round == 2
+        uncached = self.MIN_TWO_PATH_BUDGETS if two_path else self.MIN_BUDGETS
+        if not cached:
+            return uncached
+        cached_budgets = self.MIN_CACHED_TWO_PATH_BUDGETS if two_path else self.MIN_CACHED_BUDGETS
+        if self.batch_size == 1 or (two_path and self.batch_size <= self.order + 1):
+            return cached_budgets
+        return {**uncached, "delete": cached_budgets["delete"]}
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.order < 3:
             raise ValueError(f"order must be >= 3, got {self.order}.")
-        if self.batch_size != 1:
-            raise ValueError(f"BPlusOmapConfig does not support batch_size > 1 yet, got {self.batch_size}.")
 
 
 @dataclass(frozen=True, kw_only=True)

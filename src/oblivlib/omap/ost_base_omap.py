@@ -5,7 +5,7 @@ from typing import Any, cast, override
 
 from oblivlib.dependency import Data, KVPair
 from oblivlib.dependency.config import ODS_OPS, OdsOp, TreeOmapConfig
-from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
+from oblivlib.dependency.contract import require_batch, require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.layout import Optional, Record
 from oblivlib.dependency.tree_builder import TreeImage
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
@@ -34,6 +34,9 @@ class LocalNodesBase[NodeT]:
         self.path.append(node.key)
         if parent_key is None:
             self.root_key = node.key
+
+    def keep(self, node: Data) -> None:
+        self.nodes[node.key] = node
 
     def get(self, key: Any) -> NodeT | None:
         return cast(NodeT | None, self.nodes.get(key))
@@ -105,6 +108,11 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
 
     @abstractmethod
     def _new_local(self) -> LocalT:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def _fanout(self) -> int:
         raise NotImplementedError
 
     @property
@@ -182,7 +190,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._return_to_stash([self._local.pop(key) for key in list(keys)])
 
     def _round_width(self, index: int) -> int:
-        keys = min(1 << index, self._batch_size) if index < self._max_height else self._batch_size
+        keys = min(self._fanout**index, self._batch_size) if index < self._max_height else self._batch_size
         return min(self._config.paths_per_round * keys, self._leaf_range)
 
     def _round_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
@@ -299,18 +307,36 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._require_pair(key, value, value_required=True)
         self._insert(key, value)
 
+    def search_batch(self, pairs: Sequence[tuple[bytes, bytes | None]]) -> list[bytes | None]:
+        require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=False)
+        for key, value in pairs:
+            self._require_pair(key, value, value_required=False)
+        return self._search_many(pairs)
+
+    def insert_batch(self, pairs: Sequence[tuple[bytes, bytes]]) -> None:
+        require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=True)
+        for key, value in pairs:
+            self._require_pair(key, value, value_required=True)
+        self._insert_many(pairs)
+
+    def _search(self, key: Any, value: Any) -> Any:
+        return self._search_many([(key, value)])[0]
+
+    def _insert(self, key: Any, value: Any) -> None:
+        self._insert_many([(key, value)])
+
+    @abstractmethod
+    def _search_many(self, pairs: Sequence[tuple[Any, Any]]) -> list[Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _insert_many(self, pairs: Sequence[tuple[Any, Any]]) -> None:
+        raise NotImplementedError
+
     def delete(self, key: bytes | None) -> bytes | None:
         if key is not None:
             require_omap_key(self._identity, key, self._key_size)
         return self._delete(key)
-
-    @abstractmethod
-    def _search(self, key: Any, value: Any) -> Any:
-        raise NotImplementedError
-
-    @abstractmethod
-    def _insert(self, key: Any, value: Any) -> None:
-        raise NotImplementedError
 
     @abstractmethod
     def _delete(self, key: Any) -> Any:

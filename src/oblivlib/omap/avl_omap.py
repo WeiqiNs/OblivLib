@@ -4,7 +4,6 @@ from typing import Any, Protocol, cast, override
 
 from oblivlib.dependency import AVLData, AVLTree, AVLTreeNode, Data, KVPair
 from oblivlib.dependency.config import AvlOmapConfig
-from oblivlib.dependency.contract import require_batch
 from oblivlib.dependency.layout import Bytes, Field, Optional, Record, UInt
 from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
@@ -105,6 +104,11 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
     @override
     def _new_local(self) -> LocalNodes:
         return LocalNodes()
+
+    @property
+    @override
+    def _fanout(self) -> int:
+        return 2
 
     @override
     def update_mul_tree_height(self, num_tree: int) -> None:
@@ -362,26 +366,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
         return deleted_value, False
 
-    def search_batch(self, pairs: Sequence[tuple[bytes, bytes | None]]) -> list[bytes | None]:
-        require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=False)
-        for key, value in pairs:
-            self._require_pair(key, value, value_required=False)
-        return self._search_many(pairs)
-
-    def insert_batch(self, pairs: Sequence[tuple[bytes, bytes]]) -> None:
-        require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=True)
-        for key, value in pairs:
-            self._require_pair(key, value, value_required=True)
-        self._insert_many(pairs)
-
     @override
-    def _search(self, key: Any, value: Any = None) -> Any:
-        return self._search_many([(key, value)])[0]
-
-    @override
-    def _insert(self, key: Any, value: Any = None) -> None:
-        self._insert_many([(key, value)])
-
     def _search_many(self, pairs: Sequence[tuple[Any, Any]]) -> list[Any]:
         self._begin_op("search")
         results: list[Any] = [None] * len(pairs)
@@ -402,6 +387,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         self._finish_op()
         return results
 
+    @override
     def _insert_many(self, pairs: Sequence[tuple[Any, Any]]) -> None:
         self._begin_op("insert")
         blocks = [
