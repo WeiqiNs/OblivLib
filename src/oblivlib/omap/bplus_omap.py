@@ -1,7 +1,7 @@
 from bisect import bisect_right
 from collections.abc import Callable
 from functools import cached_property
-from typing import Any, Protocol, cast, override
+from typing import Any, Protocol, override
 
 from oblivlib.dependency import BPlusData, BPlusTree, BPlusTreeNode, Data, KVPair
 from oblivlib.dependency.config import BPlusOmapConfig
@@ -41,12 +41,6 @@ class LocalNodes(LocalNodesBase[BPlusNode]):
     @staticmethod
     def is_leaf_node_value(value: BPlusValue) -> bool:
         return len(value.keys) == len(value.values)
-
-    def require_leaf(self) -> BPlusNode:
-        node = cast(BPlusNode | None, self.nodes.get(self.path[-1])) if self.path else None
-        if node is None:
-            raise KeyError("The local has no leaf node.")
-        return node
 
 
 class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
@@ -163,15 +157,6 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
         assert parent_node.leaf is not None
         self.root = (parent_node.key, parent_node.leaf)
-
-    def _insert_into_loaded_leaf(self, key: Any, value: Any) -> None:
-        leaf = self._local.require_leaf()
-
-        index = bisect_right(leaf.value.keys, key)
-        leaf.value.keys.insert(index, key)
-        leaf.value.values.insert(index, value)
-
-        self._perform_insertion()
 
     def _perform_insertion(self):
         path = self._local.path
@@ -373,8 +358,11 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             self._pad_to()
             return
 
-        self._descend(key, hold=lambda node: len(node.value.keys) >= self._order - 1)
-        self._insert_into_loaded_leaf(key=key, value=value)
+        leaf = self._descend(key, hold=lambda node: len(node.value.keys) >= self._order - 1)
+        index = bisect_right(leaf.value.keys, key)
+        leaf.value.keys.insert(index, key)
+        leaf.value.values.insert(index, value)
+        self._perform_insertion()
 
         self._flush_local_to_stash()
         self._pad_to()

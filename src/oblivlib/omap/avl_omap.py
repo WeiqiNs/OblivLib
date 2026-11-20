@@ -116,9 +116,6 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         child_key, child_leaf, height = Optional(self._key_field), Optional(self._leaf_field), UInt(_HEIGHT_BITS)
         return Record((Bytes(self._data_size), child_key, child_leaf, height, child_key, child_leaf, height), AVLData)
 
-    def _get_avl_data(self, key: Any, value: Any) -> Data:
-        return Data(key=key, leaf=self._get_new_leaf(), value=AVLData(value=value))
-
     @override
     def _build_ods_blocks(self, data: list[KVPair]) -> tuple[list[Data], ROOT]:
         root: AVLTreeNode | None = None
@@ -371,7 +368,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if key is None:
             self._pad_to()
             return
-        data_block = self._get_avl_data(key=key, value=value)
+        data_block = Data(key=key, leaf=self._get_new_leaf(), value=AVLData(value=value))
 
         if self.root is None:
             self._return_to_stash([data_block])

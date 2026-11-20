@@ -3,7 +3,7 @@ from collections.abc import Iterable, Sequence
 from functools import cached_property
 from typing import Any, cast, override
 
-from oblivlib.dependency import Data, KVPair, PathData
+from oblivlib.dependency import Data, KVPair
 from oblivlib.dependency.config import ODS_OPS, OdsOp, TreeOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.layout import Optional, Record
@@ -129,12 +129,6 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
     def root_layout(self) -> Optional[ROOT]:
         return Optional(Record((self._key_field, self._leaf_field)))
 
-    def _fetch_path(self, leaf: int) -> PathData:
-        if self._op_accesses >= self._budget:
-            raise ValueError(f"{self._identity}: the op needs more than its {self._budget} path accesses.")
-        self._op_accesses += 1
-        return self._open_paths([leaf])
-
     def _return_to_stash(self, blocks: Sequence[Any]) -> None:
         self._stash += blocks
         self._op_debt += len(blocks)
@@ -146,12 +140,6 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
             super()._stage_write_back()
             self._op_debt = max(0, self._op_debt - 1)
 
-    def _find_in_stash(self, key: Any) -> int:
-        for i, node in enumerate(self._stash):
-            if node.key == key:
-                return i
-        return -1
-
     def _flush_local_to_stash(self) -> None:
         self._return_to_stash(self._local.to_list())
         self._local.clear()
@@ -160,27 +148,14 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._return_to_stash([self._local.pop(key) for key in list(keys)])
 
     def _fetch_node(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
-        found = False
-
+        if self._op_accesses >= self._budget:
+            raise ValueError(f"{self._identity}: the op needs more than its {self._budget} path accesses.")
         assert leaf is not None
-        for bucket in self._fetch_path(leaf).values():
-            for data in bucket:
-                if data.key == key:
-                    self._local.add(node=data, parent_key=parent_key)
-                    found = True
-                else:
-                    self._stash.append(data)
-
-        self._check_stash()
-
-        if not found:
-            stash_idx = self._find_in_stash(key)
-            if stash_idx >= 0:
-                self._local.add(node=self._stash[stash_idx], parent_key=parent_key)
-                del self._stash[stash_idx]
-                return
-
-            raise KeyError(f"The search key {key} is not found.")
+        self._op_accesses += 1
+        self._read_paths([leaf])
+        node = self._require_in_stash(key)
+        self._stash.remove(node)
+        self._local.add(node=node, parent_key=parent_key)
 
     def _short_circuit_read(self, key: Any) -> bool:
         if key is None or self.root is None:
