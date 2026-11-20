@@ -57,12 +57,6 @@ class LocalNodesBase[NodeT]:
     def get_root(self) -> NodeT | None:
         return cast(NodeT | None, self.nodes.get(self.root_key)) if self.root_key is not None else None
 
-    def require_root(self) -> NodeT:
-        node = self.nodes.get(self.root_key) if self.root_key is not None else None
-        if node is None:
-            raise KeyError("The local has no root node.")
-        return cast(NodeT, node)
-
     def to_list(self) -> list[Data]:
         return list(self.nodes.values())
 

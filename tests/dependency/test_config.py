@@ -76,6 +76,15 @@ def test_a_budget_override_may_raise_a_minimum_but_keeps_the_others(client):
         [10, 10, 10],
         [10, 19, 19],
     ]
+    batched = [
+        BPlusOmapConfig(**_OMAP, client=client, order=3, cached=True, paths_per_round=p, batch_size=k)
+        for p, k in ((2, 4), (2, 5), (1, 2))
+    ]
+    assert [[c.budget(op).rounds(10) for op in ("search", "insert", "delete")] for c in batched] == [
+        [10, 10, 10],
+        [10, 19, 10],
+        [10, 28, 19],
+    ]
     cached = AvlOmapConfig(**_OMAP, client=client, cached=True)
     assert [cached.budget(op).rounds(height) for op in ("search", "insert", "delete") for height in (7, 8)] == [
         7,

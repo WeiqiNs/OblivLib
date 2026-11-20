@@ -189,14 +189,15 @@ def test_every_op_of_a_batched_bplus_reads_the_same_widths(recorded_client):
     assert omap.search(b"0020") == b"w"
 
 
+@pytest.mark.parametrize("batch_size", [4, 5], ids=["k_order_plus_one", "k_order_plus_two"])
 @pytest.mark.parametrize("paths_per_round", [1, 2])
 @pytest.mark.parametrize("cached", [False, True], ids=["uncached", "cached"])
 @pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
 def test_batched_bplus_matches_the_model(
-    client, check_bplus_invariants, duplicate_blocks, paths_per_round, cached, distinguishable
+    client, check_bplus_invariants, duplicate_blocks, batch_size, paths_per_round, cached, distinguishable
 ):
     omap = _batch_bplus(
-        client, batch_size=5, paths_per_round=paths_per_round, cached=cached, distinguishable=distinguishable
+        client, batch_size=batch_size, paths_per_round=paths_per_round, cached=cached, distinguishable=distinguishable
     )
     rng = random.Random(paths_per_round + 2 * cached)
     model: dict[bytes, bytes] = {}
@@ -204,11 +205,14 @@ def test_batched_bplus_matches_the_model(
         roll = rng.random()
         free = [i for i in range(64) if b"%04d" % i not in model]
         if roll < 0.4 and free:
-            pairs = [(b"%04d" % i, b"%d" % step) for i in rng.sample(free, min(len(free), rng.randint(1, 5)))]
+            pairs = [(b"%04d" % i, b"%d" % step) for i in rng.sample(free, min(len(free), rng.randint(1, batch_size)))]
             omap.insert_batch(pairs)
             model.update(pairs)
         elif roll < 0.8:
-            pairs = [(b"%04d" % rng.randrange(64), rng.choice([None, b"u%d" % step])) for _ in range(rng.randint(1, 5))]
+            pairs = [
+                (b"%04d" % rng.randrange(64), rng.choice([None, b"u%d" % step]))
+                for _ in range(rng.randint(1, batch_size))
+            ]
             expected = []
             for key, value in pairs:
                 expected.append(model.get(key))

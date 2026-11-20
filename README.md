@@ -40,7 +40,7 @@ with `AvlOmapConfig(..., insert_budget=AccessBudget(3, 0))`, or use `AvlOmapConf
 `BPlusOmapConfig.textbook(...)` for the budgets of the original held-node implementation. A B+ round reads
 two paths by default (`paths_per_round=2`), which lowers insert and delete from `3h - 2` and `4h - 3` to
 `2h - 1` rounds; `paths_per_round=1` keeps one path per round.
-`AvlOmapConfig(..., cached=True)` (also on B+, where it brings every operation to `h` rounds) lets an operation leave a bounded number of evictions (at most about `k * h`) to the next ones, which
+`cached=True` (AVL and B+; at two paths per round it brings single-key B+ operations to `h` rounds) lets an operation leave a bounded number of evictions (at most about `k * h`) to the next ones, which
 lowers insert to `h + 1` and delete to `floor((3h - 1) / 2)` rounds; call `drain()` before shutdown or
 handover to settle them in a fixed number of rounds.
 `batch_size=k` (AVL and B+) adds `search_batch` / `insert_batch` for up to `k` keys in the
