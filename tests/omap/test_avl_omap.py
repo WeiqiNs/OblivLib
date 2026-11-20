@@ -230,6 +230,14 @@ def test_batched_ops_match_the_model(client, cached, distinguishable, duplicate_
     assert not duplicate_blocks(omap)
 
 
+def test_a_wide_batch_holds_its_extra_paths_without_overflowing_the_stash(client):
+    omap = AVLOmap(AvlOmapConfig(num_data=1024, key_size=8, data_size=8, client=client, batch_size=128))
+    omap.init_server_storage([(_key(i), b"v") for i in range(1024)])
+    for start in range(0, 1024, 128):
+        assert omap.search_batch([(_key(i), None) for i in range(start, start + 128)]) == [b"v"] * 128
+    assert omap._max_stash > omap._stash_capacity
+
+
 def test_a_batch_rejects_repeated_insert_keys_and_more_keys_than_its_size(client):
     omap = _batch_omap(client, batch_size=2)
     with pytest.raises(ContractError, match="twice"):

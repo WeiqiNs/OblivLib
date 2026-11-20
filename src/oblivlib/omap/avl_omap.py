@@ -407,8 +407,11 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
     def _insert_many(self, pairs: Sequence[tuple[Any, Any]]) -> None:
         self._begin_op("insert")
-        blocks = [Data(key=key, leaf=self._get_new_leaf(), value=AVLData(value=value)) for key, value in pairs]
-        blocks = [block for block in blocks if block.key is not None]
+        blocks = [
+            Data(key=key, leaf=self._get_new_leaf(), value=AVLData(value=value))
+            for key, value in pairs
+            if key is not None
+        ]
         if not blocks:
             self._finish_op()
             return
