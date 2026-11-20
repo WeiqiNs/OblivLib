@@ -15,9 +15,8 @@ def test_level_bound_is_the_fewest_keys_a_root_split_needs(order, num_keys, leve
     assert bplus_max_levels(num_keys, order) == levels
 
 
-@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
-def test_sorted_inserts_reach_every_bplus_bound(client, order, num_data, witness):
-    omap = BPlusOmap(
+def _witness_omap(client, order, num_data, paths_per_round):
+    return BPlusOmap(
         BPlusOmapConfig(
             order=order,
             num_data=num_data,
@@ -25,8 +24,14 @@ def test_sorted_inserts_reach_every_bplus_bound(client, order, num_data, witness
             data_size=4,
             client=client,
             distinguishable=True,
+            paths_per_round=paths_per_round,
         )
     )
+
+
+@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
+def test_sorted_inserts_reach_every_single_path_bplus_bound(client, order, num_data, witness):
+    omap = _witness_omap(client, order, num_data, paths_per_round=1)
     height = bplus_max_levels(num_data, order)
     assert bplus_max_levels(num_data + 1, order) == height + 1
     omap.init_server_storage()
@@ -39,6 +44,41 @@ def test_sorted_inserts_reach_every_bplus_bound(client, order, num_data, witness
     omap.delete(b"9999")
     assert (omap._op_fetches, omap._op_owed) == (2 * height - 1, 2 * height - 2)
     assert omap._op_fetches + omap._op_owed == omap._budget == 4 * height - 3
+
+
+@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
+def test_sorted_inserts_reach_every_two_path_bplus_bound(client, order, num_data, witness):
+    omap = _witness_omap(client, order, num_data, paths_per_round=2)
+    height = bplus_max_levels(num_data, order)
+    omap.init_server_storage()
+    for i in range(witness):
+        omap.insert(b"%04d" % i, b"v")
+    assert (omap._op_fetches, omap._op_owed) == (height, 2 * height - 3)
+    assert omap._op_fetches + -(-omap._op_owed // 2) == omap._budget == 2 * height - 1
+    omap.search(b"0000")
+    assert omap._op_fetches == omap._budget == height
+    omap.delete(b"9999")
+    assert (omap._op_fetches, omap._op_owed) == (height, 2 * height - 3)
+    assert omap._op_fetches + -(-omap._op_owed // 2) == omap._budget == 2 * height - 1
+
+
+def test_every_bplus_op_reads_two_paths_in_each_of_the_same_rounds(recorded_client):
+    client, recorder = recorded_client()
+    omap = BPlusOmap(BPlusOmapConfig(order=3, num_data=32, key_size=4, data_size=4, client=client))
+    omap.init_server_storage()
+    for i in range(20):
+        omap.insert(b"%04d" % i, b"v")
+    for op in (
+        lambda: omap.search(b"0003"),
+        lambda: omap.search(b"9999"),
+        lambda: omap.insert(b"0050", b"v"),
+        lambda: omap.delete(b"0004"),
+        lambda: omap.delete(b"9999"),
+    ):
+        before = len(recorder.batches)
+        op()
+        widths = [len(read.leaves) for batch in recorder.batches[before:] for read in batch.reads]
+        assert widths == [2] * omap._budget
 
 
 def test_an_even_order_tree_reaches_its_level_bound_through_deletes(client):

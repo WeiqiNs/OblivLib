@@ -262,7 +262,7 @@ class TestOmapStash:
                 assert omap.delete(key) == model.pop(key, None)
             else:
                 assert omap.search(key) == model.get(key)
-            assert omap._op_owed <= omap._budget - omap._op_fetches
+            assert omap._op_owed <= (omap._budget - omap._op_fetches) * omap._config.paths_per_round
         assert omap._max_stash <= omap._stash_capacity
 
 
@@ -271,25 +271,26 @@ class TestOmapStash:
     [(AVLOmap, AvlOmapConfig, {}), (BPlusOmap, BPlusOmapConfig, {"order": 3})],
     ids=["avl", "bplus"],
 )
-def test_the_textbook_preset_moves_the_same_bytes_per_path_access(cls, config_cls, extra):
-    def bytes_per_access(make):
+def test_the_textbook_preset_takes_more_rounds_at_the_same_bytes_per_path(cls, config_cls, extra):
+    def bytes_per_path(make):
         client = Client.local()
         omap = cls(make(num_data=32, key_size=4, data_size=4, client=client, distinguishable=True, **extra))
         omap.init_server_storage()
         client.reset_metrics()
-        accesses = 0
+        rounds = 0
         for i in range(20):
             omap.insert(b"%04d" % i, b"v")
-            accesses += omap._budget
+            rounds += omap._budget
             omap.search(b"%04d" % (i // 2))
-            accesses += omap._budget
+            rounds += omap._budget
         client.flush()
-        return client.metrics.payload_bytes / accesses, accesses
+        return client.metrics.payload_bytes / (rounds * omap._config.paths_per_round), rounds
 
-    default_bytes, default_accesses = bytes_per_access(config_cls)
-    textbook_bytes, textbook_accesses = bytes_per_access(config_cls.textbook)
-    assert textbook_accesses > default_accesses
-    assert textbook_bytes == default_bytes
+    _, default_rounds = bytes_per_path(config_cls)
+    one_path_bytes, _ = bytes_per_path(lambda **kw: config_cls(**kw, paths_per_round=1))
+    textbook_bytes, textbook_rounds = bytes_per_path(config_cls.textbook)
+    assert textbook_rounds > default_rounds
+    assert textbook_bytes == one_path_bytes
 
 
 class TestOmapObliviousness:
@@ -351,7 +352,8 @@ class TestOmapObliviousness:
                 spent, found = server.read_rounds(omap.search, key)
                 assert found == model.get(key)
             paths = server.paths_read() - paths_before
-            assert (spent, paths) == (expected, expected), f"{op}({key!r}): {spent} rounds, {paths} paths"
+            widths = expected * omap._config.paths_per_round
+            assert (spent, paths) == (expected, widths), f"{op}({key!r}): {spent} rounds, {paths} paths"
         assert not duplicate_blocks(omap)
 
     def test_write_deferral_preserves_access_sequence(self, omap_spec, assert_deferral_preserves_access):

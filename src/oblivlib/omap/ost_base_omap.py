@@ -136,20 +136,24 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         return self._config.batch_size
 
     @property
+    def _widest_round(self) -> int:
+        return min(self._config.paths_per_round * self._batch_size, self._leaf_range)
+
+    @property
     def _carry_limit(self) -> int:
         if not self._config.cached:
             return 0
         return max(self._batch_size * (self._max_height - 1), self._max_height)
 
     def drain(self) -> None:
-        for _ in range(-(-self._carry_limit // self._batch_size)):
-            self._read_paths(self._round_leaves([], self._batch_size))
+        for _ in range(-(-self._carry_limit // self._widest_round)):
+            self._read_paths(self._round_leaves([], self._widest_round))
             self._write_paths()
 
     @property
     @override
     def _stash_limit(self) -> int:
-        return self._stash_capacity + self._owed + (self._batch_size - 1) * self._level * self._bucket_size
+        return self._stash_capacity * self._widest_round + self._owed
 
     def _return_to_stash(self, blocks: Sequence[Any]) -> None:
         self._stash += blocks
@@ -170,9 +174,8 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._return_to_stash([self._local.pop(key) for key in list(keys)])
 
     def _round_width(self, index: int) -> int:
-        if index < self._max_height:
-            return min(1 << index, self._batch_size)
-        return self._batch_size
+        keys = min(1 << index, self._batch_size) if index < self._max_height else self._batch_size
+        return min(self._config.paths_per_round * keys, self._leaf_range)
 
     def _round_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
         paths = set(leaves)

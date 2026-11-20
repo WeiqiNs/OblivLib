@@ -37,7 +37,9 @@ Tree OMAPs hide the operation type by default (`distinguishable=False`); set it 
 operation pad only to its own bound. Every search, insert, and delete pads to a fixed number of
 rounds, `floor(a * h + b)` for a tree of height bound `h`. The defaults are the proven minimums; raise one
 with `AvlOmapConfig(..., insert_budget=AccessBudget(3, 0))`, or use `AvlOmapConfig.textbook(...)` /
-`BPlusOmapConfig.textbook(...)` for the budgets of the original held-node implementation.
+`BPlusOmapConfig.textbook(...)` for the budgets of the original held-node implementation. A B+ round reads
+two paths by default (`paths_per_round=2`), which lowers insert and delete from `3h - 2` and `4h - 3` to
+`2h - 1` rounds; `paths_per_round=1` keeps one path per round.
 `AvlOmapConfig(..., cached=True)` lets an operation leave up to `max(k(h - 1), h)` evictions to the next ones (`h` for `k = 1`), which
 lowers insert to `h + 1` and delete to `floor((3h - 1) / 2)` rounds; call `drain()` before shutdown or
 handover to settle them in a fixed number of rounds.

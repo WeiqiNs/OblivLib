@@ -238,9 +238,11 @@ class TreeOmapConfig(OmapConfig):
     MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
     MIN_CACHED_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
+    PATHS_PER_ROUND: ClassVar[tuple[int, ...]] = (1,)
 
     cached: bool = False
     batch_size: int = 1
+    paths_per_round: int = 1
     search_budget: AccessBudget | None = None
     insert_budget: AccessBudget | None = None
     delete_budget: AccessBudget | None = None
@@ -253,17 +255,18 @@ class TreeOmapConfig(OmapConfig):
         return getattr(self, f"{op}_budget") or self.min_budgets[op]
 
     @classmethod
+    def textbook_fields(cls) -> dict[str, Any]:
+        return {"paths_per_round": 1, **{f"{op}_budget": budget for op, budget in cls.TEXTBOOK_BUDGETS.items()}}
+
+    @classmethod
     def textbook(cls, **kwargs: Any) -> Self:
-        budgets = cls.TEXTBOOK_BUDGETS
-        return cls(
-            **kwargs,
-            search_budget=budgets["search"],
-            insert_budget=budgets["insert"],
-            delete_budget=budgets["delete"],
-        )
+        return cls(**kwargs, **cls.textbook_fields())
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.paths_per_round not in self.PATHS_PER_ROUND:
+            allowed = " or ".join(str(width) for width in self.PATHS_PER_ROUND)
+            raise ValueError(f"paths_per_round must be {allowed}, got {self.paths_per_round}.")
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}.")
         if self.cached and not self.MIN_CACHED_BUDGETS:
@@ -307,14 +310,26 @@ class BPlusOmapConfig(TreeOmapConfig):
         "insert": AccessBudget(3, -2),
         "delete": AccessBudget(4, -3),
     }
+    MIN_TWO_PATH_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(1, 0),
+        "insert": AccessBudget(2, -1),
+        "delete": AccessBudget(2, -1),
+    }
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
         "search": AccessBudget(2, 0),
         "insert": AccessBudget(3, 0),
         "delete": AccessBudget(4, -3),
     }
+    PATHS_PER_ROUND: ClassVar[tuple[int, ...]] = (1, 2)
 
     name: str = field(default_factory=unique_name("bplus"))
     order: int
+    paths_per_round: int = 2
+
+    @property
+    @override
+    def min_budgets(self) -> dict[OdsOp, AccessBudget]:
+        return self.MIN_TWO_PATH_BUDGETS if self.paths_per_round == 2 else self.MIN_BUDGETS
 
     def __post_init__(self) -> None:
         super().__post_init__()

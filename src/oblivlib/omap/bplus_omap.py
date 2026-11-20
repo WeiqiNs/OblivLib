@@ -202,8 +202,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             child_indices.append(child_index)
             sibling_index = child_index - 1 if child_index > 0 else child_index + 1
 
-            child_node = self._fetch_child(node, child_index)
-            sibling_node = self._fetch_child(node, sibling_index)
+            child_node, sibling_node = self._fetch_children(node, [child_index, sibling_index])
             siblings[level + 1] = sibling_node
             sibling_indices[level + 1] = sibling_index
             level += 1
@@ -216,14 +215,18 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
 
         return path_nodes, child_indices, siblings, sibling_indices
 
-    def _fetch_child(self, parent: BPlusNode, index: int) -> BPlusNode:
-        child_key, child_leaf = parent.value.values[index]
-        new_leaf = self._get_new_leaf()
-        self._fetch_node(key=child_key, leaf=child_leaf)
-        child = self._local.pop(child_key)
-        child.leaf = new_leaf
-        parent.value.values[index] = (child_key, new_leaf)
-        return child
+    def _fetch_children(self, parent: BPlusNode, indices: list[int]) -> list[BPlusNode]:
+        requests = [(*parent.value.values[index], None) for index in indices]
+        paired = self._round_width(self._op_rounds) >= len(requests)
+        for group in [requests] if paired else [[request] for request in requests]:
+            self._fetch_nodes(group)
+        children: list[BPlusNode] = []
+        for index, (child_key, _, _) in zip(indices, requests, strict=True):
+            child = self._local.pop(child_key)
+            child.leaf = self._get_new_leaf()
+            parent.value.values[index] = (child_key, child.leaf)
+            children.append(child)
+        return children
 
     def _apply_delete(
         self,

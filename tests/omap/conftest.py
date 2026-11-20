@@ -116,7 +116,7 @@ def verify_bplus_invariants(omap, model):
 
 
 def _textbook(config_cls):
-    return {f"{op}_budget": budget for op, budget in config_cls.TEXTBOOK_BUDGETS.items()}
+    return config_cls.textbook_fields()
 
 
 class OmapSpec:
@@ -166,11 +166,21 @@ OMAP_SPECS = [
         OmapSpec(
             BPlusOmap,
             BPlusOmapConfig,
-            budgets={"search": 4, "insert": 10, "delete": 13, "hidden": 13},
+            budgets={"search": 4, "insert": 7, "delete": 7, "hidden": 7},
             invariant_checker=verify_bplus_invariants,
             extra={"order": 5},
         ),
         id="bplus",
+    ),
+    pytest.param(
+        OmapSpec(
+            BPlusOmap,
+            BPlusOmapConfig,
+            budgets={"search": 4, "insert": 10, "delete": 13, "hidden": 13},
+            invariant_checker=verify_bplus_invariants,
+            extra={"order": 5, "paths_per_round": 1},
+        ),
+        id="bplus_one_path",
     ),
     pytest.param(
         OmapSpec(
