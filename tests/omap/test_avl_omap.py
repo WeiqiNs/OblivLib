@@ -109,6 +109,23 @@ def test_each_avl_bound_is_reached(client, height):
     assert _work(omap) == omap._budget
 
 
+@pytest.mark.parametrize(
+    ("rounds_short", "message"), [(1, "needs more than its"), (0, "still need an eviction")], ids=["fetch", "evict"]
+)
+def test_an_op_short_of_its_bound_raises_instead_of_skipping_evictions(client, monkeypatch, rounds_short, message):
+    spine = _keys_by_path(_worst_insert_tree(5))
+    omap = _build(client, len(spine) + 1, spine, scale=2)
+    begin = omap._begin_op
+
+    def short_begin(op):
+        begin(op)
+        omap._budget = omap._max_height - rounds_short
+
+    monkeypatch.setattr(omap, "_begin_op", short_begin)
+    with pytest.raises(ValueError, match=message):
+        omap.insert(_key(2 * spine["R" * 4] + 1), b"v")
+
+
 @pytest.mark.parametrize("height", [3, 5, 6, 8])
 def test_each_cached_avl_bound_is_reached(client, height):
     spine = _keys_by_path(_worst_insert_tree(height))
@@ -225,7 +242,10 @@ def test_batched_ops_match_the_model(client, cached, distinguishable, duplicate_
             key = _key(rng.randrange(64))
             assert omap.delete(key) == model.pop(key, None)
         assert omap._owed <= omap._carry_limit
+    rounds = client.metrics.rounds
     omap.drain()
+    assert client.metrics.rounds - rounds == -(-omap._carry_limit // 5)
+    assert omap._owed == 0
     assert omap.search_batch([(key, None) for key in list(model)[:5]]) == list(model.values())[:5]
     assert not duplicate_blocks(omap)
 

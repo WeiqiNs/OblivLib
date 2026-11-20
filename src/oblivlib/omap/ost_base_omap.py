@@ -188,7 +188,9 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._op_rounds += 1
 
     def _fetch_nodes(self, requests: Sequence[tuple[Any, int | None, Any]]) -> None:
-        self._start_round(leaf for _, leaf, _ in requests if leaf is not None)
+        leaves = [leaf for _, leaf, _ in requests]
+        assert None not in leaves
+        self._start_round(leaf for leaf in leaves if leaf is not None)
         for key, _, parent_key in requests:
             node = self._require_in_stash(key)
             self._stash.remove(node)
@@ -270,19 +272,20 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._host_tree(tree)
         return root_list
 
-    @override
-    def search(self, key: bytes | None, value: bytes | None = None) -> bytes | None:
+    def _require_pair(self, key: bytes | None, value: bytes | None, *, value_required: bool) -> None:
         if key is not None:
             require_omap_key(self._identity, key, self._key_size)
-            if value is not None:
+            if value_required or value is not None:
                 require_value(self._identity, value, self._data_size)
+
+    @override
+    def search(self, key: bytes | None, value: bytes | None = None) -> bytes | None:
+        self._require_pair(key, value, value_required=False)
         return self._search(key, value)
 
     @override
     def insert(self, key: bytes | None, value: bytes | None = None) -> None:
-        if key is not None:
-            require_omap_key(self._identity, key, self._key_size)
-            require_value(self._identity, value, self._data_size)
+        self._require_pair(key, value, value_required=True)
         self._insert(key, value)
 
     def delete(self, key: bytes | None) -> bytes | None:

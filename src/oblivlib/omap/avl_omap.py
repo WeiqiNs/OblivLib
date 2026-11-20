@@ -4,7 +4,7 @@ from typing import Any, Protocol, cast, override
 
 from oblivlib.dependency import AVLData, AVLTree, AVLTreeNode, Data, KVPair
 from oblivlib.dependency.config import AvlOmapConfig
-from oblivlib.dependency.contract import require_batch, require_omap_key, require_value
+from oblivlib.dependency.contract import require_batch
 from oblivlib.dependency.layout import Bytes, Field, Optional, Record, UInt
 from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
@@ -365,16 +365,13 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
     def search_batch(self, pairs: Sequence[tuple[bytes, bytes | None]]) -> list[bytes | None]:
         require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=False)
         for key, value in pairs:
-            require_omap_key(self._identity, key, self._key_size)
-            if value is not None:
-                require_value(self._identity, value, self._data_size)
+            self._require_pair(key, value, value_required=False)
         return self._search_many(pairs)
 
     def insert_batch(self, pairs: Sequence[tuple[bytes, bytes]]) -> None:
         require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=True)
         for key, value in pairs:
-            require_omap_key(self._identity, key, self._key_size)
-            require_value(self._identity, value, self._data_size)
+            self._require_pair(key, value, value_required=True)
         self._insert_many(pairs)
 
     @override
