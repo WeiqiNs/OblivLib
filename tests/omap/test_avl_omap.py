@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from oblivlib.dependency import AvlOmapConfig
+from oblivlib.dependency import AvlOmapConfig, ContractError
 from oblivlib.omap import AVLOmap
 from oblivlib.omap.avl_omap import avl_delete_fetches, avl_max_height
 
@@ -157,6 +157,86 @@ def test_cached_maps_match_the_model_and_drain_in_a_fixed_count(client, distingu
     assert client.metrics.rounds - rounds == omap._carry_limit
     assert all(omap.search(key) == value for key, value in model.items())
     assert not duplicate_blocks(omap)
+
+
+def _batch_omap(client, *, batch_size, cached=False, distinguishable=False, num_data=64):
+    omap = AVLOmap(
+        AvlOmapConfig(
+            num_data=num_data,
+            key_size=8,
+            data_size=8,
+            client=client,
+            batch_size=batch_size,
+            cached=cached,
+            distinguishable=distinguishable,
+        )
+    )
+    omap.init_server_storage()
+    return omap
+
+
+def test_every_op_of_a_batched_map_reads_the_same_widths(recorded_client):
+    client, recorder = recorded_client()
+    omap = _batch_omap(client, batch_size=4)
+    omap.insert_batch([(_key(i), b"v") for i in range(0, 8, 2)])
+    for i in range(8, 24, 2):
+        omap.insert(_key(i), b"v")
+    height = omap._max_height
+    expected = [min(2**r, 4) for r in range(height)] + [4] * (omap._budget - height)
+    ops = [
+        lambda: omap.search_batch([(_key(2), None), (_key(9), None), (_key(20), b"w")]),
+        lambda: omap.search(_key(4)),
+        lambda: omap.insert_batch([(_key(1), b"v"), (_key(13), b"v")]),
+        lambda: omap.insert(_key(25), b"v"),
+        lambda: omap.delete(_key(6)),
+        lambda: omap.delete(_key(99)),
+    ]
+    for op in ops:
+        before = len(recorder.batches)
+        op()
+        widths = [len(read.leaves) for batch in recorder.batches[before:] for read in batch.reads]
+        assert widths == expected
+    assert omap.search(_key(20)) == b"w"
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["uncached", "cached"])
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+def test_batched_ops_match_the_model(client, cached, distinguishable, duplicate_blocks):
+    rng = random.Random(5)
+    omap = _batch_omap(client, batch_size=5, cached=cached, distinguishable=distinguishable)
+    model: dict[bytes, bytes] = {}
+    for step in range(400):
+        roll = rng.random()
+        free = [i for i in range(64) if _key(i) not in model]
+        if roll < 0.4 and free:
+            fresh = rng.sample(free, min(len(free), rng.randint(1, 5)))
+            pairs = [(_key(i), b"%d" % step) for i in fresh]
+            omap.insert_batch(pairs)
+            model.update(pairs)
+        elif roll < 0.8:
+            pairs = [(_key(rng.randrange(64)), rng.choice([None, b"u%d" % step])) for _ in range(rng.randint(1, 5))]
+            expected = []
+            for key, value in pairs:
+                expected.append(model.get(key))
+                if value is not None and key in model:
+                    model[key] = value
+            assert omap.search_batch(pairs) == expected
+        else:
+            key = _key(rng.randrange(64))
+            assert omap.delete(key) == model.pop(key, None)
+        assert omap._owed <= omap._carry_limit
+    omap.drain()
+    assert omap.search_batch([(key, None) for key in list(model)[:5]]) == list(model.values())[:5]
+    assert not duplicate_blocks(omap)
+
+
+def test_a_batch_rejects_repeated_insert_keys_and_more_keys_than_its_size(client):
+    omap = _batch_omap(client, batch_size=2)
+    with pytest.raises(ContractError, match="twice"):
+        omap.insert_batch([(_key(1), b"v"), (_key(1), b"w")])
+    with pytest.raises(ContractError, match="batch_size is 2"):
+        omap.search_batch([(_key(i), None) for i in range(3)])
+    assert omap.search(_key(1)) is None
 
 
 def _omap(client, num_data: int) -> AVLOmap:

@@ -240,6 +240,7 @@ class TreeOmapConfig(OmapConfig):
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
 
     cached: bool = False
+    batch_size: int = 1
     search_budget: AccessBudget | None = None
     insert_budget: AccessBudget | None = None
     delete_budget: AccessBudget | None = None
@@ -263,6 +264,8 @@ class TreeOmapConfig(OmapConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}.")
         if self.cached and not self.MIN_CACHED_BUDGETS:
             raise ValueError(f"{type(self).__name__} does not support cached=True yet.")
         for op in ODS_OPS:
@@ -317,6 +320,8 @@ class BPlusOmapConfig(TreeOmapConfig):
         super().__post_init__()
         if self.order < 3:
             raise ValueError(f"order must be >= 3, got {self.order}.")
+        if self.batch_size != 1:
+            raise ValueError(f"BPlusOmapConfig does not support batch_size > 1 yet, got {self.batch_size}.")
 
 
 @dataclass(frozen=True, kw_only=True)

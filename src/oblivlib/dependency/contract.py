@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from oblivlib.dependency.errors import ContractError
@@ -40,3 +40,10 @@ def require_omap_init(owner: str, pairs: Iterable[tuple[Any, Any]], *, key_size:
         if key in seen:
             raise ContractError(f"{owner}: initial key {key!r} is given twice.")
         seen.add(key)
+
+
+def require_batch(owner: str, keys: Sequence[Any], batch_size: int, *, distinct: bool) -> None:
+    if len(keys) > batch_size:
+        raise ContractError(f"{owner}: a batch holds {len(keys)} keys, batch_size is {batch_size}.")
+    if distinct and len(set(keys)) < len(keys):
+        raise ContractError(f"{owner}: a batch gives a key twice.")

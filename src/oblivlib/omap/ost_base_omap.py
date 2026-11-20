@@ -96,10 +96,12 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._local: LocalT = self._new_local()
         self._max_height: int = 1
         self._budget: int = 0
-        self._op_accesses: int = 0
+        self._op_rounds: int = 0
         self._op_fetches: int = 0
         self._owed: int = 0
         self._op_owed: int = 0
+        if self._batch_size > self._leaf_range:
+            raise ValueError(f"{self._identity}: batch_size {self._batch_size} exceeds the {self._leaf_range} leaves.")
 
     @abstractmethod
     def _new_local(self) -> LocalT:
@@ -130,18 +132,24 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         return Optional(Record((self._key_field, self._leaf_field)))
 
     @property
+    def _batch_size(self) -> int:
+        return self._config.batch_size
+
+    @property
     def _carry_limit(self) -> int:
-        return self._max_height if self._config.cached else 0
+        if not self._config.cached:
+            return 0
+        return max(self._batch_size * (self._max_height - 1), self._max_height)
 
     def drain(self) -> None:
-        for _ in range(self._carry_limit):
-            self._read_paths([self._get_new_leaf()])
+        for _ in range(-(-self._carry_limit // self._batch_size)):
+            self._read_paths(self._round_leaves([], self._batch_size))
             self._write_paths()
 
     @property
     @override
     def _stash_limit(self) -> int:
-        return self._stash_capacity + self._owed
+        return self._stash_capacity + self._owed + (self._batch_size - 1) * self._level * self._bucket_size
 
     def _return_to_stash(self, blocks: Sequence[Any]) -> None:
         self._stash += blocks
@@ -150,7 +158,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
 
     @override
     def _stage_write_back(self) -> None:
-        paths = len(set(self._unwritten_leaves))
+        paths = len(self._unwritten_leaves)
         super()._stage_write_back()
         self._owed = max(0, self._owed - paths)
 
@@ -161,15 +169,33 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
     def _return_local(self, keys: Iterable[Any]) -> None:
         self._return_to_stash([self._local.pop(key) for key in list(keys)])
 
-    def _fetch_node(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
-        if self._op_accesses >= self._budget:
+    def _round_width(self, index: int) -> int:
+        if index < self._max_height:
+            return min(1 << index, self._batch_size)
+        return self._batch_size
+
+    def _round_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
+        paths = set(leaves)
+        assert len(paths) <= width
+        while len(paths) < width:
+            paths.add(self._get_new_leaf())
+        return sorted(paths)
+
+    def _start_round(self, leaves: Iterable[int]) -> None:
+        if self._op_rounds >= self._budget:
             raise ValueError(f"{self._identity}: the op needs more than its {self._budget} rounds.")
-        assert leaf is not None
-        self._op_accesses += 1
-        self._read_paths([leaf])
-        node = self._require_in_stash(key)
-        self._stash.remove(node)
-        self._local.add(node=node, parent_key=parent_key)
+        self._read_paths(self._round_leaves(leaves, self._round_width(self._op_rounds)))
+        self._op_rounds += 1
+
+    def _fetch_nodes(self, requests: Sequence[tuple[Any, int | None, Any]]) -> None:
+        self._start_round(leaf for _, leaf, _ in requests if leaf is not None)
+        for key, _, parent_key in requests:
+            node = self._require_in_stash(key)
+            self._stash.remove(node)
+            self._local.add(node=node, parent_key=parent_key)
+
+    def _fetch_node(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
+        self._fetch_nodes([(key, leaf, parent_key)])
 
     def _short_circuit_read(self, key: Any) -> bool:
         if key is None or self.root is None:
@@ -183,24 +209,24 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
             self._budget = config.budget(op).rounds(height)
         else:
             self._budget = max(config.budget(each).rounds(height) for each in ODS_OPS)
-        self._op_accesses = 0
+        self._op_rounds = 0
         if not self._carry_limit:
             self._owed = 0
 
     def _finish_op(self) -> None:
         pending = bool(self._unwritten_leaves)
         self._stage_write_back()
-        padding = self._budget - self._op_accesses
-        self._op_fetches, self._op_owed = self._op_accesses, self._owed
-        if self._owed - padding > self._carry_limit:
+        padding = range(self._op_rounds, self._budget)
+        capacity = sum(self._round_width(index) for index in padding)
+        self._op_fetches, self._op_owed = self._op_rounds, self._owed
+        if self._owed - capacity > self._carry_limit:
             raise ValueError(
                 f"{self._identity}: {self._owed} blocks returned to the stash still need an eviction of "
-                + f"their own, but only {padding} of the {self._budget} rounds remain and "
-                + f"{self._carry_limit} may carry over."
+                + f"their own, but the {len(padding)} rounds left of {self._budget} evict only {capacity} "
+                + f"and {self._carry_limit} may carry over."
             )
-        for _ in range(padding):
-            self._op_accesses += 1
-            self._read_paths([self._get_new_leaf()])
+        for _ in padding:
+            self._start_round([])
             self._write_paths()
         if pending and not padding:
             self._client.execute()

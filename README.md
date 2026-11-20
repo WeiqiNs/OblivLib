@@ -40,7 +40,9 @@ with `AvlOmapConfig(..., insert_budget=AccessBudget(3, 0))`, or use `AvlOmapConf
 `BPlusOmapConfig.textbook(...)` for the budgets of the original held-node implementation.
 `AvlOmapConfig(..., cached=True)` lets an operation leave up to `h` evictions to the next ones, which
 lowers insert to `h + 1` and delete to `floor((3h - 1) / 2)` rounds; call `drain()` before shutdown or
-handover to settle them in a fixed `h` rounds.
+handover to settle them in a fixed number of rounds.
+`AvlOmapConfig(..., batch_size=k)` adds `search_batch` / `insert_batch` for up to `k` keys in the
+same number of rounds as one key, each round reading up to `k` paths.
 
 ## Installation
 

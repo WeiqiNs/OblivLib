@@ -44,6 +44,8 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"delete_budget": AccessBudget(3, 9)}, r"a must be >= 4"),
         (AvlOmapConfig, {**_OMAP, "cached": True}, {"delete_budget": AccessBudget(1, 9)}, r"a must be >= 3/2"),
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"cached": True}, "cached"),
+        (AvlOmapConfig, _OMAP, {"batch_size": 0}, "batch_size must be >= 1"),
+        (BPlusOmapConfig, {**_OMAP, "order": 3}, {"batch_size": 2}, "batch_size"),
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
     ],
 )

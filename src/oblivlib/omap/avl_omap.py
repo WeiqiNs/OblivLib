@@ -1,9 +1,10 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import cached_property
 from typing import Any, Protocol, cast, override
 
 from oblivlib.dependency import AVLData, AVLTree, AVLTreeNode, Data, KVPair
 from oblivlib.dependency.config import AvlOmapConfig
+from oblivlib.dependency.contract import require_batch, require_omap_key, require_value
 from oblivlib.dependency.layout import Bytes, Field, Optional, Record, UInt
 from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
@@ -31,6 +32,17 @@ class AVLNode(Protocol):
 
 
 class LocalNodes(LocalNodesBase[AVLNode]):
+    def path_to(self, key: Any) -> list[Any]:
+        path: list[Any] = []
+        parent_key, node_key = None, self.root_key
+        while node_key is not None:
+            node = self.require(node_key)
+            self.parent_of[node_key] = parent_key
+            path.append(node_key)
+            parent_key, node_key = node_key, node.value.r_key if node.key < key else node.value.l_key
+        self.path = path
+        return path
+
     def reparent(self, child_key: Any, new_parent_key: Any) -> None:
         self.parent_of[child_key] = new_parent_key
         if new_parent_key is None:
@@ -82,12 +94,6 @@ class LocalNodes(LocalNodesBase[AVLNode]):
         for key, parent_key in self.parent_of.items():
             if parent_key == old_key:
                 self.parent_of[key] = new_key
-
-
-def _balance(node: AVLNode) -> int:
-    l_height = node.value.l_height if node.value.l_key is not None else 0
-    r_height = node.value.r_height if node.value.r_key is not None else 0
-    return l_height - r_height
 
 
 class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
@@ -243,40 +249,49 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if root_node:
             self.root = (root_node.key, root_node.leaf)
 
-    def _descend(self, key: Any, keep_from: Callable[[list[AVLNode]], int] | None = None) -> AVLNode:
+    def _descend(
+        self, keys: Sequence[Any], *, hold: bool, on_stop: Callable[[int, AVLNode], None] | None = None
+    ) -> list[Any]:
         root = self.root
         assert root is not None
         new_leaf = self._get_new_leaf()
         self._fetch_node(key=root[0], leaf=root[1])
-        node = self._local.require(root[0])
-        node.leaf = new_leaf
-        self.root = (node.key, new_leaf)
+        self._local.require(root[0]).leaf = new_leaf
+        self.root = (root[0], new_leaf)
 
-        while node.key != key:
-            go_right = node.key < key
-            child_key = node.value.r_key if go_right else node.value.l_key
-            if child_key is None:
+        stops: list[Any] = [None] * len(keys)
+        at = dict.fromkeys(range(len(keys)), root[0])
+        level = [root[0]]
+        while at:
+            requests: dict[Any, tuple[int | None, Any, int]] = {}
+            for lane, node_key in list(at.items()):
+                node = self._local.require(node_key)
+                go_right = node.key < keys[lane]
+                child_key = None if node.key == keys[lane] else node.value.r_key if go_right else node.value.l_key
+                if child_key is None:
+                    stops[lane] = node.key
+                    if on_stop is not None:
+                        on_stop(lane, node)
+                    del at[lane]
+                    continue
+                if child_key not in requests:
+                    new_leaf = self._get_new_leaf()
+                    if go_right:
+                        requests[child_key] = (node.value.r_leaf, node.key, new_leaf)
+                        node.value.r_leaf = new_leaf
+                    else:
+                        requests[child_key] = (node.value.l_leaf, node.key, new_leaf)
+                        node.value.l_leaf = new_leaf
+                at[lane] = child_key
+            if not requests:
                 break
-            child_leaf = node.value.r_leaf if go_right else node.value.l_leaf
-            new_leaf = self._get_new_leaf()
-            if go_right:
-                node.value.r_leaf = new_leaf
-            else:
-                node.value.l_leaf = new_leaf
-            if keep_from is None:
-                self._return_local([node.key])
-            self._fetch_node(key=child_key, leaf=child_leaf, parent_key=node.key)
-            node = self._local.require(child_key)
-            node.leaf = new_leaf
-            if keep_from is not None:
-                path = [self._local.require(path_key) for path_key in self._local.path]
-                self._return_local(self._local.path[: keep_from(path)])
-        return node
-
-    @staticmethod
-    def _keep_from_rotation_parent(path: list[AVLNode]) -> int:
-        unbalanced = [i for i, node in enumerate(path) if _balance(node) != 0]
-        return max(unbalanced[-1] - 1, 0) if unbalanced else 0
+            if not hold:
+                self._return_local(level)
+            self._fetch_nodes([(child_key, leaf, parent_key) for child_key, (leaf, parent_key, _) in requests.items()])
+            for child_key, (_, _, new_leaf) in requests.items():
+                self._local.require(child_key).leaf = new_leaf
+            level = list(requests)
+        return stops
 
     def _delete_at_node(self, node_key: Any) -> tuple[Any, bool]:
         node = self._local.require(node_key)
@@ -347,47 +362,76 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
 
         return deleted_value, False
 
+    def search_batch(self, pairs: Sequence[tuple[bytes, bytes | None]]) -> list[bytes | None]:
+        require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=False)
+        for key, value in pairs:
+            require_omap_key(self._identity, key, self._key_size)
+            if value is not None:
+                require_value(self._identity, value, self._data_size)
+        return self._search_many(pairs)
+
+    def insert_batch(self, pairs: Sequence[tuple[bytes, bytes]]) -> None:
+        require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=True)
+        for key, value in pairs:
+            require_omap_key(self._identity, key, self._key_size)
+            require_value(self._identity, value, self._data_size)
+        self._insert_many(pairs)
+
     @override
     def _search(self, key: Any, value: Any = None) -> Any:
-        self._begin_op("search")
-        if self._short_circuit_read(key=key):
-            return None
-
-        node = self._descend(key)
-        search_value = node.value.value if node.key == key else None
-        if value is not None and node.key == key:
-            node.value.value = value
-
-        self._flush_local_to_stash()
-        self._finish_op()
-        return search_value
+        return self._search_many([(key, value)])[0]
 
     @override
     def _insert(self, key: Any, value: Any = None) -> None:
+        self._insert_many([(key, value)])
+
+    def _search_many(self, pairs: Sequence[tuple[Any, Any]]) -> list[Any]:
+        self._begin_op("search")
+        results: list[Any] = [None] * len(pairs)
+        lanes = [lane for lane, (key, _) in enumerate(pairs) if key is not None]
+        if not lanes or self.root is None:
+            self._finish_op()
+            return results
+
+        def on_stop(index: int, node: AVLNode) -> None:
+            key, value = pairs[lanes[index]]
+            if node.key == key:
+                results[lanes[index]] = node.value.value
+                if value is not None:
+                    node.value.value = value
+
+        self._descend([pairs[lane][0] for lane in lanes], hold=False, on_stop=on_stop)
+        self._flush_local_to_stash()
+        self._finish_op()
+        return results
+
+    def _insert_many(self, pairs: Sequence[tuple[Any, Any]]) -> None:
         self._begin_op("insert")
-        if key is None:
+        blocks = [Data(key=key, leaf=self._get_new_leaf(), value=AVLData(value=value)) for key, value in pairs]
+        blocks = [block for block in blocks if block.key is not None]
+        if not blocks:
             self._finish_op()
             return
-        data_block = Data(key=key, leaf=self._get_new_leaf(), value=AVLData(value=value))
-
-        if self.root is None:
-            self._return_to_stash([data_block])
-            assert data_block.leaf is not None
-            self.root = (data_block.key, data_block.leaf)
-            self._finish_op()
-            return
-
         if self._local:
             raise MemoryError("The local storage was not emptied before this operation.")
 
-        parent = self._descend(key, keep_from=self._keep_from_rotation_parent)
-        if parent.key < key:
-            parent.value.r_key, parent.value.r_leaf = data_block.key, data_block.leaf
+        if self.root is None:
+            first, *blocks = blocks
+            assert first.leaf is not None
+            self._local.add(node=first)
+            self.root = (first.key, first.leaf)
         else:
-            parent.value.l_key, parent.value.l_leaf = data_block.key, data_block.leaf
-        self._local.add(node=data_block, parent_key=parent.key)
-        self._update_height()
-        self._balance_local()
+            self._descend([block.key for block in blocks], hold=True)
+
+        for block in blocks:
+            parent = self._local.require(self._local.path_to(block.key)[-1])
+            if parent.key < block.key:
+                parent.value.r_key, parent.value.r_leaf = block.key, block.leaf
+            else:
+                parent.value.l_key, parent.value.l_leaf = block.key, block.leaf
+            self._local.add(node=block, parent_key=parent.key)
+            self._update_height()
+            self._balance_local()
 
         self._flush_local_to_stash()
         self._finish_op()
@@ -398,7 +442,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         if self._short_circuit_read(key=key):
             return None
 
-        node = self._descend(key, keep_from=lambda _: 0)
+        node = self._local.require(self._descend([key], hold=True)[0])
         if node.key != key:
             self._flush_local_to_stash()
             self._finish_op()
