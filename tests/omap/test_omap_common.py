@@ -205,9 +205,34 @@ class TestOmapBehavior:
         assert omap.root is None
 
 
+def _budget_workload(pattern: str) -> list[tuple[str, bytes | None]]:
+    keys = [b"%02d" % i for i in range(60)]
+    if pattern == "random":
+        rng = random.Random(64)
+        ops = [(rng.choice(["search", "insert", "delete"]), rng.choice(keys)) for _ in range(150)]
+        present: set[bytes] = set()
+        workload: list[tuple[str, bytes | None]] = []
+        for op, key in ops:
+            if op == "insert" and key in present:
+                op = "search"
+            workload.append((op, key))
+            if op == "insert":
+                present.add(key)
+            elif op == "delete":
+                present.discard(key)
+        return [*workload, ("search", None), ("insert", None), ("delete", None)]
+    ordered = keys if pattern != "reverse" else keys[::-1]
+    inserts = [("insert", key) for key in ordered]
+    if pattern == "churn":
+        deletes = [("delete", key) for key in ordered[::2] + ordered[1::2]]
+    else:
+        deletes = [("delete", key) for key in ordered]
+    searches = [("search", key) for key in ordered[::7]] + [("search", b"zz")]
+    return [*inserts, *searches, ("delete", b"zz"), *deletes, ("search", keys[0]), ("delete", keys[0])]
+
+
 class TestOmapObliviousness:
-    def test_search_access_uniform(self, oblivious_omap_spec, counting_client):
-        omap_spec = oblivious_omap_spec
+    def test_search_access_uniform(self, omap_spec, counting_client):
         client, server = counting_client
         omap = omap_spec.make(client=client, num_data=256)
         omap.init_server_storage()
@@ -220,8 +245,7 @@ class TestOmapObliviousness:
         dummy = {server.rounds(omap.search, None)[0] for _ in range(5)}
         assert dummy == hit, f"search(None) distinguishable from a real search: {dummy} vs {hit}"
 
-    def test_insert_access_uniform(self, oblivious_omap_spec, counting_client):
-        omap_spec = oblivious_omap_spec
+    def test_insert_access_uniform(self, omap_spec, counting_client):
         client, server = counting_client
         omap = omap_spec.make(client=client, num_data=256)
         omap.init_server_storage()
@@ -230,33 +254,7 @@ class TestOmapObliviousness:
         dummy = {server.rounds(omap.insert, None)[0] for _ in range(5)}
         assert dummy == rounds, f"insert(None) distinguishable from a real insert: {dummy} vs {rounds}"
 
-    def test_op_type_hidden_when_not_distinguishable(self, oblivious_omap_spec, counting_client):
-        omap_spec = oblivious_omap_spec
-        client, server = counting_client
-        omap = omap_spec.make(client=client, num_data=256)
-        omap.init_server_storage()
-        for i in range(200):
-            omap.insert(key=_b(i), value=_b(i))
-        insert_rounds = server.rounds(omap.insert, b"10000", b"1")[0]
-        search_rounds = server.rounds(omap.search, b"50")[0]
-        delete_rounds = server.rounds(omap.delete, b"50")[0]
-        assert insert_rounds == search_rounds == delete_rounds, (
-            f"op type leaks: insert={insert_rounds} search={search_rounds} delete={delete_rounds}"
-        )
-
-    def test_distinguishable_mode_separates_ops(self, oblivious_omap_spec, counting_client):
-        omap_spec = oblivious_omap_spec
-        client, server = counting_client
-        omap = omap_spec.make(client=client, num_data=256, distinguishable=True)
-        omap.init_server_storage()
-        for i in range(200):
-            omap.insert(key=_b(i), value=_b(i))
-        search_rounds = server.rounds(omap.search, b"50")[0]
-        delete_rounds = server.rounds(omap.delete, b"50")[0]
-        assert search_rounds < delete_rounds, f"search {search_rounds} should be < delete {delete_rounds}"
-
-    def test_delete_access_uniform(self, oblivious_omap_spec, counting_client):
-        omap_spec = oblivious_omap_spec
+    def test_delete_access_uniform(self, omap_spec, counting_client):
         client, server = counting_client
         omap = omap_spec.make(client=client, num_data=256)
         omap.init_server_storage()
@@ -268,6 +266,30 @@ class TestOmapObliviousness:
         assert len(existing) == 1, f"delete(existing) rounds vary: {sorted(existing)}"
         assert missing == existing, f"delete(missing) distinguishable: miss={missing} hit={existing}"
         assert dummy == existing, f"delete(None) distinguishable: dummy={dummy} hit={existing}"
+
+    @pytest.mark.parametrize("pattern", ["random", "sorted", "reverse", "churn"])
+    @pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+    def test_every_op_spends_exactly_its_budget(
+        self, omap_spec, counting_client, duplicate_blocks, pattern, distinguishable
+    ):
+        client, server = counting_client
+        omap = omap_spec.make(client=client, num_data=64, distinguishable=distinguishable)
+        omap.init_server_storage()
+        model = {}
+        for op, key in _budget_workload(pattern):
+            expected = omap_spec.budgets[op] if distinguishable else max(omap_spec.budgets.values())
+            if op == "insert":
+                spent, _ = server.read_rounds(omap.insert, key, key)
+                if key is not None:
+                    model[key] = key
+            elif op == "delete":
+                spent, deleted = server.read_rounds(omap.delete, key)
+                assert deleted == model.pop(key, None)
+            else:
+                spent, found = server.read_rounds(omap.search, key)
+                assert found == model.get(key)
+            assert spent == expected, f"{op}({key!r}) spent {spent} rounds, budget {expected}"
+        assert not duplicate_blocks(omap)
 
     def test_write_deferral_preserves_access_sequence(self, omap_spec, assert_deferral_preserves_access):
         def workload(client):

@@ -30,12 +30,9 @@ class BPlusOmapCached(BPlusOmap):
                 keys_to_read.append(node_key)
                 leaves_to_read.append(leaf)
 
-        if not leaves_to_read:
-            return
-
         self._op_rounds += 1
         keys_to_find = set(keys_to_read)
-        for bucket in self._open_paths(leaves_to_read).values():
+        for bucket in self._open_paths(self._round_leaves(leaves_to_read)).values():
             for data in bucket:
                 if data.key in keys_to_find:
                     self._local.add(node=data)
@@ -46,39 +43,12 @@ class BPlusOmapCached(BPlusOmap):
         self._check_stash()
         self._write_paths()
 
+    @property
     @override
-    def _search(self, key: Any, value: Any = None) -> Any:
-        self._flush_local_to_stash()
-        return super()._search(key=key, value=value)
-
-    @override
-    def _insert(self, key: Any, value: Any = None) -> None:
-        if key is None:
-            self._perform_dummy_operation(num_round=self._max_height)
-            return
-
-        if self.root is None:
-            data_block = self._get_bplus_data(keys=[key], values=[value])
-            self._stash.append(data_block)
-            assert data_block.leaf is not None
-            self.root = (data_block.key, data_block.leaf)
-            self._perform_dummy_operation(num_round=self._max_height)
-            return
-
-        self._flush_local_to_stash()
-        self._find_leaf_to_local(key=key)
-
-        num_retrieved_nodes = len(self._local)
-        self._insert_into_loaded_leaf(key=key, value=value)
-
-        self._flush_local_to_stash()
-        self._perform_dummy_operation(num_round=max(0, self._max_height - num_retrieved_nodes))
+    def _round_width(self) -> int:
+        return 2
 
     @override
-    def _delete(self, key: Any) -> Any:
-        self._op_rounds = 0
-        budget = self._max_height
-        if self._short_circuit_read(key=key, num_round=budget):
-            return None
-        self._flush_local_to_stash()
-        return self._delete_with_siblings(key, budget)
+    def _op_round_bounds(self) -> dict[str, int]:
+        h = self._max_height
+        return {"search": h, "insert": h, "delete": h}

@@ -1,4 +1,3 @@
-import math
 from bisect import bisect_right
 from functools import cached_property
 from typing import Any, Protocol, cast, override
@@ -10,6 +9,15 @@ from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
 
 _BLOCK_ID_BITS = 64
+
+
+def bplus_max_levels(num_keys: int, order: int) -> int:
+    fanout = -(-order // 2)
+    levels, fewest_keys = 1, 2 * (fanout - 1)
+    while fewest_keys <= num_keys:
+        levels += 1
+        fewest_keys *= fanout
+    return levels
 
 
 class BPlusValue(Protocol):
@@ -52,7 +60,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         self._mid: int = config.order // 2
         self._block_id: int = 0
 
-        self._max_height: int = max(1, math.ceil(math.log(self._num_data, math.ceil(config.order / 2))))
+        self._max_height: int = bplus_max_levels(self._num_data, config.order)
 
     @override
     def _new_local(self) -> LocalNodes:
@@ -61,7 +69,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
     @override
     def update_mul_tree_height(self, num_tree: int) -> None:
         tree_size = max_bucket_load(num_tree)
-        self._max_height = max(1, math.ceil(math.log(tree_size, math.ceil(self._order / 2))))
+        self._max_height = bplus_max_levels(tree_size, self._order)
 
     @property
     def _order(self) -> int:
@@ -368,7 +376,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
     @override
     def _op_round_bounds(self) -> dict[str, int]:
         h = self._max_height
-        return {"search": 2 * h + 1, "insert": 2 * h + 1, "delete": 4 * h}
+        return {"search": h, "insert": h, "delete": 2 * h - 1}
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:

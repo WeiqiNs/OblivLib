@@ -1,4 +1,3 @@
-import math
 from collections.abc import Callable
 from functools import cached_property
 from typing import Any, Protocol, cast, override
@@ -10,6 +9,15 @@ from oblivlib.dependency.load_bound import max_bucket_load
 from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
 
 _HEIGHT_BITS = 8
+
+
+def avl_max_height(num_nodes: int) -> int:
+    height, fewest, previous = 1, 1, 0
+    while True:
+        fewest, previous = fewest + previous + 1, fewest
+        if fewest > num_nodes:
+            return height
+        height += 1
 
 
 class AVLNode(Protocol):
@@ -76,7 +84,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
     def __init__(self, config: AvlOmapConfig):
         super().__init__(config)
 
-        self._max_height: int = max(1, math.ceil(1.44 * math.log(self._num_data, 2)))
+        self._max_height: int = avl_max_height(self._num_data)
 
     @override
     def _new_local(self) -> LocalNodes:
@@ -85,7 +93,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
     @override
     def update_mul_tree_height(self, num_tree: int) -> None:
         tree_size = max_bucket_load(num_tree)
-        self._max_height = max(1, math.ceil(1.44 * math.log(tree_size, 2)))
+        self._max_height = avl_max_height(tree_size)
 
     @cached_property
     @override
@@ -352,7 +360,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
     @override
     def _op_round_bounds(self) -> dict[str, int]:
         h = self._max_height
-        return {"search": 2 * h + 1, "insert": 2 * h + 1, "delete": 6 * h}
+        return {"search": h, "insert": h, "delete": 3 * h - 2}
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:

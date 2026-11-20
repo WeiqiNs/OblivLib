@@ -115,6 +115,18 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
     def root_layout(self) -> Optional[ROOT]:
         return Optional(Record((self._key_field, self._leaf_field)))
 
+    @property
+    def _round_width(self) -> int:
+        return 1
+
+    def _round_leaves(self, leaves: list[int]) -> list[int]:
+        chosen = list(dict.fromkeys(leaves))
+        while len(chosen) < min(self._round_width, self._leaf_range):
+            leaf = self._get_new_leaf()
+            if leaf not in chosen:
+                chosen.append(leaf)
+        return chosen
+
     def _find_in_stash(self, key: Any) -> int:
         for i, node in enumerate(self._stash):
             if node.key == key:
@@ -137,7 +149,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
         self._op_rounds += 1
 
         assert leaf is not None
-        for bucket in self._open_paths([leaf]).values():
+        for bucket in self._open_paths(self._round_leaves([leaf])).values():
             for data in bucket:
                 if data.key == key:
                     self._local.add(node=data, parent_key=parent_key)
@@ -161,9 +173,7 @@ class OstBaseOmap[OmapConfigT: OmapConfig, LocalT: LocalNodesBase[Any]](TreeStor
             raise ValueError("The height is not enough, as the number of dummy operation required is negative.")
 
         for _ in range(num_round):
-            leaf = self._get_new_leaf()
-
-            self._read_paths([leaf])
+            self._read_paths(self._round_leaves([]))
             self._write_paths()
 
     def _short_circuit_read(self, key: Any, num_round: int) -> bool:

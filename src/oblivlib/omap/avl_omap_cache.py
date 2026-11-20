@@ -19,7 +19,9 @@ class AVLOmapCached(AVLOmap):
 
     @override
     def _search(self, key: Any, value: Any = None) -> Any:
-        if self._short_circuit_read(key=key, num_round=self._max_height):
+        self._op_rounds = 0
+        budget = self._op_budget("search")
+        if self._short_circuit_read(key=key, num_round=budget):
             return None
 
         self._flush_local_to_stash()
@@ -34,58 +36,15 @@ class AVLOmapCached(AVLOmap):
         root_node = self._local.require_root()
         self.root = (root_node.key, root_node.leaf)
 
-        num_retrieved = len(self._local)
-        self._perform_dummy_operation(num_round=max(0, self._max_height - num_retrieved))
-
+        self._pad_to(budget)
         return search_value
 
     @override
     def _insert(self, key: Any, value: Any = None) -> None:
-        if key is None:
-            self._perform_dummy_operation(num_round=self._max_height)
-            return
-
-        data_block = self._get_avl_data(key=key, value=value)
-
-        if self.root is None:
-            self._stash.append(data_block)
-            assert data_block.leaf is not None
-            self.root = (data_block.key, data_block.leaf)
-            self._perform_dummy_operation(num_round=self._max_height)
-            return
-
         self._flush_local_to_stash()
-        self._descend_and_link(key=key, data_block=data_block)
-        self._post_op_fixup()
-
-        num_retrieved = len(self._local)
-        self._perform_dummy_operation(num_round=max(0, self._max_height - num_retrieved))
+        super()._insert(key, value)
 
     @override
     def _delete(self, key: Any) -> Any:
-        if self._short_circuit_read(key=key, num_round=2 * self._max_height):
-            return None
-
         self._flush_local_to_stash()
-        current_key = self._descend_to_key(key=key)
-        node = self._local.require(current_key)
-
-        if node.key != key:
-            self._local.update_all_leaves(self._get_new_leaf)
-            root_node = self._local.require_root()
-            self.root = (root_node.key, root_node.leaf)
-            num_retrieved = len(self._local)
-            self._perform_dummy_operation(num_round=max(0, 2 * self._max_height - num_retrieved))
-            return None
-
-        deleted_value, done = self._delete_at_node(node_key=current_key)
-        if done:
-            self._perform_dummy_operation(num_round=2 * self._max_height)
-            return deleted_value
-
-        self._post_op_fixup(is_delete=True)
-
-        num_retrieved = len(self._local)
-        self._perform_dummy_operation(num_round=max(0, 2 * self._max_height - num_retrieved))
-
-        return deleted_value
+        return super()._delete(key)

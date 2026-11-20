@@ -32,7 +32,7 @@ Related publications by the maintainers:
 - [ORAM + search-tree framework](https://dl.acm.org/doi/10.14778/3712221.3712235), composing
   any ORAM with any tree OMAP: [`oram_ost_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/oram_ost_omap.py)
 - Group-by-hash OMAP: [`group_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/group_omap.py)
-- Cache-optimized AVL and B+ variants (not per-op oblivious):
+- Cache-optimized AVL and B+ variants (serve recently used nodes from the client; per-op oblivious like the others):
   [`avl_omap_cache.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/avl_omap_cache.py), [`bplus_omap_cache.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/bplus_omap_cache.py)
 
 Tree OMAPs hide the operation type by default (`distinguishable=False`); set it to `True` to let each

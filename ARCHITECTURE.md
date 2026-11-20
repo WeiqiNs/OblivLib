@@ -423,40 +423,25 @@ from `_op_round_bounds` as functions of the height bound `h`. With the default
 `distinguishable=False`, every op pads to the largest bound so the op type is hidden; `True` lets each
 op use its own bound.
 
-Budgets are in fetch units: `_op_rounds` counts fetches, each real fetch already carries its own eviction,
-and each padding unit is one dummy read plus its eviction. The formulas below count a fetch and its
-eviction as two, so they run about twice the tight fetch bound (search/insert ≤ h, AVL delete ≤ 3h);
-measured AVL peaks at n=1024 (h=15) are 12/12/13 fetches against 31/31/90:
-
-- **AVL:** search/insert `2h+1`. Insert needs at most one rotation, and its nodes are already on the
-  descent path. Delete is `6h`: locate the node plus its successor (one downward path, ≤ h), a rebalance
-  that can rotate at every ancestor fetching the off-path child and grandchild (≤ 2h), and evictions.
-  Two-children deletes replace the node from the taller subtree, the same choice as `AVLTree.delete`.
-- **B+:** search/insert `2h+1`. Delete is `4h`: it prefetches the path child *and* one sibling (left
-  preferred) at every level whether or not an underflow happens, so the read count never reveals a
-  borrow or merge.
+Budgets count rounds: `_op_rounds` counts real fetch rounds (a stash hit spends none), and each padding
+unit is one dummy read plus its eviction, so every op spends exactly its budget, hit or miss, cached or
+not, and eviction runs on every round. A round reads `_round_width` paths (1; 2 for `BPlusOmapCached`,
+whose delete reads a level's child and sibling together), topped up with distinct random leaves. With
+`h` the height bound below: AVL search `h`, insert `h`, delete `3h - 2` (one root-to-replacement path,
+then at most two off-path fetches per remaining path node); B+ search `h`, insert `h`, delete `2h - 1`
+(the root, then child and sibling per level); `BPlusOmapCached` delete `h`. A negative pad raises: it
+means a bound is wrong. The cached maps serve stash hits from the client, but pad them, so their round
+counts equal the plain maps' (B+ delete aside).
 
 `search` streams: it re-homes and evicts each node before reading the next, so `local` stays O(1).
 
-**Height bounds.** AVL uses `max(1, ceil(1.44·log₂ n))` and B+ uses
-`max(1, ceil(log_⌈order/2⌉ n))`, both floored at 1 so single-element maps keep a positive budget. In
-multi-tree mode `update_mul_tree_height` first bounds the per-slot tree size with the Lambert-W
-max-load formula of eprint 2021/1280 at a 2⁻¹²⁸ overflow probability (`load_bound.max_bucket_load`,
-which `GroupOmap` also uses for its bucket bound; `lambert_w` solves `w·eʷ = x` by Halley's method),
-then applies the same height bound. The AVL bound is safe but runs 1–2 levels above the exact minimal-node recurrence.
-
-**Cached variants are deliberately not per-op oblivious.** They serve nodes left in the stash by
-earlier ops without a server round (AVL keeps the visited path in `local` until the next op), and pad to
-`h` rounds (`2h` for AVL delete), never padding below zero when an op loaded more nodes. Exceptions:
-`BPlusOmapCached.search` is the plain `BPlusOmap` search with its full budget and no stash serving, and its
-delete pads through `_pad_to`, so it raises if an over-full map grows past `h`. Because padding counts
-nodes rather than rounds, sorted inserts into a `BPlusOmapCached` (every path node a stash hit) send no
-round and nothing is evicted, so the stash overflows (order 3, `num_data=64`: 63 blocks against 42). Their counts are
-approximate: they count nodes in `local` (stash hits and a new insert node included), and an AVL delete
-that empties or re-roots a one-node path pads a full `2h` after its fetches. They are meant for use inside a larger oblivious composition.
-`BPlusOmapCached.delete` reads each level's child and sibling in one batched round (`h` rounds, same
-bandwidth as `2h−1` paths). Both B+ deletes run one walk (`_find_path_with_siblings`); they differ in
-`_fetch_nodes`, one round per node for `BPlusOmap` and one batched round per level for the cached map.
+**Height bounds** are exact: AVL `h` is the largest height whose minimal tree (`N(1) = 1`, `N(2) = 2`,
+`N(h) = N(h-1) + N(h-2) + 1`) has at most `n` nodes (`avl_max_height`); B+ `h` is the largest level
+count whose minimal tree (an internal root with two children, `ceil(order/2)` children per internal node,
+`ceil(order/2) - 1` keys per leaf) holds at most `n` keys (`bplus_max_levels`). In multi-tree mode
+`update_mul_tree_height` applies them to the per-slot bound from the Lambert-W max-load formula of
+eprint 2021/1280 at a 2⁻¹²⁸ overflow probability (`load_bound.max_bucket_load`, which `GroupOmap` also
+uses; `lambert_w` solves `w·eʷ = x` by Halley's method).
 
 ### Plaintext reference trees (`dependency/avl_tree.py`, `bplus_tree.py`)
 
@@ -525,9 +510,10 @@ disk.
   `ValueError` at config construction.
 - Keys and values obey the data contract (§3); a violation raises `ContractError` before any client
   state changes or any round is spent.
-- For the per-op-oblivious schemes (every ORAM, `AVLOmap`, `BPlusOmap`; not the cached maps or
-  `GroupOmap`, §5 and §8), the accessed-path sequence and the round count depend only on the sequence of
-  calls, never on keys or values; write deferral folds read-less batches into the next batch the same way for every input (§2).
+- For the per-op-oblivious schemes (every ORAM and every ODS map, cached ones included; not `GroupOmap`,
+  §8), the accessed-path sequence and the round count depend only on the sequence of calls, never on
+  keys, values, or cache state; write deferral folds read-less batches into the next batch the same way
+  for every input (§2).
 - A sealed row is exactly `row_bytes` long whatever its occupancy or value lengths, and building and
   per-op eviction seal through the same `PathCipher`, so an initial row is indistinguishable from an
   evicted one.
@@ -622,7 +608,6 @@ disk.
   sizes. `MulPathOram`'s batch API, edge cases, and the remote protocol and handover modes have their own
   files.
 - `tests/omap/`: `omap_spec` parametrizes over `OMAP_SPECS`, each entry declaring its guarantees
-  (`per_op_oblivious`). The obliviousness tests draw from filtered fixtures, so
-  they are *collected* only for variants that claim the property, and count path reads through a
-  recording client. Cached variants are excluded by construction, so there are no standing skips.
+  (its round `budgets` at `num_data=64`). The obliviousness tests run for every map, count path reads
+  and read rounds through a recording client, and check every op spends exactly its budget.
   Composed maps have their own files.

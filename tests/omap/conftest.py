@@ -12,6 +12,14 @@ class ReadCounter:
     def _leaves_read(self) -> int:
         return sum(len(op.leaves) for batch in self._recorder.batches for op in batch.reads if isinstance(op, ReadPath))
 
+    def _read_rounds(self) -> int:
+        return sum(any(isinstance(op, ReadPath) for op in batch.reads) for batch in self._recorder.batches)
+
+    def read_rounds(self, fn, *args, **kwargs):
+        before = self._read_rounds()
+        result = fn(*args, **kwargs)
+        return self._read_rounds() - before, result
+
     def rounds(self, fn, *args, **kwargs):
         before = self._leaves_read()
         result = fn(*args, **kwargs)
@@ -110,13 +118,13 @@ class OmapSpec:
         cls,
         config_cls,
         *,
-        per_op_oblivious,
+        budgets,
         invariant_checker,
         extra=None,
     ):
         self.cls = cls
         self.config_cls = config_cls
-        self.per_op_oblivious = per_op_oblivious
+        self.budgets = budgets
         self.invariant_checker = invariant_checker
         self.extra = extra or {}
 
@@ -132,7 +140,7 @@ OMAP_SPECS = [
         OmapSpec(
             AVLOmap,
             AvlOmapConfig,
-            per_op_oblivious=True,
+            budgets={"search": 8, "insert": 8, "delete": 22},
             invariant_checker=verify_avl_invariants,
         ),
         id="avl",
@@ -141,7 +149,7 @@ OMAP_SPECS = [
         OmapSpec(
             AVLOmapCached,
             AvlOmapCachedConfig,
-            per_op_oblivious=False,
+            budgets={"search": 8, "insert": 8, "delete": 22},
             invariant_checker=verify_avl_invariants,
         ),
         id="avl_cached",
@@ -150,7 +158,7 @@ OMAP_SPECS = [
         OmapSpec(
             BPlusOmap,
             BPlusOmapConfig,
-            per_op_oblivious=True,
+            budgets={"search": 4, "insert": 4, "delete": 7},
             invariant_checker=verify_bplus_invariants,
             extra={"order": 5},
         ),
@@ -160,7 +168,7 @@ OMAP_SPECS = [
         OmapSpec(
             BPlusOmapCached,
             BPlusOmapCachedConfig,
-            per_op_oblivious=False,
+            budgets={"search": 4, "insert": 4, "delete": 4},
             invariant_checker=verify_bplus_invariants,
             extra={"order": 5},
         ),
@@ -171,15 +179,6 @@ OMAP_SPECS = [
 
 @pytest.fixture(params=OMAP_SPECS)
 def omap_spec(request):
-    return request.param
-
-
-def _specs_where(predicate):
-    return [param for param in OMAP_SPECS if predicate(param.values[0])]
-
-
-@pytest.fixture(params=_specs_where(lambda s: s.per_op_oblivious))
-def oblivious_omap_spec(request):
     return request.param
 
 
