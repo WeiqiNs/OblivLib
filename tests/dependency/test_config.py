@@ -55,6 +55,6 @@ def test_config_rejects_each_invalid_field(client, config_cls, valid, invalid, m
 
 def test_a_budget_override_may_raise_a_minimum_but_keeps_the_others(client):
     config = AvlOmapConfig(**_OMAP, client=client, delete_budget=AccessBudget(3, -1), search_budget=AccessBudget(1, 5))
-    assert [config.budget(op).accesses(10) for op in ("search", "insert", "delete")] == [15, 20, 29]
+    assert [config.budget(op).rounds(10) for op in ("search", "insert", "delete")] == [15, 20, 29]
     textbook = BPlusOmapConfig.textbook(**_OMAP, client=client, order=3)
-    assert [textbook.budget(op).accesses(10) for op in ("search", "insert", "delete")] == [20, 30, 37]
+    assert [textbook.budget(op).rounds(10) for op in ("search", "insert", "delete")] == [20, 30, 37]

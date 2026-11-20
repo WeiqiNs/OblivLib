@@ -66,12 +66,16 @@ class TreeStorageBase[ConfigT: OramConfig]:
     def _get_new_leaf(self) -> int:
         return secrets.randbelow(self._leaf_range)
 
+    @property
+    def _stash_limit(self) -> int:
+        return self._stash_capacity
+
     def _check_stash(self) -> None:
         self._max_stash = max(self._max_stash, self.stash_size)
-        if len(self._stash) > self._stash_capacity:
+        if len(self._stash) > self._stash_limit:
             raise StashOverflowError(
                 f"{type(self).__name__} {self._name!r}: stash holds {len(self._stash)} blocks, "
-                + f"capacity {self._stash_capacity}"
+                + f"capacity {self._stash_limit}"
             )
 
     def _require_in_stash(self, key: int) -> Data:

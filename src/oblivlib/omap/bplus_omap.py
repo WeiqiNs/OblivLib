@@ -340,14 +340,14 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
                 break
 
         self._flush_local_to_stash()
-        self._pad_to()
+        self._finish_op()
         return search_value
 
     @override
     def _insert(self, key: Any, value: Any = None) -> None:
         self._begin_op("insert")
         if key is None:
-            self._pad_to()
+            self._finish_op()
             return
 
         if self.root is None:
@@ -355,7 +355,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
             self._return_to_stash([data_block])
             assert data_block.leaf is not None
             self.root = (data_block.key, data_block.leaf)
-            self._pad_to()
+            self._finish_op()
             return
 
         leaf = self._descend(key, hold=lambda node: len(node.value.keys) >= self._order - 1)
@@ -365,7 +365,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         self._perform_insertion()
 
         self._flush_local_to_stash()
-        self._pad_to()
+        self._finish_op()
 
     @override
     def _delete(self, key: Any) -> Any:
@@ -386,5 +386,5 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
         )
 
         self._return_to_stash([*path_nodes.values(), *siblings.values()])
-        self._pad_to()
+        self._finish_op()
         return deleted_value

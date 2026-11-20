@@ -98,7 +98,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._budget: int = 0
         self._op_accesses: int = 0
         self._op_fetches: int = 0
-        self._op_debt: int = 0
+        self._owed: int = 0
         self._op_owed: int = 0
 
     @abstractmethod
@@ -129,16 +129,25 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
     def root_layout(self) -> Optional[ROOT]:
         return Optional(Record((self._key_field, self._leaf_field)))
 
+    @property
+    def _carry_limit(self) -> int:
+        return 0
+
+    @property
+    @override
+    def _stash_limit(self) -> int:
+        return self._stash_capacity + self._owed
+
     def _return_to_stash(self, blocks: Sequence[Any]) -> None:
         self._stash += blocks
-        self._op_debt += len(blocks)
+        self._owed += len(blocks)
         self._check_stash()
 
     @override
     def _stage_write_back(self) -> None:
-        if self._unwritten_leaves:
-            super()._stage_write_back()
-            self._op_debt = max(0, self._op_debt - 1)
+        paths = len(set(self._unwritten_leaves))
+        super()._stage_write_back()
+        self._owed = max(0, self._owed - paths)
 
     def _flush_local_to_stash(self) -> None:
         self._return_to_stash(self._local.to_list())
@@ -149,7 +158,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
 
     def _fetch_node(self, key: Any, leaf: int | None, parent_key: Any = None) -> None:
         if self._op_accesses >= self._budget:
-            raise ValueError(f"{self._identity}: the op needs more than its {self._budget} path accesses.")
+            raise ValueError(f"{self._identity}: the op needs more than its {self._budget} rounds.")
         assert leaf is not None
         self._op_accesses += 1
         self._read_paths([leaf])
@@ -159,28 +168,30 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
 
     def _short_circuit_read(self, key: Any) -> bool:
         if key is None or self.root is None:
-            self._pad_to()
+            self._finish_op()
             return True
         return False
 
     def _begin_op(self, op: OdsOp) -> None:
         config, height = self._config, self._max_height
         if self._distinguishable:
-            self._budget = config.budget(op).accesses(height)
+            self._budget = config.budget(op).rounds(height)
         else:
-            self._budget = max(config.budget(each).accesses(height) for each in ODS_OPS)
+            self._budget = max(config.budget(each).rounds(height) for each in ODS_OPS)
         self._op_accesses = 0
-        self._op_debt = 0
+        if not self._carry_limit:
+            self._owed = 0
 
-    def _pad_to(self) -> None:
+    def _finish_op(self) -> None:
         pending = bool(self._unwritten_leaves)
         self._stage_write_back()
         padding = self._budget - self._op_accesses
-        self._op_fetches, self._op_owed = self._op_accesses, self._op_debt
-        if self._op_owed > padding:
+        self._op_fetches, self._op_owed = self._op_accesses, self._owed
+        if self._owed - padding > self._carry_limit:
             raise ValueError(
-                f"{self._identity}: {self._op_owed} blocks returned to the stash still need an eviction of "
-                + f"their own, but only {padding} of the {self._budget} path accesses remain."
+                f"{self._identity}: {self._owed} blocks returned to the stash still need an eviction of "
+                + f"their own, but only {padding} of the {self._budget} rounds remain and "
+                + f"{self._carry_limit} may carry over."
             )
         for _ in range(padding):
             self._op_accesses += 1

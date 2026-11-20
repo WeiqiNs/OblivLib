@@ -8,9 +8,11 @@ with `dataclasses.replace(cfg, num_data=...)`.
 
 from __future__ import annotations
 
+import math
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_args, override
 
@@ -224,11 +226,11 @@ class OmapConfig(OramConfig):
 
 @dataclass(frozen=True)
 class AccessBudget:
-    a: int
-    b: int
+    a: Fraction | int
+    b: Fraction | int
 
-    def accesses(self, height: int) -> int:
-        return self.a * height + self.b
+    def rounds(self, height: int) -> int:
+        return math.floor(self.a * height + self.b)
 
 
 @dataclass(frozen=True, kw_only=True)
