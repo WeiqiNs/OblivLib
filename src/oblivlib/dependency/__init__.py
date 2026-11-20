@@ -2,7 +2,7 @@
 
 Names are re-exported explicitly (rather than via ``from .mod import *``) so the
 public surface is type-checker-visible, free of incidental stdlib/typing leakage,
-and stated in one place — ``__all__``. See ``ARCHITECTURE.md``.
+and stated in one place — ``__all__``.
 """
 
 from .avl_tree import AVLData, AVLTree, AVLTreeNode

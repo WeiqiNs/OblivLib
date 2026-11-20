@@ -2,7 +2,7 @@
 
 OblivLib (`oblivlib`) implements classic oblivious algorithms (oblivious RAM and oblivious maps) for
 client/server deployments where the client is trusted and may compute non-obliviously, and the server only
-stores encrypted data. Design notes are in [`ARCHITECTURE.md`](https://github.com/WeiqiNs/OblivLib/blob/main/ARCHITECTURE.md).
+stores encrypted data.
 
 Related publications by the maintainers:
 
