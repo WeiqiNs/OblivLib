@@ -67,8 +67,10 @@ def _keys_by_path(tree):
     return keys
 
 
-def _build(client, num_data, keys_by_path, scale=1):
-    omap = AVLOmap(AvlOmapConfig(num_data=num_data, key_size=8, data_size=8, client=client, distinguishable=True))
+def _build(client, num_data, keys_by_path, scale=1, *, cached=False):
+    omap = AVLOmap(
+        AvlOmapConfig(num_data=num_data, key_size=8, data_size=8, client=client, distinguishable=True, cached=cached)
+    )
     omap.init_server_storage()
     for path in sorted(keys_by_path, key=lambda path: (len(path), path)):
         omap.insert(_key(scale * keys_by_path[path]), b"v")
@@ -105,6 +107,56 @@ def test_each_avl_bound_is_reached(client, height):
     fetches = avl_delete_fetches(height)
     assert (omap._op_fetches, omap._op_owed) == (fetches, 2 * height - fetches)
     assert _work(omap) == omap._budget
+
+
+@pytest.mark.parametrize("height", [3, 5, 6, 8])
+def test_each_cached_avl_bound_is_reached(client, height):
+    spine = _keys_by_path(_worst_insert_tree(height))
+    omap = _build(client, len(spine) + 1, spine, scale=2, cached=True)
+    omap.insert(_key(2 * spine["R" * (height - 1)] + 1), b"v")
+    assert omap._op_fetches == height
+    assert omap._budget == height + 1
+
+    worst = _keys_by_path(_worst_delete_tree(height))
+    omap = _build(client, len(worst), worst, cached=True)
+    end_of_short_path = max((path for path in worst if set(path) <= {"R"}), key=len)
+    omap.drain()
+    assert omap.delete(_key(worst[end_of_short_path])) == b"v"
+    fetches = avl_delete_fetches(height)
+    assert omap._op_fetches == omap._budget == fetches == (3 * height - 1) // 2
+    assert omap._owed == 2 * height - fetches <= omap._carry_limit
+    rest = [path for path in worst if path != end_of_short_path]
+    assert [omap.search(_key(worst[path])) for path in rest] == [b"v"] * len(rest)
+
+
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+def test_cached_maps_match_the_model_and_drain_in_a_fixed_count(client, distinguishable, duplicate_blocks):
+    rng = random.Random(11)
+    omap = AVLOmap(
+        AvlOmapConfig(num_data=64, key_size=8, data_size=8, client=client, cached=True, distinguishable=distinguishable)
+    )
+    omap.init_server_storage()
+    model: dict[bytes, bytes] = {}
+    for _ in range(1500):
+        key, roll = _key(rng.randrange(64)), rng.random()
+        if roll < 0.45 and key not in model:
+            omap.insert(key, key)
+            model[key] = key
+        elif roll < 0.75:
+            assert omap.delete(key) == model.pop(key, None)
+        else:
+            assert omap.search(key) == model.get(key)
+        assert omap._owed <= omap._carry_limit
+
+    rounds = client.metrics.rounds
+    omap.drain()
+    assert client.metrics.rounds - rounds == omap._carry_limit
+    assert omap._owed == 0
+    rounds = client.metrics.rounds
+    omap.drain()
+    assert client.metrics.rounds - rounds == omap._carry_limit
+    assert all(omap.search(key) == value for key, value in model.items())
+    assert not duplicate_blocks(omap)
 
 
 def _omap(client, num_data: int) -> AVLOmap:

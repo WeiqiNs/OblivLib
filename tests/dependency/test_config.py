@@ -42,6 +42,8 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (AvlOmapConfig, _OMAP, {"insert_budget": AccessBudget(1, 9)}, r"a must be >= 2"),
         (AvlOmapConfig, _OMAP, {"delete_budget": AccessBudget(3, -2)}, r"a \+ b >= 2"),
         (BPlusOmapConfig, {**_OMAP, "order": 3}, {"delete_budget": AccessBudget(3, 9)}, r"a must be >= 4"),
+        (AvlOmapConfig, {**_OMAP, "cached": True}, {"delete_budget": AccessBudget(1, 9)}, r"a must be >= 3/2"),
+        (BPlusOmapConfig, {**_OMAP, "order": 3}, {"cached": True}, "cached"),
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
     ],
 )
@@ -58,3 +60,12 @@ def test_a_budget_override_may_raise_a_minimum_but_keeps_the_others(client):
     assert [config.budget(op).rounds(10) for op in ("search", "insert", "delete")] == [15, 20, 29]
     textbook = BPlusOmapConfig.textbook(**_OMAP, client=client, order=3)
     assert [textbook.budget(op).rounds(10) for op in ("search", "insert", "delete")] == [20, 30, 37]
+    cached = AvlOmapConfig(**_OMAP, client=client, cached=True)
+    assert [cached.budget(op).rounds(height) for op in ("search", "insert", "delete") for height in (7, 8)] == [
+        7,
+        8,
+        8,
+        9,
+        10,
+        11,
+    ]

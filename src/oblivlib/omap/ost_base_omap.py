@@ -131,7 +131,12 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
 
     @property
     def _carry_limit(self) -> int:
-        return 0
+        return self._max_height if self._config.cached else 0
+
+    def drain(self) -> None:
+        for _ in range(self._carry_limit):
+            self._read_paths([self._get_new_leaf()])
+            self._write_paths()
 
     @property
     @override

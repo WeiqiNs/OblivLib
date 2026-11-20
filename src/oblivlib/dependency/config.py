@@ -236,14 +236,20 @@ class AccessBudget:
 @dataclass(frozen=True, kw_only=True)
 class TreeOmapConfig(OmapConfig):
     MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
+    MIN_CACHED_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
 
+    cached: bool = False
     search_budget: AccessBudget | None = None
     insert_budget: AccessBudget | None = None
     delete_budget: AccessBudget | None = None
 
+    @property
+    def min_budgets(self) -> dict[OdsOp, AccessBudget]:
+        return self.MIN_CACHED_BUDGETS if self.cached else self.MIN_BUDGETS
+
     def budget(self, op: OdsOp) -> AccessBudget:
-        return getattr(self, f"{op}_budget") or self.MIN_BUDGETS[op]
+        return getattr(self, f"{op}_budget") or self.min_budgets[op]
 
     @classmethod
     def textbook(cls, **kwargs: Any) -> Self:
@@ -257,8 +263,10 @@ class TreeOmapConfig(OmapConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.cached and not self.MIN_CACHED_BUDGETS:
+            raise ValueError(f"{type(self).__name__} does not support cached=True yet.")
         for op in ODS_OPS:
-            given, least = self.budget(op), self.MIN_BUDGETS[op]
+            given, least = self.budget(op), self.min_budgets[op]
             if given.a < least.a or given.a + given.b < least.a + least.b:
                 raise ValueError(
                     f"{op}_budget {given} is below the proven minimum {least}: a must be >= {least.a} and "
@@ -272,6 +280,11 @@ class AvlOmapConfig(TreeOmapConfig):
         "search": AccessBudget(1, 0),
         "insert": AccessBudget(2, 0),
         "delete": AccessBudget(2, 0),
+    }
+    MIN_CACHED_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
+        "search": AccessBudget(1, 0),
+        "insert": AccessBudget(1, 1),
+        "delete": AccessBudget(Fraction(3, 2), Fraction(-1, 2)),
     }
     TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
         "search": AccessBudget(3, 1),

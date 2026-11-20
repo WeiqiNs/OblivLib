@@ -34,10 +34,13 @@ Related publications by the maintainers:
 - Group-by-hash OMAP: [`group_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/group_omap.py)
 
 Tree OMAPs hide the operation type by default (`distinguishable=False`); set it to `True` to let each
-operation pad only to its own bound. Every search, insert, and delete pads to a fixed number of path
-accesses, `a * h + b` for a tree of height bound `h`. The defaults are the proven minimums; raise one
+operation pad only to its own bound. Every search, insert, and delete pads to a fixed number of
+rounds, `floor(a * h + b)` for a tree of height bound `h`. The defaults are the proven minimums; raise one
 with `AvlOmapConfig(..., insert_budget=AccessBudget(3, 0))`, or use `AvlOmapConfig.textbook(...)` /
 `BPlusOmapConfig.textbook(...)` for the budgets of the original held-node implementation.
+`AvlOmapConfig(..., cached=True)` lets an operation leave up to `h` evictions to the next ones, which
+lowers insert to `h + 1` and delete to `floor((3h - 1) / 2)` rounds; call `drain()` before shutdown or
+handover to settle them in a fixed `h` rounds.
 
 ## Installation
 
