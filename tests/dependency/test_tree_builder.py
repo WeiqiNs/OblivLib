@@ -1,9 +1,10 @@
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
-from oblivlib.dependency import AesGcm, Data
+from oblivlib.dependency import AesGcm, Data, DuplicateLabelError
 from oblivlib.dependency.codec import DefaultCodec
 from oblivlib.dependency.heap_index import tree_size
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
@@ -65,3 +66,43 @@ def test_three_handovers_produce_identical_server_state(tmp_path, handover_clien
         rows = client.execute().require("t")
         assert [rows[index] for index in range(tree_size(image.level))] == expected
         client.close()
+
+
+def _open_fds() -> int:
+    return len(os.listdir("/proc/self/fd"))
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").exists(), reason="counts open descriptors through /proc")
+@pytest.mark.parametrize("fail_at", ["placement", "pre_sealing"])
+def test_a_failed_file_build_closes_its_file_and_leaves_it(tmp_path, fail_once, fail_at):
+    cipher = make_path_cipher(_CODEC, AesGcm(), bucket_size=2)
+
+    def blocks():
+        yield Data(key=0, leaf=0, value=b"v")
+        raise RuntimeError("injected")
+
+    if fail_at == "pre_sealing":
+        fail_once(os, "pwrite")
+    before = _open_fds()
+    with pytest.raises(RuntimeError, match="injected"):
+        build_tree(blocks(), level=3, bucket_size=2, cipher=cipher, build_file=tmp_path / "build.tree")
+    assert _open_fds() == before
+    assert (tmp_path / "build.tree").exists()
+
+
+def test_a_failed_adopt_attach_leaves_the_file_where_it_was(tmp_path, handover_client):
+    cipher = make_path_cipher(_CODEC, AesGcm(), bucket_size=2)
+    client = handover_client("adopt")
+    for name in ("first", "second"):
+        build_tree([], level=3, bucket_size=2, cipher=cipher, build_file=tmp_path / f"{name}.tree")
+    assert cipher.row_bytes is not None
+    image = FileImage(level=3, row_bytes=cipher.row_bytes, path=tmp_path / "first.tree")
+    client.host_tree("t", image)
+
+    second = tmp_path / "second.tree"
+    with pytest.raises(DuplicateLabelError):
+        client.host_tree("t", FileImage(level=3, row_bytes=image.row_bytes, path=second))
+
+    assert second.exists()
+    assert not list((tmp_path / "adopt_server").glob("adopt-*.tree"))
+    client.close()

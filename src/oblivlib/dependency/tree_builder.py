@@ -51,6 +51,9 @@ class _Buckets(ABC):
     @abstractmethod
     def finish(self) -> TreeImage: ...
 
+    @abstractmethod
+    def close(self) -> None: ...
+
 
 class _MemoryBuckets(_Buckets):
     def __init__(self, level: int, cipher: PathCipher):
@@ -71,6 +74,10 @@ class _MemoryBuckets(_Buckets):
         rows = [self._cipher.seal_bucket(bucket) for bucket in self._buckets]
         return MemoryImage(level=self._level, row_bytes=self._cipher.row_bytes, rows=rows)
 
+    @override
+    def close(self) -> None:
+        pass
+
 
 class _FileBuckets(_Buckets):
     def __init__(self, level: int, cipher: PathCipher, path: Path):
@@ -81,8 +88,12 @@ class _FileBuckets(_Buckets):
         self._row_bytes = cipher.row_bytes
         self._path = path
         self._fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
-        for index in range(tree_size(level)):
-            self.write(index, [])
+        try:
+            for index in range(tree_size(level)):
+                self.write(index, [])
+        except BaseException:
+            self.close()
+            raise
 
     @override
     def read(self, index: int) -> Bucket:
@@ -94,8 +105,12 @@ class _FileBuckets(_Buckets):
 
     @override
     def finish(self) -> FileImage:
-        os.close(self._fd)
+        self.close()
         return FileImage(level=self._level, row_bytes=self._row_bytes, path=self._path)
+
+    @override
+    def close(self) -> None:
+        os.close(self._fd)
 
 
 def build_tree(
@@ -106,13 +121,17 @@ def build_tree(
     Blocks whose whole path is full come back as ``overflow``."""
     buckets = _MemoryBuckets(level, cipher) if build_file is None else _FileBuckets(level, cipher, build_file)
     overflow: list[Data] = []
-    for block in blocks:
-        for index in path_to_root(leaf_index(block.require_leaf(), level)):
-            bucket = buckets.read(index)
-            if len(bucket) < bucket_size:
-                bucket.append(block)
-                buckets.write(index, bucket)
-                break
-        else:
-            overflow.append(block)
+    try:
+        for block in blocks:
+            for index in path_to_root(leaf_index(block.require_leaf(), level)):
+                bucket = buckets.read(index)
+                if len(bucket) < bucket_size:
+                    bucket.append(block)
+                    buckets.write(index, bucket)
+                    break
+            else:
+                overflow.append(block)
+    except BaseException:
+        buckets.close()
+        raise
     return BuildResult(image=buckets.finish(), overflow=overflow)

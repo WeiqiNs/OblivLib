@@ -106,8 +106,8 @@ A failure comes back as `ErrorReply(kind, message)`; `handle` never raises. `ERR
 turns an unknown kind or the wrong reply type into `ProtocolError`. `Client.execute()` raises;
 `ExecuteResult` holds only results, and `require(label)` raises `MissingResultError` for a label with
 no result. A request with no reply within `DEFAULT_TIMEOUT_MS` (`transport.py`) raises
-`TransportError`; the `REQ` socket is then unusable (any later request, including `close()`'s, raises
-`TransportError` at once) and nothing is resent, so start a new client.
+`TransportError`; the `REQ` socket is then unusable (any later request, including `close()`'s once a session
+exists, raises `TransportError` at once) and nothing is resent, so start a new client.
 
 ### Limits and metrics
 
@@ -130,7 +130,9 @@ successful hand-over leaves no local build file. `AttachTree` accepts only a pla
 `storage_dir` (no separators, no `..`, not absolute), requires the exact size, and moves the file into
 the session's directory; an in-memory server refuses it. A failed hand-over or attach leaves the file
 where it was; it holds only sealed rows, and a file shipped into `storage_dir` can be attached again
-by the name `ship_file` returned (an adopted file keeps its generated `adopt-*.tree` name).
+by the name `ship_file` returned; an adopted file is moved back to its build path. A stream that fails
+partway leaves the label created with the rows sent so far, so that label cannot be hosted again, and a
+streamed `FileImage` is not checked against its expected size.
 
 ---
 

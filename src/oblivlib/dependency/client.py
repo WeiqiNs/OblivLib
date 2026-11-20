@@ -311,7 +311,13 @@ class Client:
         attach = AttachTree(
             session=session, label=label, filename=filename, level=image.level, row_bytes=image.row_bytes
         )
-        self._expect_ok(attach)
+        try:
+            self._expect_ok(attach)
+        except BaseException:
+            adopted = None if self._ship_file is not None else self._backend.storage_dir
+            if adopted is not None and (adopted / filename).is_file():
+                shutil.move(adopted / filename, image.path)
+            raise
         self._levels[label] = image.level
 
     def _hand_over(self, path: Path) -> str | None:
