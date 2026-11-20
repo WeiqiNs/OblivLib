@@ -12,6 +12,9 @@ class ReadCounter:
     def _leaves_read(self) -> int:
         return sum(len(op.leaves) for batch in self._recorder.batches for op in batch.reads if isinstance(op, ReadPath))
 
+    def paths_read(self) -> int:
+        return self._leaves_read()
+
     def _read_rounds(self) -> int:
         return sum(any(isinstance(op, ReadPath) for op in batch.reads) for batch in self._recorder.batches)
 

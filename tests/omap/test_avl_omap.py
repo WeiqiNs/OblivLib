@@ -1,11 +1,21 @@
 import random
 
+import pytest
+
 from oblivlib.dependency import AvlOmapConfig
 from oblivlib.omap import AVLOmap
+from oblivlib.omap.avl_omap import avl_max_height
 
 
 def _key(i: int) -> bytes:
     return f"{i:06d}".encode()
+
+
+@pytest.mark.parametrize(
+    ("num_nodes", "height"), [(1, 1), (2, 2), (3, 2), (4, 3), (6, 3), (7, 4), (53, 7), (54, 8), (87, 8), (88, 9)]
+)
+def test_height_bound_is_the_tallest_avl_tree_with_that_many_nodes(num_nodes, height):
+    assert avl_max_height(num_nodes) == height
 
 
 def _omap(client, num_data: int) -> AVLOmap:

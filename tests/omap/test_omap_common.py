@@ -278,6 +278,7 @@ class TestOmapObliviousness:
         model = {}
         for op, key in _budget_workload(pattern):
             expected = omap_spec.budgets[op] if distinguishable else max(omap_spec.budgets.values())
+            paths_before = server.paths_read()
             if op == "insert":
                 spent, _ = server.read_rounds(omap.insert, key, key)
                 if key is not None:
@@ -289,6 +290,8 @@ class TestOmapObliviousness:
                 spent, found = server.read_rounds(omap.search, key)
                 assert found == model.get(key)
             assert spent == expected, f"{op}({key!r}) spent {spent} rounds, budget {expected}"
+            paths = server.paths_read() - paths_before
+            assert paths == expected * omap._round_width, f"{op}({key!r}) read {paths} paths in {spent} rounds"
         assert not duplicate_blocks(omap)
 
     def test_write_deferral_preserves_access_sequence(self, omap_spec, assert_deferral_preserves_access):

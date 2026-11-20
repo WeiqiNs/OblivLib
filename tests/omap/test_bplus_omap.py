@@ -4,6 +4,15 @@ import pytest
 
 from oblivlib.dependency import AesGcm, BPlusOmapCachedConfig, BPlusOmapConfig
 from oblivlib.omap import BPlusOmap, BPlusOmapCached
+from oblivlib.omap.bplus_omap import bplus_max_levels
+
+
+@pytest.mark.parametrize(
+    ("order", "num_keys", "levels"),
+    [(3, 1, 1), (3, 3, 2), (3, 4, 3), (3, 7, 3), (3, 8, 4), (4, 8, 4), (5, 11, 2), (5, 12, 3), (5, 36, 4)],
+)
+def test_level_bound_is_the_tallest_tree_the_fill_invariants_allow(order, num_keys, levels):
+    assert bplus_max_levels(num_keys, order) == levels
 
 
 @pytest.mark.parametrize("order", [3, 4])

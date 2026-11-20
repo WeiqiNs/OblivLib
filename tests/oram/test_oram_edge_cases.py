@@ -146,7 +146,7 @@ def test_da_oram_resets_in_a_partly_filled_last_block(client):
     ids=["da", "freecursive_hard", "freecursive_prob"],
 )
 def test_a_group_counter_that_overflows_its_field_raises_capacity_error(monkeypatch, client, make):
-    monkeypatch.setattr(config, "MIN_GC_LENGTH", 1, raising=False)
+    monkeypatch.setattr(config, "MIN_GC_LENGTH", 1)
     oram = make(client)
     oram.init_server_storage()
     for step in range(3):

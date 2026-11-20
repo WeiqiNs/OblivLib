@@ -435,7 +435,7 @@ counts equal the plain maps' (B+ delete aside).
 
 `search` streams: it re-homes and evicts each node before reading the next, so `local` stays O(1).
 
-**Height bounds** are exact: AVL `h` is the largest height whose minimal tree (`N(1) = 1`, `N(2) = 2`,
+**Height bounds** come from the fill invariants (the tallest tree they allow; B+ inserts within capacity may stay a level lower): AVL `h` is the largest height whose minimal tree (`N(1) = 1`, `N(2) = 2`,
 `N(h) = N(h-1) + N(h-2) + 1`) has at most `n` nodes (`avl_max_height`); B+ `h` is the largest level
 count whose minimal tree (an internal root with two children, `ceil(order/2)` children per internal node,
 `ceil(order/2) - 1` keys per leaf) holds at most `n` keys (`bplus_max_levels`). In multi-tree mode
