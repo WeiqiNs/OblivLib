@@ -84,8 +84,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
         for key, value in (updates or {}).items():
             require_oram_key(self._identity, key, self._num_data)
             require_value(self._identity, value, self._data_size)
-        if not self._pending_leaves:
-            raise ValueError(f"{self._identity}: no access is waiting for its eviction.")
+        self._require_pending()
         self._eviction_for_mul_keys(updates)
 
     def _eviction_for_mul_keys(self, updates: dict[Any, Any] | None = None) -> None:

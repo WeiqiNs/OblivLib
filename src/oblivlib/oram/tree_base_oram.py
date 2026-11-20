@@ -80,6 +80,10 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
         if self._pending_leaves:
             raise ValueError(f"{self._identity}: an access is still waiting for its eviction.")
 
+    def _require_pending(self) -> None:
+        if not self._pending_leaves:
+            raise ValueError(f"{self._identity}: no access is waiting for its eviction.")
+
     def _require_access(self, key: Any, value: Any) -> None:
         require_oram_key(self._identity, key, self._num_data)
         if value is not UNSET:
@@ -100,8 +104,7 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
     def eviction_with_update_stash(self, key: int, value: bytes) -> None:
         require_oram_key(self._identity, key, self._num_data)
         require_value(self._identity, value, self._data_size)
-        if not self._pending_leaves:
-            raise ValueError(f"{self._identity}: no access is waiting for its eviction.")
+        self._require_pending()
         self._require_in_stash(key).value = value
         self._write_back()
 

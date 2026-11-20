@@ -94,10 +94,11 @@ class TestMulPathOram:
         for updates in ({64: b"v"}, {1: "one"}, {1: b"x" * 11}):
             with pytest.raises(ContractError):
                 oram.eviction_for_mul_keys(updates)
-        with pytest.raises(KeyError, match="Key 2 not found"):
-            oram.eviction_for_mul_keys({1: b"uno", 2: b"two"})
+        missing = next(key for key in range(2, 64) if all(data.key != key for data in oram._stash))
+        with pytest.raises(KeyError, match=f"Key {missing} not found"):
+            oram.eviction_for_mul_keys({1: b"uno", missing: b"two"})
         oram.eviction_for_mul_keys()
-        assert oram.operate_on_keys({1: UNSET, 2: UNSET}) == {1: b"one", 2: b""}
+        assert oram.operate_on_keys({1: UNSET, missing: UNSET}) == {1: b"one", missing: b""}
         with pytest.raises(ValueError, match="no access is waiting"):
             oram.eviction_for_mul_keys({1: b"uno"})
         assert oram.operate_on_keys({1: UNSET}) == {1: b"one"}
