@@ -8,8 +8,8 @@ from oblivlib.omap import GroupOmap
 from oblivlib.oram import DAOram, PathOram
 
 
-def _make_upper(kind, n, client, encryptor, key_size=10):
-    data_size = GroupOmap.upper_oram_data_size(num_data=n, key_size=key_size)
+def _make_upper(kind, n, client, encryptor):
+    data_size = GroupOmap.upper_oram_data_size(num_data=n)
     if kind == "path":
         return PathOram(
             PathOramConfig(num_data=n, data_size=data_size, client=client, name="group_upper", encryptor=encryptor)
@@ -17,19 +17,22 @@ def _make_upper(kind, n, client, encryptor, key_size=10):
     return DAOram(DaOramConfig(num_data=n, data_size=data_size, client=client, name="group_upper", encryptor=encryptor))
 
 
-def _make_omap(client, n=128, encryptor=None, upper_kind="path"):
+def _make_omap(client, n=128, encryptor=None, upper_kind="path", distinguishable=False):
     return GroupOmap(
-        GroupOmapConfig(num_data=n, key_size=10, data_size=64, client=client, encryptor=encryptor),
+        GroupOmapConfig(
+            num_data=n, key_size=10, data_size=64, client=client, encryptor=encryptor, distinguishable=distinguishable
+        ),
         upper_oram=_make_upper(upper_kind, n, client, encryptor),
     )
 
 
 class TestGroupOmap:
+    @pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
     @pytest.mark.parametrize("upper_kind", ["path", "da"])
     @pytest.mark.parametrize("enc", [False, True])
-    def test_oracle(self, upper_kind, enc, client, duplicate_blocks):
+    def test_oracle(self, upper_kind, enc, distinguishable, client, duplicate_blocks):
         n = 128
-        omap = _make_omap(client, n, AesGcm() if enc else None, upper_kind)
+        omap = _make_omap(client, n, AesGcm() if enc else None, upper_kind, distinguishable)
         omap.init_server_storage()
         rng = random.Random(f"{upper_kind}-{enc}")
         model, keyspace = {}, [b"%010d" % i for i in range(n)]
@@ -41,8 +44,10 @@ class TestGroupOmap:
                     value = rng.randbytes(64)
                     omap.insert(key=key, value=value)
                     model[key] = value
-            elif roll < 0.75:
+            elif roll < 0.65:
                 assert omap.search(key=key) == model.get(key)
+            elif roll < 0.8:
+                assert omap.delete(key=key) == model.pop(key, None)
             elif key in model:
                 new_value = rng.randbytes(64)
                 assert omap.search(key=key, value=new_value) == model[key]
@@ -50,6 +55,7 @@ class TestGroupOmap:
         for key in keyspace:
             assert omap.search(key=key) == model.get(key)
         assert omap.search(key=b"absent") is None
+        assert sorted(pair for bucket in range(n) for pair in omap.search_group(bucket)) == sorted(model.items())
         assert not duplicate_blocks(omap)
 
     def test_undersized_upper_raises(self, client):
@@ -67,6 +73,12 @@ class TestGroupOmap:
         for i in range(n // 2, n):
             omap.insert(key=b"%d" % i, value=b"%d" % (i * 7))
             model[b"%d" % i] = b"%d" % (i * 7)
+        with pytest.raises(ContractError, match="num_data=128"):
+            omap.insert(key=b"extra", value=b"v")
+        assert omap.delete(key=b"0") == b"0"
+        omap.insert(key=b"extra", value=b"v")
+        model[b"extra"] = b"v"
+        del model[b"0"]
         for key, value in model.items():
             assert omap.search(key=key) == value
         assert not duplicate_blocks(omap)
@@ -120,7 +132,7 @@ def test_full_bucket_insert_leaves_the_map_usable(client):
 def test_lower_paths_cover_the_whole_leaf_range(client):
     omap = _make_omap(client, n=100)
     leaf_range = omap._lower_oram._leaf_range
-    leaves = {omap._compute_path(bytes([i % 256, i // 256]) * 16, b"key") for i in range(4000)}
+    leaves = {omap._slot_leaf(bytes([i % 256, i // 256]) * 16, 1) for i in range(4000)}
     assert leaf_range > 100
     assert max(leaves) >= 100
     assert leaves <= set(range(leaf_range))
@@ -129,11 +141,12 @@ def test_lower_paths_cover_the_whole_leaf_range(client):
 @pytest.mark.parametrize(
     ("lower_method", "operation"),
     [
-        ("_operate_on_keys_without_eviction", lambda omap: omap.search(b"key3")),
-        ("_operate_on_keys_without_eviction", lambda omap: omap.search_group(omap._hash_key_to_bucket(b"key3"))),
-        ("_insert_block", lambda omap: omap.insert(b"new", b"x")),
+        ("_read_paths", lambda omap: omap.search(b"key3")),
+        ("_read_paths", lambda omap: omap.search_group(omap._hash_key_to_bucket(b"key3"))),
+        ("_read_paths", lambda omap: omap.insert(b"new", b"x")),
+        ("_read_paths", lambda omap: omap.delete(b"key3")),
     ],
-    ids=["search", "search_group", "insert"],
+    ids=["search", "search_group", "insert", "delete"],
 )
 def test_a_failed_lower_access_still_finishes_the_upper_access(fail_once, client, lower_method, operation):
     omap = _make_omap(client, n=64)
@@ -182,3 +195,34 @@ def test_an_insert_whose_write_back_fails_keeps_its_block_reachable(
     assert omap.search(b"new", b"second") == b"first"
     assert omap.search(b"new") == b"second"
     assert not duplicate_blocks(omap)
+
+
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+def test_every_lower_access_reads_a_fixed_number_of_paths(recorded_client, distinguishable):
+    client, recorder = recorded_client()
+    omap = _make_omap(client, n=64, distinguishable=distinguishable)
+    pairs = [(b"key%d" % i, b"v") for i in range(30)]
+    omap.init_server_storage(pairs)
+    lower = omap._lower_oram._name
+    width = omap._width
+    empty = next(
+        key
+        for key in (b"x%d" % i for i in range(1000))
+        if omap._hash_key_to_bucket(key) not in {omap._hash_key_to_bucket(each) for each, _ in pairs}
+    )
+    ops = {
+        "search hit": (lambda: omap.search(b"key3"), width),
+        "search empty bucket": (lambda: omap.search(empty), width),
+        "search update": (lambda: omap.search(b"key4", b"w"), width),
+        "search_group": (lambda: omap.search_group(omap._hash_key_to_bucket(b"key5")), width),
+        "delete hit": (lambda: omap.delete(b"key6"), width),
+        "delete miss": (lambda: omap.delete(empty), width),
+        "insert": (lambda: omap.insert(b"fresh", b"v"), 1 if distinguishable else width),
+    }
+    for name, (op, expected) in ops.items():
+        before = len(recorder.batches)
+        op()
+        reads = [len(read.leaves) for batch in recorder.batches[before:] for read in batch.reads if read.label == lower]
+        assert reads == [expected], name
+    assert omap.search(b"key4") == b"w"
+    assert omap.search(b"fresh") == b"v"

@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cached_property
 from typing import Any, cast, override
 
-from oblivlib.dependency import Data, KVPair
+from oblivlib.dependency import ContractError, Data, KVPair
 from oblivlib.dependency.balls_into_bins import max_bin_load
 from oblivlib.dependency.config import ODS_OPS, OdsOp, TreeOmapConfig
 from oblivlib.dependency.contract import require_batch, require_omap_init, require_omap_key, require_value
@@ -94,6 +94,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._op_fetches: int = 0
         self._owed: int = 0
         self._op_owed: int = 0
+        self._size: int = 0
         if self._batch_size > self._leaf_range:
             raise ValueError(f"{self._identity}: batch_size {self._batch_size} exceeds the {self._leaf_range} leaves.")
 
@@ -271,6 +272,9 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         root_list: list[ROOT | None] = []
         for data in data_list or []:
             require_omap_init(self._identity, data, key_size=self._key_size, data_size=self._data_size)
+        size = sum(len(data) for data in data_list or [])
+        if size > self._num_data:
+            raise ContractError(f"{self._identity}: {size} initial keys exceed num_data={self._num_data}.")
         for data in data_list or []:
             root = None
             if data:
@@ -278,6 +282,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
                 blocks.extend(tree_blocks)
             root_list.append(root)
         self._host_tree(self._build_tree(blocks))
+        self._size = size
         return root_list
 
     def _require_pair(self, key: bytes | None, value: bytes | None, *, value_required: bool) -> None:
@@ -306,7 +311,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         require_batch(self._identity, [key for key, _ in pairs], self._batch_size, distinct=True)
         for key, value in pairs:
             self._require_pair(key, value, value_required=True)
-        self._insert_many(pairs)
+        self._insert_counted(pairs)
 
     def _search(self, key: Any, value: Any) -> Any:
         return self._search_many([(key, value)])[0]
@@ -337,7 +342,19 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         raise NotImplementedError
 
     def _insert(self, key: Any, value: Any) -> None:
-        self._insert_many([(key, value)])
+        self._insert_counted([(key, value)])
+
+    def _require_room(self, fresh: int) -> None:
+        if self._size + fresh > self._num_data:
+            raise ContractError(
+                f"{self._identity}: the map already holds {self._size} of num_data={self._num_data} keys."
+            )
+
+    def _insert_counted(self, pairs: Sequence[tuple[Any, Any]]) -> None:
+        fresh = sum(key is not None for key, _ in pairs)
+        self._require_room(fresh)
+        self._insert_many(pairs)
+        self._size += fresh
 
     @abstractmethod
     def _insert_many(self, pairs: Sequence[tuple[Any, Any]]) -> None:
@@ -348,6 +365,12 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
             require_omap_key(self._identity, key, self._key_size)
         return self._delete(key)
 
-    @abstractmethod
     def _delete(self, key: Any) -> Any:
+        deleted = self._delete_key(key)
+        if deleted is not None:
+            self._size -= 1
+        return deleted
+
+    @abstractmethod
+    def _delete_key(self, key: Any) -> Any:
         raise NotImplementedError

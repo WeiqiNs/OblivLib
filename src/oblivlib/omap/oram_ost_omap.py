@@ -72,6 +72,7 @@ class OramOstOmap(BaseOmap):
     def insert(self, key: bytes, value: bytes) -> None:
         require_omap_key(self._identity, key, self._ost._key_size)
         require_value(self._identity, value, self._ost._data_size)
+        self._ost._require_room(1)
         self._on_slot(key, lambda: self._ost._insert(key, value))
 
     def delete(self, key: bytes) -> bytes | None:

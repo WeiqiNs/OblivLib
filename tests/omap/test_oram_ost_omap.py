@@ -1,4 +1,3 @@
-import contextlib
 import random
 from typing import Any
 
@@ -12,7 +11,6 @@ from oblivlib.dependency import (
     DaOramConfig,
     PathOramConfig,
     RecursiveOramConfig,
-    StashOverflowError,
 )
 from oblivlib.omap import AVLOmap, BPlusOmap, OramOstOmap, OramOstOmapConfig
 from oblivlib.oram import DAOram, PathOram, RecursivePathOram
@@ -157,11 +155,13 @@ def test_a_failed_tree_op_still_finishes_the_oram_access(fail_once, client):
     assert omap.search(key=b"new") == b"x"
 
 
-def test_overfilled_map_raises_the_overflow_and_leaves_no_access_pending(client):
+def test_an_insert_past_num_data_is_refused_before_any_access(client):
     omap = _make_omap("avl", "path", client, n=16)
     omap.init_server_storage()
-    with pytest.raises(StashOverflowError):
-        for i in range(10_000):
-            omap.insert(key=b"%d" % i, value=b"v")
-    with contextlib.suppress(StashOverflowError, KeyError):
-        omap.search(key=b"0")
+    for i in range(16):
+        omap.insert(key=b"%d" % i, value=b"v")
+    rounds = client.metrics.rounds
+    with pytest.raises(ContractError, match="num_data=16"):
+        omap.insert(key=b"16", value=b"v")
+    assert client.metrics.rounds == rounds
+    assert [omap.search(key=b"%d" % i) for i in range(16)] == [b"v"] * 16

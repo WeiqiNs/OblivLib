@@ -91,6 +91,24 @@ class TestOmapBehavior:
         assert client.metrics.rounds == rounds
         assert omap.search(key=b"1") == b"kept"
 
+    def test_inserts_stop_at_num_data_until_a_delete_frees_room(self, omap_spec, client):
+        omap = omap_spec.make(client=client, num_data=8)
+        omap.init_server_storage([(b"%d" % i, b"v") for i in range(6)])
+        omap.insert(key=b"6", value=b"v")
+        omap.insert(key=b"7", value=b"v")
+        rounds = client.metrics.rounds
+        with pytest.raises(ContractError, match="num_data=8"):
+            omap.insert(key=b"8", value=b"v")
+        assert client.metrics.rounds == rounds
+        assert omap.delete(key=b"absent") is None
+        with pytest.raises(ContractError, match="num_data=8"):
+            omap.insert(key=b"8", value=b"v")
+        assert omap.delete(key=b"3") == b"v"
+        omap.insert(key=b"8", value=b"v")
+        assert omap.search(key=b"8") == b"v"
+        with pytest.raises(ContractError, match="exceed num_data=8"):
+            omap_spec.make(client=client, num_data=8).init_server_storage([(b"%d" % i, b"v") for i in range(9)])
+
     def test_encryption_round_trip(self, omap_spec, client, encryptor):
         omap = omap_spec.make(client=client, num_data=128, encryptor=encryptor)
         omap.init_server_storage()
@@ -129,7 +147,7 @@ class TestOmapBehavior:
             [(_b(j), _b(j)) for j in range(i * 2 * size_group, (i * 2 + 1) * size_group)] for i in range(num_group)
         ]
 
-        omap = omap_spec.make(client=client, num_data=num_data)
+        omap = omap_spec.make(client=client, num_data=num_data + num_group * extra)
         roots = omap.init_mul_tree_server_storage(data_list=init_data)
 
         for i, root in enumerate(roots):
@@ -394,9 +412,9 @@ def test_composed_map_slots_are_sized_from_their_declared_layouts(client):
     bplus = BPlusOmap(BPlusOmapConfig(order=3, client=client, **_ROW_LAYOUT_CONFIG))
     assert (OramOstOmap.oram_data_size(avl), OramOstOmap.oram_data_size(bplus)) == (11, 10)
 
-    upper_size = GroupOmap.upper_oram_data_size(num_data=64, key_size=8)
+    upper_size = GroupOmap.upper_oram_data_size(num_data=64)
     upper = PathOram(PathOramConfig(num_data=64, data_size=upper_size, client=client, encryptor=AesGcm()))
     group = GroupOmap(GroupOmapConfig(client=client, **_ROW_LAYOUT_CONFIG), upper_oram=upper)
-    assert (upper_size, upper._cipher.row_bytes, group._lower_oram._cipher.row_bytes) == (456, 1869, 137)
+    assert (upper_size, upper._cipher.row_bytes, group._lower_oram._cipher.row_bytes) == (33, 173, 137)
     group.init_server_storage([(b"%08d" % i, b"\xff" * 16) for i in range(32)])
     assert group.search(b"%08d" % 3) == b"\xff" * 16

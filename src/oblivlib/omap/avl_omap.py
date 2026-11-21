@@ -387,7 +387,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, LocalNodes]):
         self._finish_op()
 
     @override
-    def _delete(self, key: Any) -> Any:
+    def _delete_key(self, key: Any) -> Any:
         self._begin_op("delete")
         if self._short_circuit_read(key=key):
             return None
