@@ -1,0 +1,357 @@
+from bisect import bisect_right
+from collections.abc import Callable, Sequence
+from functools import cached_property
+from typing import Any, Protocol, override
+
+from oblivlib.dependency import BPlusData, BPlusTree, BPlusTreeNode, Data, KVPair
+from oblivlib.dependency.config import BPlusOmapConfig
+from oblivlib.dependency.layout import Bytes, Field, Record, Seq, UInt, Variant
+from oblivlib.omap.ost_base_omap import ROOT, LocalNodesBase, OstBaseOmap
+
+_BLOCK_ID_BITS = 64
+
+
+def bplus_max_levels(num_keys: int, order: int) -> int:
+    fanout = -(-order // 2)
+    levels, split_keys, subtree_keys = 1, order, fanout - 1
+    while split_keys <= num_keys:
+        levels += 1
+        split_keys += (order - 1) * subtree_keys
+        subtree_keys *= fanout
+    return levels
+
+
+class BPlusValue(Protocol):
+    keys: list[Any]
+    values: list[Any]
+
+
+class BPlusNode(Protocol):
+    key: Any
+    leaf: int
+    value: BPlusValue
+
+
+class LocalNodes(LocalNodesBase[BPlusNode]):
+    @staticmethod
+    def is_leaf_node(node: BPlusNode) -> bool:
+        return LocalNodes.is_leaf_node_value(node.value)
+
+    @staticmethod
+    def is_leaf_node_value(value: BPlusValue) -> bool:
+        return len(value.keys) == len(value.values)
+
+
+class BPlusOmap(OstBaseOmap[BPlusOmapConfig, LocalNodes]):
+    def __init__(self, config: BPlusOmapConfig):
+        super().__init__(config)
+
+        self._mid: int = config.order // 2
+        self._block_id: int = 0
+
+    @override
+    def _new_local(self) -> LocalNodes:
+        return LocalNodes()
+
+    @property
+    @override
+    def _fanout(self) -> int:
+        return self._order
+
+    @override
+    def _height_bound(self, num_nodes: int) -> int:
+        return bplus_max_levels(num_nodes, self._order)
+
+    @property
+    def _order(self) -> int:
+        return self._config.order
+
+    @property
+    def _min_keys(self) -> int:
+        return (self._order - 1) // 2
+
+    @cached_property
+    @override
+    def _key_field(self) -> Field[Any]:
+        return UInt(_BLOCK_ID_BITS)
+
+    @cached_property
+    @override
+    def _value_field(self) -> Field[Any]:
+        keys = Seq(Bytes(self._key_size), self._order - 1)
+        leaf_node = Record((keys, Seq(Bytes(self._data_size), self._order - 1)), BPlusData)
+        child = Record((self._key_field, self._leaf_field))
+        internal_node = Record((keys, Seq(child, self._order)), BPlusData)
+        return Variant((leaf_node, internal_node), lambda node: 0 if LocalNodes.is_leaf_node_value(node) else 1)
+
+    def _get_bplus_data(self, keys: Any = None, values: Any = None) -> Data:
+        data_block = Data(key=self._block_id, leaf=self._get_new_leaf(), value=BPlusData(keys=keys, values=values))
+        self._block_id += 1
+        return data_block
+
+    @override
+    def _build_ods_blocks(self, data: list[KVPair]) -> tuple[list[Data], ROOT]:
+        root = BPlusTreeNode()
+        bplus_tree = BPlusTree(order=self._order, leaf_range=self._leaf_range)
+        for kv_pair in data:
+            root = bplus_tree.insert(root=root, kv_pair=kv_pair)
+
+        blocks = bplus_tree.get_data_list(root=root, block_id=self._block_id)
+        self._block_id += len(blocks)
+        assert root.id is not None and root.leaf is not None
+        return blocks, (root.id, root.leaf)
+
+    @override
+    def _descend(
+        self, keys: Sequence[Any], *, hold: bool, on_stop: Callable[[int, BPlusNode], None] | None = None
+    ) -> None:
+        root_key = self._fetch_root().key
+        at = [root_key] * len(keys)
+        level = [root_key]
+        while not self._local.is_leaf_node(self._local.require(at[0])):
+            requests: dict[Any, tuple[int, Any, int]] = {}
+            for lane, node_key in enumerate(at):
+                node = self._local.require(node_key)
+                child_index = bisect_right(node.value.keys, keys[lane])
+                child_key, child_leaf = node.value.values[child_index]
+                if child_key not in requests:
+                    new_leaf = self._get_new_leaf()
+                    node.value.values[child_index] = (child_key, new_leaf)
+                    requests[child_key] = (child_leaf, node.key, new_leaf)
+                at[lane] = child_key
+            if not hold:
+                self._return_local(level)
+            self._fetch_rehomed(requests)
+            level = list(requests)
+        if on_stop is not None:
+            for lane, node_key in enumerate(at):
+                on_stop(lane, self._local.require(node_key))
+
+    def _path_to(self, key: Any) -> None:
+        assert self.root is not None
+        path, node_key = [], self.root[0]
+        while True:
+            path.append(node_key)
+            node = self._local.require(node_key)
+            if self._local.is_leaf_node(node):
+                break
+            node_key = node.value.values[bisect_right(node.value.keys, key)][0]
+        self._local.path = path
+
+    def _split_node(self, node: BPlusNode) -> tuple[int, int]:
+        right_node = self._get_bplus_data()
+
+        if self._local.is_leaf_node(node):
+            right_node.value.keys = node.value.keys[self._mid :]
+            right_node.value.values = node.value.values[self._mid :]
+            node.value.keys = node.value.keys[: self._mid]
+            node.value.values = node.value.values[: self._mid]
+        else:
+            right_node.value.keys = node.value.keys[self._mid + 1 :]
+            right_node.value.values = node.value.values[self._mid + 1 :]
+            node.value.keys = node.value.keys[: self._mid]
+            node.value.values = node.value.values[: self._mid + 1]
+
+        self._local.keep(right_node)
+        return right_node.key, right_node.require_leaf()
+
+    def _perform_insertion(self) -> None:
+        path = self._local.path
+        for index in range(len(path) - 1, -1, -1):
+            node = self._local.require(path[index])
+            if len(node.value.keys) < self._order:
+                return
+            insert_key = node.value.keys[self._mid]
+            right_node = self._split_node(node=node)
+            if index == 0:
+                parent = self._get_bplus_data(keys=[insert_key], values=[(node.key, node.leaf), right_node])
+                self._local.keep(parent)
+                self.root = (parent.key, parent.require_leaf())
+            else:
+                parent_node = self._local.require(path[index - 1])
+                position = bisect_right(parent_node.value.keys, insert_key)
+                parent_node.value.keys.insert(position, insert_key)
+                parent_node.value.values.insert(position + 1, right_node)
+
+    def _find_path_with_siblings(
+        self, key: Any
+    ) -> tuple[dict[int, BPlusNode], list[int], dict[int, BPlusNode], dict[int, int]]:
+        path_nodes: dict[int, BPlusNode] = {}
+        child_indices: list[int] = []
+        siblings: dict[int, BPlusNode] = {}
+        sibling_indices: dict[int, int] = {}
+        level = 0
+
+        node = self._fetch_root()
+        self._local.pop(node.key)
+        path_nodes[level] = node
+
+        while not self._local.is_leaf_node(node):
+            child_index = bisect_right(node.value.keys, key)
+            child_indices.append(child_index)
+            sibling_index = child_index - 1 if child_index > 0 else child_index + 1
+
+            child_node, sibling_node = self._fetch_children(node, [child_index, sibling_index])
+            siblings[level + 1] = sibling_node
+            sibling_indices[level + 1] = sibling_index
+            level += 1
+            if len(child_node.value.keys) > self._min_keys:
+                self._return_to_stash([*path_nodes.values(), *siblings.values()])
+                path_nodes.clear()
+                siblings.clear()
+            path_nodes[level] = child_node
+            node = child_node
+
+        return path_nodes, child_indices, siblings, sibling_indices
+
+    def _fetch_children(self, parent: BPlusNode, indices: list[int]) -> list[BPlusNode]:
+        requests = [(*parent.value.values[index], None) for index in indices]
+        paired = self._round_width(self._op_rounds) >= len(requests)
+        for group in [requests] if paired else [[request] for request in requests]:
+            self._fetch_nodes(group)
+        children: list[BPlusNode] = []
+        for index, (child_key, _, _) in zip(indices, requests, strict=True):
+            child = self._local.pop(child_key)
+            child.leaf = self._get_new_leaf()
+            parent.value.values[index] = (child_key, child.leaf)
+            children.append(child)
+        return children
+
+    def _apply_delete(
+        self,
+        key: Any,
+        path_nodes: dict[int, BPlusNode],
+        child_indices: list[int],
+        siblings: dict[int, BPlusNode],
+        sibling_indices: dict[int, int],
+    ) -> Any:
+        leaf_level = len(child_indices)
+        leaf = path_nodes[leaf_level]
+        key_index = next((index for index, each_key in enumerate(leaf.value.keys) if each_key == key), None)
+        if key_index is None:
+            return None
+        leaf.value.keys.pop(key_index)
+        deleted_value = leaf.value.values.pop(key_index)
+
+        if not child_indices:
+            if not leaf.value.keys:
+                self.root = None
+                del path_nodes[leaf_level]
+            return deleted_value
+
+        node_level = leaf_level
+        node = leaf
+        for level in range(len(child_indices) - 1, -1, -1):
+            if len(node.value.keys) >= self._min_keys:
+                break
+            parent = path_nodes[level]
+            child_index = child_indices[level]
+            child_level = level + 1
+            sibling = siblings[child_level]
+            is_left_sibling = sibling_indices[child_level] < child_index
+            is_leaf = self._local.is_leaf_node(node)
+
+            if len(sibling.value.keys) > self._min_keys:
+                if is_left_sibling:
+                    if is_leaf:
+                        node.value.keys.insert(0, sibling.value.keys.pop())
+                        node.value.values.insert(0, sibling.value.values.pop())
+                        parent.value.keys[child_index - 1] = node.value.keys[0]
+                    else:
+                        node.value.keys.insert(0, parent.value.keys[child_index - 1])
+                        node.value.values.insert(0, sibling.value.values.pop())
+                        parent.value.keys[child_index - 1] = sibling.value.keys.pop()
+                else:
+                    if is_leaf:
+                        node.value.keys.append(sibling.value.keys.pop(0))
+                        node.value.values.append(sibling.value.values.pop(0))
+                        parent.value.keys[child_index] = sibling.value.keys[0]
+                    else:
+                        node.value.keys.append(parent.value.keys[child_index])
+                        node.value.values.append(sibling.value.values.pop(0))
+                        parent.value.keys[child_index] = sibling.value.keys.pop(0)
+                break
+
+            if is_left_sibling:
+                if not is_leaf:
+                    sibling.value.keys.append(parent.value.keys[child_index - 1])
+                sibling.value.keys.extend(node.value.keys)
+                sibling.value.values.extend(node.value.values)
+                parent.value.keys.pop(child_index - 1)
+                parent.value.values.pop(child_index)
+                del path_nodes[node_level]
+            else:
+                if not is_leaf:
+                    node.value.keys.append(parent.value.keys[child_index])
+                node.value.keys.extend(sibling.value.keys)
+                node.value.values.extend(sibling.value.values)
+                parent.value.keys.pop(child_index)
+                parent.value.values.pop(child_index + 1)
+                del siblings[child_level]
+
+            node_level = level
+            node = parent
+
+        root_node = path_nodes.get(0)
+        if root_node is not None and not root_node.value.keys:
+            child_key, child_leaf = root_node.value.values[0]
+            self.root = (child_key, child_leaf)
+            del path_nodes[0]
+        return deleted_value
+
+    @override
+    def _swap_value(self, node: BPlusNode, key: Any, value: Any) -> Any:
+        if key not in node.value.keys:
+            return None
+        position = node.value.keys.index(key)
+        found = node.value.values[position]
+        if value is not None:
+            node.value.values[position] = value
+        return found
+
+    @override
+    def _insert_many(self, pairs: Sequence[tuple[Any, Any]]) -> None:
+        self._begin_op("insert")
+        pairs = [(key, value) for key, value in pairs if key is not None]
+        if not pairs:
+            self._finish_op()
+            return
+
+        if self.root is None:
+            (key, value), *pairs = pairs
+            first = self._get_bplus_data(keys=[key], values=[value])
+            self._local.add(node=first)
+            self.root = (first.key, first.require_leaf())
+        else:
+            self._descend([key for key, _ in pairs], hold=True)
+
+        for key, value in pairs:
+            self._path_to(key)
+            leaf = self._local.require(self._local.path[-1])
+            index = bisect_right(leaf.value.keys, key)
+            leaf.value.keys.insert(index, key)
+            leaf.value.values.insert(index, value)
+            self._perform_insertion()
+
+        self._flush_local_to_stash()
+        self._finish_op()
+
+    @override
+    def _delete_key(self, key: Any) -> Any:
+        self._begin_op("delete")
+
+        if self._short_circuit_read(key=key):
+            return None
+
+        path_nodes, child_indices, siblings, sibling_indices = self._find_path_with_siblings(key=key)
+        deleted_value = self._apply_delete(
+            key=key,
+            path_nodes=path_nodes,
+            child_indices=child_indices,
+            siblings=siblings,
+            sibling_indices=sibling_indices,
+        )
+
+        self._return_to_stash([*path_nodes.values(), *siblings.values()])
+        self._finish_op()
+        return deleted_value

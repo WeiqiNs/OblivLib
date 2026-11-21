@@ -1,0 +1,23 @@
+{
+  "include": ["src/oblivlib", "tests"],
+  "exclude": ["**/__pycache__"],
+  "typeCheckingMode": "recommended",
+  "pythonVersion": "3.12",
+  "reportImplicitOverride": "error",
+  "reportUnnecessaryTypeIgnoreComment": "warning",
+
+  // The public contract is bytes, but internal blocks stay loosely typed: Data.key is an int address
+  // or a bytes key, Data.value is bytes or an AVL/B+ node, and msgpack decodes to Any. These rules
+  // would fire over a thousand times, so they stay off until those types are narrowed.
+  "reportAny": false,
+  "reportExplicitAny": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownLambdaType": false,
+  "reportMissingParameterType": false,
+  "reportUnannotatedClassAttribute": false,
+  "reportUnusedCallResult": false,
+  "reportPrivateUsage": false
+}

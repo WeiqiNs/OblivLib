@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import secrets
+from bisect import bisect_right
+from dataclasses import dataclass, field
+from typing import Any
+
+from oblivlib.dependency.types import Data, FieldTuple, KVPair
+
+
+@dataclass
+class BPlusData(FieldTuple):
+    keys: list[Any] = field(default_factory=list)
+    values: list[Any] = field(default_factory=list)
+
+
+class BPlusTreeNode:
+    def __init__(self):
+        self.id: int | None = None
+        self.leaf: int | None = None
+        self.keys: list[Any] = []
+        self.values: list[Any] = []
+        self.is_leaf: bool = True
+
+    def add_kv_pair(self, kv_pair: KVPair):
+        index = bisect_right(self.keys, kv_pair.key)
+        self.keys.insert(index, kv_pair.key)
+        self.values.insert(index, kv_pair.value)
+
+
+class BPlusTree:
+    def __init__(self, order: int, leaf_range: int):
+        self._order = order
+        self._mid = order // 2
+        self._leaf_range = leaf_range
+
+    def _get_new_leaf(self) -> int:
+        return secrets.randbelow(self._leaf_range)
+
+    @staticmethod
+    def _child_index(node: BPlusTreeNode, key: Any) -> int:
+        for index, each_key in enumerate(node.keys):
+            if key == each_key:
+                return index + 1
+            if key < each_key:
+                return index
+        return len(node.keys)
+
+    @staticmethod
+    def _find_leaf_path(key: Any, root: BPlusTreeNode) -> list[BPlusTreeNode]:
+        result = [root]
+        cur_node = root
+        while not cur_node.is_leaf:
+            cur_node = cur_node.values[BPlusTree._child_index(node=cur_node, key=key)]
+            result.append(cur_node)
+        return result
+
+    def _split_node(self, node: BPlusTreeNode) -> BPlusTreeNode:
+        right_node = BPlusTreeNode()
+
+        if node.is_leaf:
+            right_node.keys = node.keys[self._mid :]
+            right_node.values = node.values[self._mid :]
+            node.keys = node.keys[: self._mid]
+            node.values = node.values[: self._mid]
+
+        else:
+            right_node.is_leaf = False
+            right_node.keys = node.keys[self._mid + 1 :]
+            right_node.values = node.values[self._mid + 1 :]
+            node.keys = node.keys[: self._mid]
+            node.values = node.values[: self._mid + 1]
+
+        return right_node
+
+    def _insert_in_parent(self, child_node: BPlusTreeNode, parent_node: BPlusTreeNode) -> None:
+        insert_key = child_node.keys[self._mid]
+        right_node = self._split_node(node=child_node)
+
+        index = bisect_right(parent_node.keys, insert_key)
+        parent_node.keys.insert(index, insert_key)
+        parent_node.values.insert(index + 1, right_node)
+
+    def _create_parent(self, child_node: BPlusTreeNode) -> BPlusTreeNode:
+        insert_key = child_node.keys[self._mid]
+        right_node = self._split_node(node=child_node)
+
+        parent_node = BPlusTreeNode()
+        parent_node.is_leaf = False
+        parent_node.keys.append(insert_key)
+        parent_node.values = [child_node, right_node]
+
+        return parent_node
+
+    def insert(self, root: BPlusTreeNode, kv_pair: KVPair) -> BPlusTreeNode:
+        leaves = self._find_leaf_path(root=root, key=kv_pair.key)
+        leaves[-1].add_kv_pair(kv_pair=kv_pair)
+
+        index = len(leaves) - 1
+        while True:
+            if len(leaves[index].keys) >= self._order:
+                if index > 0:
+                    self._insert_in_parent(child_node=leaves[index], parent_node=leaves[index - 1])
+                    index -= 1
+                else:
+                    return self._create_parent(child_node=leaves[index])
+            else:
+                break
+
+        return root
+
+    def get_data_list(self, root: BPlusTreeNode, block_id: int = 0) -> list[Data]:
+        root.id = block_id
+        root.leaf = self._get_new_leaf()
+        block_id += 1
+
+        stack = [root]
+        result = []
+
+        while stack:
+            node = stack.pop()
+
+            if not node.is_leaf:
+                for child in node.values:
+                    child.id = block_id
+                    child.leaf = self._get_new_leaf()
+                    block_id += 1
+
+                bplus_data = BPlusData(keys=node.keys, values=[(child.id, child.leaf) for child in node.values])
+                stack.extend(node.values)
+
+            else:
+                bplus_data = BPlusData(keys=node.keys, values=node.values)
+
+            result.append(Data(key=node.id, leaf=node.leaf, value=bplus_data))
+
+        return result
