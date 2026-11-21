@@ -18,7 +18,7 @@ from oblivlib.dependency import (
     StorageServer,
     TransportBackend,
 )
-from oblivlib.dependency.protocol import Batch, ReadPath, Reply, Request, WritePath
+from oblivlib.dependency.protocol import Batch, Reply, Request
 from oblivlib.omap import GroupOmap, OramOstOmap
 from oblivlib.omap.ost_base_omap import OstBaseOmap
 from oblivlib.oram import TreeBaseOram, freecursive_oram
@@ -58,8 +58,8 @@ class RecordingBackend(Backend):
 
 
 def _access_shape(batch: Batch) -> AccessShape:
-    writes = {op.label: frozenset(op.leaves) for op in batch.writes if isinstance(op, WritePath)}
-    reads = {op.label: tuple(op.leaves) for op in batch.reads if isinstance(op, ReadPath)}
+    writes = {op.label: frozenset(op.leaves) for op in batch.writes}
+    reads = {op.label: tuple(op.leaves) for op in batch.reads}
     return writes, reads
 
 
