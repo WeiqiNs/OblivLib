@@ -165,3 +165,16 @@ def test_an_insert_past_num_data_is_refused_before_any_access(client):
         omap.insert(key=b"16", value=b"v")
     assert client.metrics.rounds == rounds
     assert [omap.search(key=b"%d" % i) for i in range(16)] == [b"v"] * 16
+
+
+def test_the_map_enforces_its_own_num_data_not_the_inner_maps(client):
+    ost = _make_ods("avl", 64, client)
+    omap = OramOstOmap(OramOstOmapConfig(num_data=16), ost=ost, oram=_make_oram("path", 16, client, ost))
+    with pytest.raises(ContractError, match="OramOstOmap .*exceed num_data=16"):
+        omap.init_server_storage([(b"%d" % i, b"v") for i in range(17)])
+    omap.init_server_storage([(b"%d" % i, b"v") for i in range(15)])
+    omap.insert(key=b"15", value=b"v")
+    with pytest.raises(ContractError, match="OramOstOmap .*num_data=16"):
+        omap.insert(key=b"16", value=b"v")
+    assert omap.delete(key=b"0") == b"v"
+    omap.insert(key=b"16", value=b"v")

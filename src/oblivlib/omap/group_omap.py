@@ -1,5 +1,4 @@
 import os
-import secrets
 from collections.abc import Callable
 from functools import cached_property
 from typing import Any, override
@@ -101,7 +100,7 @@ class GroupOmap(BaseOmap):
     def _padded_leaves(self, leaves: list[int]) -> list[int]:
         paths = set(leaves)
         while len(paths) < self._width:
-            paths.add(secrets.randbelow(self._lower_oram._leaf_range))
+            paths.add(self._lower_oram._get_new_leaf())
         return sorted(paths)
 
     @override
@@ -130,8 +129,8 @@ class GroupOmap(BaseOmap):
         self._size = len(data)
 
     def _access_bucket[T](self, bucket_id: int, change: Callable[[list[Data]], tuple[list[Data], T]]) -> T:
-        seed, count = self._metadata.decode(self._upper_oram.operate_on_key_without_eviction(key=bucket_id))
-        metadata = self._metadata.encode((seed, count))
+        metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
+        seed, count = self._metadata.decode(metadata)
         lower = self._lower_oram
         try:
             lower._read_paths(self._padded_leaves([self._slot_leaf(seed, slot) for slot in range(1, count + 1)]))
@@ -139,14 +138,15 @@ class GroupOmap(BaseOmap):
             kept, result = change(blocks)
             if len(kept) > self._upper_bound:
                 raise MemoryError(f"Bucket {bucket_id} is full ({count} items), cannot insert")
-            dropped = {id(data) for data in blocks} - {id(data) for data in kept}
-            added = [data for data in kept if all(data is not each for each in blocks)]
-            lower._stash = [data for data in lower._stash if id(data) not in dropped] + added
-            lower._check_stash()
             new_seed = os.urandom(self.SEED_SIZE)
             for slot, data in enumerate(kept, start=1):
                 data.leaf = self._slot_leaf(new_seed, slot)
+            old = {id(data) for data in blocks}
+            dropped = old - {id(data) for data in kept}
+            lower._stash = [data for data in lower._stash if id(data) not in dropped]
+            lower._stash += [data for data in kept if id(data) not in old]
             metadata = self._metadata.encode((new_seed, len(kept)))
+            lower._check_stash()
             lower._write_paths()
         finally:
             self._upper_oram.eviction_with_update_stash(key=bucket_id, value=metadata)
@@ -183,16 +183,16 @@ class GroupOmap(BaseOmap):
         self._size += 1
 
     def _insert_into_next_slot(self, bucket_id: int, key: bytes, value: bytes) -> None:
-        seed, count = self._metadata.decode(self._upper_oram.operate_on_key_without_eviction(key=bucket_id))
-        metadata = self._metadata.encode((seed, count))
+        metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
+        seed, count = self._metadata.decode(metadata)
         lower = self._lower_oram
         try:
             if count >= self._upper_bound:
                 raise MemoryError(f"Bucket {bucket_id} is full ({count} items), cannot insert")
-            lower._read_paths([secrets.randbelow(lower._leaf_range)])
+            lower._read_paths([lower._get_new_leaf()])
             lower._stash.append(Data(key=key, leaf=self._slot_leaf(seed, count + 1), value=value))
-            lower._check_stash()
             metadata = self._metadata.encode((seed, count + 1))
+            lower._check_stash()
             lower._write_paths()
         finally:
             self._upper_oram.eviction_with_update_stash(key=bucket_id, value=metadata)

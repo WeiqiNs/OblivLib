@@ -113,8 +113,9 @@ class TestGroupOmap:
         assert rounds_on * 2 == rounds_off
 
 
-def test_full_bucket_insert_leaves_the_map_usable(client):
-    omap = _make_omap(client, n=64)
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+def test_full_bucket_insert_leaves_the_map_usable(client, distinguishable):
+    omap = _make_omap(client, n=64, distinguishable=distinguishable)
     pairs = [(b"key%d" % i, b"value%d" % i) for i in range(20)]
     omap.init_server_storage(pairs)
     bound = omap._upper_bound
@@ -177,14 +178,17 @@ def test_search_group_returns_the_bucket_and_reshuffles_it(client):
         assert omap.search(key) == value
 
 
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
 def test_an_insert_whose_write_back_fails_keeps_its_block_reachable(
-    fail_once, monkeypatch, client, read_all_blocks, duplicate_blocks
+    fail_once, monkeypatch, client, read_all_blocks, duplicate_blocks, distinguishable
 ):
-    omap = _make_omap(client, n=64)
+    omap = _make_omap(client, n=64, distinguishable=distinguishable)
     omap.init_server_storage([(b"key%d" % i, b"value%d" % i) for i in range(20)])
     lower = omap._lower_oram
     stored = read_all_blocks(lower)[0]
-    monkeypatch.setattr(lower, "_get_new_leaf", lambda: stored.leaf)
+    draws = [stored.leaf]
+    fresh = lower._get_new_leaf
+    monkeypatch.setattr(lower, "_get_new_leaf", lambda: draws.pop() if draws else fresh())
     fail_once(lower, "_write_paths")
 
     with pytest.raises(RuntimeError, match="injected"):
@@ -226,3 +230,38 @@ def test_every_lower_access_reads_a_fixed_number_of_paths(recorded_client, disti
         assert reads == [expected], name
     assert omap.search(b"key4") == b"w"
     assert omap.search(b"fresh") == b"v"
+
+
+@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
+def test_an_insert_that_fails_after_placing_its_block_is_neither_lost_nor_doubled(
+    monkeypatch, client, duplicate_blocks, distinguishable
+):
+    omap = _make_omap(client, n=64, distinguishable=distinguishable)
+    pairs = [(b"key%d" % i, b"value%d" % i) for i in range(20)]
+    omap.init_server_storage(pairs)
+    lower = omap._lower_oram
+    check = lower._check_stash
+    calls = []
+
+    def fail_after_placing():
+        calls.append(None)
+        if len(calls) == 2:
+            raise RuntimeError("injected")
+        check()
+
+    monkeypatch.setattr(lower, "_check_stash", fail_after_placing)
+    with pytest.raises(RuntimeError, match="injected"):
+        omap.insert(b"new", b"x")
+    monkeypatch.setattr(lower, "_check_stash", check)
+
+    bucket_id = omap._hash_key_to_bucket(b"new")
+    stored = omap._upper_oram.operate_on_key_without_eviction(key=bucket_id)
+    omap._upper_oram.eviction_with_update_stash(key=bucket_id, value=stored)
+    in_bucket = sum(omap._hash_key_to_bucket(key) == bucket_id for key, _ in pairs)
+    assert omap._metadata.decode(stored)[1] == in_bucket + 1
+    for key, value in pairs:
+        assert omap.search(key) == value
+    assert omap.search(b"new") == b"x"
+    bucket = omap.search_group(omap._hash_key_to_bucket(b"new"))
+    assert [key for key, _ in bucket].count(b"new") == 1
+    assert not duplicate_blocks(omap)

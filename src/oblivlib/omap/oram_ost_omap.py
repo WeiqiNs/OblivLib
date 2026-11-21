@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any, override
 
-from oblivlib.dependency import Blake2Prf, hash_data_to_leaf, hash_data_to_map
+from oblivlib.dependency import Blake2Prf, ContractError, hash_data_to_leaf, hash_data_to_map
 from oblivlib.dependency.config import OramOstOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.omap.base_omap import BaseOmap
@@ -47,6 +47,8 @@ class OramOstOmap(BaseOmap):
     @override
     def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
         require_omap_init(self._identity, data or [], key_size=self._ost._key_size, data_size=self._ost._data_size)
+        if len(data or []) > self._num_data:
+            raise ContractError(f"{self._identity}: {len(data or [])} initial keys exceed num_data={self._num_data}.")
         data_map = hash_data_to_map(prf=self._prf, data=data or [], map_size=self._num_data)
         data_list = [data_map[key] for key in range(self._num_data)]
 
@@ -72,6 +74,8 @@ class OramOstOmap(BaseOmap):
     def insert(self, key: bytes, value: bytes) -> None:
         require_omap_key(self._identity, key, self._ost._key_size)
         require_value(self._identity, value, self._ost._data_size)
+        if self._ost._size >= self._num_data:
+            raise ContractError(f"{self._identity}: the map already holds num_data={self._num_data} keys.")
         self._ost._require_room(1)
         self._on_slot(key, lambda: self._ost._insert(key, value))
 
