@@ -40,7 +40,7 @@ classifiers = [
 ]
 dependencies = [
     "cryptography>=45.0.0",
-    "msgpack>=1.1.0",
+    "msgspec>=0.22.0",
     "pyzmq>=26.0.0",
 ]
 

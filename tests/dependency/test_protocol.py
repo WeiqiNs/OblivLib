@@ -21,18 +21,12 @@ from oblivlib.dependency.protocol import (
     Shutdown,
     WritePath,
     WriteRange,
-    _tag_table,
     decode_reply,
     decode_request,
     encode,
     error_reply,
     expect_reply,
 )
-
-
-def test_tag_tables_reject_duplicate_tags():
-    with pytest.raises(ValueError, match="duplicate tag 'Ok'"):
-        _tag_table((Ok, Ok))
 
 
 def test_every_message_round_trips():

@@ -1,14 +1,11 @@
 """The client/server wire protocol: every message the client and ``StorageServer`` exchange.
 
-A message is a frozen dataclass of primitives (ints, str, bytes, None, lists, and nested ops), framed as
-the msgpack array ``[ClassName, *fields in declaration order]``. Both ends are this library, so decoding
-only rebuilds the dataclasses; an unknown tag or a wrong field count raises.
+A message is a frozen ``msgspec.Struct`` of primitives (ints, str, bytes, None, lists, and nested ops), sent
+as the MessagePack array ``[ClassName, *fields in declaration order]``. Decoding checks every message
+against its declared fields, so a malformed message raises ``ProtocolError``.
 """
 
-from dataclasses import dataclass, fields
-from typing import Any, get_args
-
-import msgpack
+import msgspec
 
 from oblivlib.dependency.errors import (
     DuplicateLabelError,
@@ -20,37 +17,37 @@ from oblivlib.dependency.errors import (
     UnknownLabelError,
 )
 
+
+class _Message(msgspec.Struct, frozen=True, tag=True, array_like=True):
+    pass
+
+
 PROTOCOL_VERSION = 1
 
 
-@dataclass(frozen=True, slots=True)
-class ReadPath:
+class ReadPath(_Message, frozen=True):
     label: str
     leaves: list[int]
 
 
-@dataclass(frozen=True, slots=True)
-class WritePath:
+class WritePath(_Message, frozen=True):
     label: str
     leaves: list[int]
     rows: list[bytes]
 
 
-@dataclass(frozen=True, slots=True)
-class Hello:
+class Hello(_Message, frozen=True):
     version: int
 
 
-@dataclass(frozen=True, slots=True)
-class CreateTree:
+class CreateTree(_Message, frozen=True):
     session: str
     label: str
     level: int
     row_bytes: int | None
 
 
-@dataclass(frozen=True, slots=True)
-class AttachTree:
+class AttachTree(_Message, frozen=True):
     session: str
     label: str
     filename: str
@@ -58,48 +55,40 @@ class AttachTree:
     row_bytes: int
 
 
-@dataclass(frozen=True, slots=True)
-class WriteRange:
+class WriteRange(_Message, frozen=True):
     session: str
     label: str
     start: int
     rows: list[bytes]
 
 
-@dataclass(frozen=True, slots=True)
-class Batch:
+class Batch(_Message, frozen=True):
     session: str
     writes: list[WritePath]
     reads: list[ReadPath]
 
 
-@dataclass(frozen=True, slots=True)
-class Close:
+class Close(_Message, frozen=True):
     session: str
 
 
-@dataclass(frozen=True, slots=True)
-class Shutdown:
+class Shutdown(_Message, frozen=True):
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class HelloReply:
+class HelloReply(_Message, frozen=True):
     session: str
 
 
-@dataclass(frozen=True, slots=True)
-class Ok:
+class Ok(_Message, frozen=True):
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class BatchReply:
+class BatchReply(_Message, frozen=True):
     results: list[list[bytes]]
 
 
-@dataclass(frozen=True, slots=True)
-class ErrorReply:
+class ErrorReply(_Message, frozen=True):
     kind: str
     message: str
 
@@ -107,62 +96,32 @@ class ErrorReply:
 Request = Hello | CreateTree | AttachTree | WriteRange | Batch | Close | Shutdown
 Reply = HelloReply | Ok | BatchReply | ErrorReply
 
+ERROR_KINDS: dict[str, type[OblivlibError]] = {
+    cls.__name__: cls
+    for cls in (UnknownLabelError, DuplicateLabelError, RowSizeError, ProtocolError, StorageError, ServerError)
+}
 
-def _tag_table[T](classes: tuple[type[T], ...]) -> dict[str, type[T]]:
-    table: dict[str, type[T]] = {}
-    for cls in classes:
-        if cls.__name__ in table:
-            raise ValueError(f"protocol: duplicate tag {cls.__name__!r}.")
-        table[cls.__name__] = cls
-    return table
-
-
-ERROR_KINDS: dict[str, type[OblivlibError]] = _tag_table(
-    (UnknownLabelError, DuplicateLabelError, RowSizeError, ProtocolError, StorageError, ServerError)
-)
-
-
-_MESSAGES: dict[str, type] = _tag_table(
-    (
-        ReadPath,
-        WritePath,
-        *get_args(Request),
-        *get_args(Reply),
-    )
-)
-_FIELD_NAMES: dict[type, tuple[str, ...]] = {cls: tuple(f.name for f in fields(cls)) for cls in _MESSAGES.values()}
-
-
-def _to_wire(value: Any) -> Any:
-    if type(value) is list:
-        return [_to_wire(item) for item in value]
-    names = _FIELD_NAMES.get(type(value))
-    if names is None:
-        return value
-    return [type(value).__name__, *(_to_wire(getattr(value, name)) for name in names)]
-
-
-def _from_wire(value: Any) -> Any:
-    if type(value) is not list:
-        return value
-    if value and type(value[0]) is str:
-        return _MESSAGES[value[0]](*(_from_wire(item) for item in value[1:]))
-    return [_from_wire(item) for item in value]
+_ENCODER = msgspec.msgpack.Encoder()
+_REQUESTS = msgspec.msgpack.Decoder(Request)
+_REPLIES = msgspec.msgpack.Decoder(Reply)
 
 
 def encode(message: Request | Reply) -> bytes:
-    return msgpack.packb(_to_wire(message))
+    return _ENCODER.encode(message)
 
 
 def decode_request(data: bytes) -> Request:
-    message = _from_wire(msgpack.unpackb(data))
-    if not isinstance(message, get_args(Request)):
-        raise ProtocolError(f"expected a request, got {type(message).__name__}.")
-    return message
+    try:
+        return _REQUESTS.decode(data)
+    except msgspec.DecodeError as exc:
+        raise ProtocolError(f"malformed request: {exc}") from exc
 
 
 def decode_reply(data: bytes) -> Reply:
-    return _from_wire(msgpack.unpackb(data))
+    try:
+        return _REPLIES.decode(data)
+    except msgspec.DecodeError as exc:
+        raise ProtocolError(f"malformed reply: {exc}") from exc
 
 
 def error_reply(exc: Exception) -> ErrorReply:

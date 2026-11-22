@@ -1,6 +1,6 @@
 import threading
 
-import msgpack
+import msgspec
 import pytest
 
 from oblivlib.dependency import (
@@ -9,7 +9,6 @@ from oblivlib.dependency import (
     LoopbackTransport,
     ProtocolError,
     RowSizeError,
-    ServerError,
     SimulatedNetwork,
     StorageServer,
     TransportBackend,
@@ -53,10 +52,12 @@ def _shutdown(endpoint: str, thread: threading.Thread) -> None:
 
 def test_non_requests_get_error_replies():
     transport = LoopbackTransport(StorageServer())
-    with pytest.raises(ServerError, match="NoSuchMessage"):
-        expect_reply(decode_reply(transport.request(msgpack.packb(["NoSuchMessage", "s"]))), Ok)
-    with pytest.raises(ProtocolError, match="expected a request, got Ok"):
+    with pytest.raises(ProtocolError, match="malformed request.*NoSuchMessage"):
+        expect_reply(decode_reply(transport.request(msgspec.msgpack.encode(["NoSuchMessage", "s"]))), Ok)
+    with pytest.raises(ProtocolError, match="malformed request.*'Ok'"):
         expect_reply(decode_reply(transport.request(encode(Ok()))), Ok)
+    with pytest.raises(ProtocolError, match="malformed request"):
+        expect_reply(decode_reply(transport.request(encode(Hello(version=1))[:-1])), Ok)
 
 
 def test_error_replies_raise_mapped_errors_over_zmq():
