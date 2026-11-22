@@ -1,8 +1,10 @@
 import pytest
 
-from oblivlib.dependency import AesGcm, CapacityError, OramBlock, Recorder
+from oblivlib.dependency import AesGcm, CapacityError
 from oblivlib.dependency.layout import Bytes, Col, Record, UInt
+from oblivlib.dependency.metrics import Recorder
 from oblivlib.dependency.path_cipher import SealedPathCipher, make_path_cipher
+from oblivlib.dependency.types import OramBlock
 
 _DATA_SIZE = 16
 _BLOCK = Record(

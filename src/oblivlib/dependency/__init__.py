@@ -5,9 +5,7 @@ public surface is type-checker-visible, free of incidental stdlib/typing leakage
 and stated in one place — ``__all__``.
 """
 
-from .avl_tree import AVLNode
-from .bplus_tree import BPlusInternal, BPlusLeaf, BPlusNode
-from .client import Backend, Client, ExecuteResult, LocalBackend, TransportBackend
+from .client import Backend, Client, LocalBackend, TransportBackend
 from .config import (
     AccessBudget,
     AvlOmapConfig,
@@ -28,14 +26,7 @@ from .config import (
     StaticOramConfig,
     TreeOmapConfig,
 )
-from .crypto import (
-    AesGcm,
-    Blake2Prf,
-    Encryptor,
-    PseudoRandomFunction,
-    hash_data_to_leaf,
-    hash_data_to_map,
-)
+from .crypto import AesGcm, Encryptor
 from .errors import (
     CapacityError,
     ContractError,
@@ -50,39 +41,19 @@ from .errors import (
     TransportError,
     UnknownLabelError,
 )
-from .metrics import Measurement, Metrics, Recorder
+from .metrics import Measurement, Metrics
 from .storage_server import StorageServer
 from .transport import LoopbackTransport, SimulatedNetwork, Transport, ZmqListener, ZmqTransport, serve
-from .tree_builder import BuildResult, FileImage, MemoryImage, TreeImage, build_tree
-from .types import (
-    UNSET,
-    Block,
-    DataMap,
-    InitData,
-    OramBlock,
-    PathData,
-    PathRows,
-    PosMap,
-    Unset,
-)
+from .types import InitData
 
 __all__ = [
     "AccessBudget",
-    "AVLNode",
-    "BPlusInternal",
-    "BPlusLeaf",
-    "BPlusNode",
     "Backend",
     "Client",
-    "ExecuteResult",
     "LocalBackend",
     "TransportBackend",
     "AesGcm",
-    "Blake2Prf",
     "Encryptor",
-    "PseudoRandomFunction",
-    "hash_data_to_leaf",
-    "hash_data_to_map",
     "CapacityError",
     "ContractError",
     "DuplicateLabelError",
@@ -97,9 +68,6 @@ __all__ = [
     "UnknownLabelError",
     "Measurement",
     "Metrics",
-    "Recorder",
-    "Block",
-    "OramBlock",
     "StorageServer",
     "LoopbackTransport",
     "SimulatedNetwork",
@@ -107,18 +75,7 @@ __all__ = [
     "ZmqListener",
     "ZmqTransport",
     "serve",
-    "BuildResult",
-    "FileImage",
-    "MemoryImage",
-    "TreeImage",
-    "build_tree",
-    "UNSET",
-    "Unset",
-    "DataMap",
     "InitData",
-    "PathData",
-    "PathRows",
-    "PosMap",
     "AvlOmapConfig",
     "BPlusOmapConfig",
     "CounterOramConfig",

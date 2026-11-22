@@ -3,11 +3,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import override
 
-from oblivlib.dependency import PosMap
 from oblivlib.dependency.config import RecursiveOramConfig
 from oblivlib.dependency.layout import Array, Col, Field, Record, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
-from oblivlib.dependency.types import Unset
+from oblivlib.dependency.types import PosMap, Unset
 from oblivlib.oram.tree_base_oram import PosMapLevel, TreeBaseOram, pos_map_keys, pos_map_level_count
 
 

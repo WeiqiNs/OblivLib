@@ -2,14 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from oblivlib.dependency import (
-    Client,
-    Metrics,
-    MissingResultError,
-    ProtocolError,
-    RowSizeError,
-    UnknownLabelError,
-)
+from oblivlib.dependency import Client, Metrics, MissingResultError, ProtocolError, RowSizeError, UnknownLabelError
 from oblivlib.dependency import client as client_module
 from oblivlib.dependency.protocol import WriteRange
 from oblivlib.dependency.tree_builder import MemoryImage

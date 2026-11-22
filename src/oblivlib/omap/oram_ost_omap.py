@@ -1,10 +1,10 @@
 from collections.abc import Callable
 from typing import override
 
-from oblivlib.dependency import Blake2Prf, hash_data_to_leaf, hash_data_to_map
 from oblivlib.dependency.balls_into_bins import max_bin_load
 from oblivlib.dependency.config import TreeOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_omap_pair
+from oblivlib.dependency.crypto import Blake2Prf, hash_data_to_leaf, hash_data_to_map
 from oblivlib.dependency.layout import Optional
 from oblivlib.dependency.types import Block
 from oblivlib.omap.base_omap import BaseOmap, KvList
@@ -14,6 +14,11 @@ from oblivlib.oram.tree_base_oram import Oram, require_oram_fits
 
 class OramOstOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](BaseOmap):
     def __init__(self, *, ost: type[OstBaseOmap[OmapConfigT, KeyT, NodeT]], ost_config: OmapConfigT, oram: Oram):
+        if ost_config.cached or ost_config.batch_size > 1:
+            raise ValueError(
+                "OramOstOmap runs single-key ops on one tree at a time; its tree map must use cached=False and "
+                + "batch_size=1."
+            )
         num_data = ost_config.num_data
         self._root_layout: Optional[Root[KeyT]] = ost.root_layout(ost_config)
         require_oram_fits(
@@ -39,7 +44,7 @@ class OramOstOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](BaseO
         return self._root_layout.encode(root)
 
     def _decode_root(self, value: bytes) -> Root[KeyT] | None:
-        return None if value == b"" else self._root_layout.decode(value)
+        return self._root_layout.decode(value)
 
     @property
     def _num_data(self) -> int:

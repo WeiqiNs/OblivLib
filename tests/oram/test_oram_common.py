@@ -3,7 +3,8 @@ from typing import Any
 
 import pytest
 
-from oblivlib.dependency import UNSET, ContractError, DaOramConfig, FreecursiveOramConfig, RecursiveOramConfig
+from oblivlib.dependency import ContractError, DaOramConfig, FreecursiveOramConfig, RecursiveOramConfig
+from oblivlib.dependency.types import UNSET
 from oblivlib.oram import DAOram, FreecursiveOram, RecursivePathOram
 
 

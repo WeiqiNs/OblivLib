@@ -2,12 +2,7 @@ from typing import Any
 
 import pytest
 
-from oblivlib.dependency import (
-    CapacityError,
-    DaOramConfig,
-    FreecursiveOramConfig,
-    config,
-)
+from oblivlib.dependency import CapacityError, DaOramConfig, FreecursiveOramConfig, config
 from oblivlib.oram import DAOram, FreecursiveOram
 
 _TINY_COUNTERS: dict[str, Any] = {"num_data": 64, "data_size": 4}

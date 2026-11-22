@@ -1,13 +1,7 @@
 import msgspec
 import pytest
 
-from oblivlib.dependency import (
-    DuplicateLabelError,
-    ProtocolError,
-    ServerError,
-    StorageError,
-    UnknownLabelError,
-)
+from oblivlib.dependency import DuplicateLabelError, ProtocolError, ServerError, StorageError, UnknownLabelError
 from oblivlib.dependency.protocol import (
     AttachTree,
     Batch,

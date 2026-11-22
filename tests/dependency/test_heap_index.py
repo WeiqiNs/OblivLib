@@ -1,4 +1,3 @@
-from oblivlib.dependency import OramBlock
 from oblivlib.dependency.heap_index import (
     compute_level,
     empty_path,
@@ -7,6 +6,7 @@ from oblivlib.dependency.heap_index import (
     path_indices,
     path_to_root,
 )
+from oblivlib.dependency.types import OramBlock
 
 
 def test_compute_level_steps_up_just_past_each_power_of_two():

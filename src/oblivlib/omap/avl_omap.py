@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
 from typing import override
 
-from oblivlib.dependency import AVLNode
+from oblivlib.dependency.avl_tree import AVLNode
 from oblivlib.dependency.config import AvlOmapConfig
 from oblivlib.dependency.layout import Bytes, Col, Field, Optional, Record, UInt
 from oblivlib.omap.base_omap import KvList

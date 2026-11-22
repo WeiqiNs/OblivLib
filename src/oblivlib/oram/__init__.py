@@ -4,7 +4,6 @@ from .mul_path_oram import MulPathOram
 from .path_oram import PathOram
 from .recursive_path_oram import RecursivePathOram
 from .static_oram import StaticOram
-from .tree_base_oram import TreeBaseOram
 
 __all__ = [
     "DAOram",
@@ -13,5 +12,4 @@ __all__ = [
     "PathOram",
     "RecursivePathOram",
     "StaticOram",
-    "TreeBaseOram",
 ]

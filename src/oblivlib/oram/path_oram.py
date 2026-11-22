@@ -1,7 +1,7 @@
 from typing import override
 
-from oblivlib.dependency import OramConfig, PosMap
-from oblivlib.dependency.types import Unset
+from oblivlib.dependency import OramConfig
+from oblivlib.dependency.types import PosMap, Unset
 from oblivlib.oram.tree_base_oram import TreeBaseOram
 
 

@@ -1,12 +1,7 @@
 import pytest
 
-from oblivlib.dependency import (
-    GroupOmapConfig,
-    OramBlock,
-    PathOramConfig,
-    RecursiveOramConfig,
-    StashOverflowError,
-)
+from oblivlib.dependency import GroupOmapConfig, PathOramConfig, RecursiveOramConfig, StashOverflowError
+from oblivlib.dependency.types import OramBlock
 from oblivlib.omap import GroupOmap
 from oblivlib.oram import PathOram, RecursivePathOram
 

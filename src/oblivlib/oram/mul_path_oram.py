@@ -1,8 +1,7 @@
 from collections.abc import Mapping
 
-from oblivlib.dependency import UNSET, DataMap
 from oblivlib.dependency.config import MulPathOramConfig
-from oblivlib.dependency.types import Unset
+from oblivlib.dependency.types import UNSET, DataMap, Unset
 from oblivlib.oram.path_oram import PathOram
 
 

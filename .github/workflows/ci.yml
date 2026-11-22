@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e . --group dev
 
       - name: Lint with ruff
         run: ruff check
@@ -67,7 +67,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e . --group dev
 
       - name: Test with pytest
         if: matrix.python-version != '3.x'
@@ -86,3 +86,28 @@ jobs:
           disable_search: true
           flags: unittests
           fail_ci_if_error: true
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: Build the sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check the package metadata
+        run: twine check --strict dist/*
+
+      - name: Install the wheel and import it
+        run: |
+          python -m pip install dist/*.whl
+          cd /tmp && python -c "import oblivlib.graph, oblivlib.omap, oblivlib.oram"

@@ -2,7 +2,8 @@ import random
 
 import pytest
 
-from oblivlib.dependency import AesGcm, BPlusInternal, BPlusLeaf, BPlusOmapConfig
+from oblivlib.dependency import AesGcm, BPlusOmapConfig
+from oblivlib.dependency.bplus_tree import BPlusInternal, BPlusLeaf
 from oblivlib.omap import BPlusOmap
 from oblivlib.omap.bplus_omap import bplus_max_levels
 

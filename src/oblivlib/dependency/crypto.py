@@ -1,4 +1,4 @@
-"""Cryptographic primitives: encryption, PRF, and PRP implementations."""
+"""Cryptographic primitives: encryption and PRF implementations."""
 
 import hashlib
 import os

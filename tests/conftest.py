@@ -9,19 +9,13 @@ from typing import Any, Literal, override
 
 import pytest
 
-from oblivlib.dependency import (
-    AesGcm,
-    Client,
-    LocalBackend,
-    LoopbackTransport,
-    StorageServer,
-    TransportBackend,
-)
+from oblivlib.dependency import AesGcm, Client, LocalBackend, LoopbackTransport, StorageServer, TransportBackend
 from oblivlib.dependency.protocol import Batch, Reply, Request
-from oblivlib.graph import GraphOS
+from oblivlib.graph import GraphOS, Grove
 from oblivlib.omap import GroupOmap, OramOstOmap
 from oblivlib.omap.ost_base_omap import OstBaseOmap
-from oblivlib.oram import TreeBaseOram, freecursive_oram
+from oblivlib.oram import freecursive_oram
+from oblivlib.oram.tree_base_oram import TreeBaseOram
 
 DEFAULT_NUM_DATA = 2**12
 
@@ -78,6 +72,8 @@ def _storages(scheme):
         return [*_storages(scheme._oram), *_storages(scheme._ost)]
     if isinstance(scheme, GraphOS):
         return [*_storages(scheme._omap), scheme._value_tree]
+    if isinstance(scheme, Grove):
+        return [*_storages(scheme._index), scheme._graph]
     if isinstance(scheme, GroupOmap):
         return [*_storages(scheme._upper_oram), scheme._buckets]
     if isinstance(scheme, TreeBaseOram):

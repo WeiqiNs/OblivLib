@@ -1,8 +1,6 @@
 import secrets
 
-from oblivlib.dependency import (
-    StaticOramConfig,
-)
+from oblivlib.dependency import StaticOramConfig
 from oblivlib.oram import StaticOram
 
 
