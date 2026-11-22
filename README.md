@@ -107,7 +107,3 @@ If OblivLib is useful in your work, please cite our papers:
   url     = {https://www.vldb.org/pvldb/vol19/p1826-cao.pdf}
 }
 ```
-
-## License
-
-Apache License 2.0; see [`LICENSE`](LICENSE).
