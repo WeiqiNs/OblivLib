@@ -90,7 +90,9 @@ class TreeStorageBase[ConfigT: OramConfig, BlockT: Block[object]](ABC):
             )
 
     def _require_in_stash(self, key: object) -> BlockT:
-        return next(data for data in self._stash if data.key == key)
+        found = [data for data in self._stash if data.key == key]
+        assert found, f"key {key!r} is not in the stash"
+        return found[0]
 
     def _padded_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
         paths = set(leaves)
