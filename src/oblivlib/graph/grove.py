@@ -196,10 +196,10 @@ class Grove:
         if len(set(neighbors)) != len(neighbors) or vertex in neighbors:
             raise ContractError(f"{self._identity}: vertex {vertex} lists a neighbor twice or itself.")
 
-    def _require_hops(self, num_hop: object) -> int:
-        if type(num_hop) is not int or num_hop < 0:
-            raise ContractError(f"{self._identity}: num_hop must be an int >= 0, got {num_hop!r}.")
-        return num_hop
+    def _require_count(self, name: str, count: object) -> int:
+        if type(count) is not int or count < 0:
+            raise ContractError(f"{self._identity}: {name} must be an int >= 0, got {count!r}.")
+        return count
 
     def init_server_storage(
         self, graph: Mapping[int, Sequence[int]] | None = None, values: Mapping[int, bytes] | None = None
@@ -405,12 +405,12 @@ class Grove:
             self._require_vertex(vertex)
         return {vertex_id: vertex.value for vertex_id, vertex in self._lookup_all(vertices).items()}
 
-    def neighbors_of(self, vertices: Sequence[int]) -> dict[int, list[int]]:
+    def neighbor_ids(self, vertices: Sequence[int]) -> dict[int, list[int]]:
         for vertex in vertices:
             self._require_vertex(vertex)
         return {vertex_id: list(vertex.neighbors) for vertex_id, vertex in self._lookup_all(vertices).items()}
 
-    def neighbor(self, vertices: Sequence[int]) -> dict[int, bytes]:
+    def neighbor_values(self, vertices: Sequence[int]) -> dict[int, bytes]:
         for vertex in vertices:
             self._require_vertex(vertex)
         centers = self._lookup_all(vertices)
@@ -418,23 +418,23 @@ class Grove:
         slots = self._layer({v: centers[v] for v in dict.fromkeys(vertices) if v in centers}, width, set())
         return {vertex_id: vertex.value for vertex_id, vertex in self._visit(slots).items()}
 
-    def t_hop(self, vertex: int, num_hop: int) -> dict[int, bytes]:
+    def hop_neighborhood(self, vertex: int, hops: int) -> dict[int, bytes]:
         self._require_vertex(vertex)
-        self._require_hops(num_hop)
+        self._require_count("hops", hops)
         found = self._lookup_all([vertex])
         frontier = dict(found)
-        for hop in range(1, num_hop + 1):
+        for hop in range(1, hops + 1):
             layer = self._visit(self._layer(frontier, self._max_deg**hop, set(found)))
             found.update(layer)
             frontier = layer
         return {vertex_id: v.value for vertex_id, v in found.items()}
 
-    def t_traversal(self, vertex: int, num_hop: int) -> dict[int, bytes]:
+    def random_walk(self, vertex: int, steps: int) -> dict[int, bytes]:
         self._require_vertex(vertex)
-        self._require_hops(num_hop)
+        self._require_count("steps", steps)
         found = self._lookup_all([vertex])
         current = dict(found)
-        for _ in range(num_hop):
+        for _ in range(steps):
             layer = self._visit(self._layer(current, self._max_deg, set()))
             found.update(layer)
             step = secrets.choice(list(layer)) if layer else None

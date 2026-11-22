@@ -37,11 +37,11 @@ def _random_graph(rng, num_vertices, max_deg):
     return graph
 
 
-def _within(graph, start, num_hop):
+def _within(graph, start, hops):
     if start not in graph:
         return set()
     seen, frontier = {start}, {start}
-    for _ in range(num_hop):
+    for _ in range(hops):
         frontier = {n for v in frontier for n in graph[v]} - seen
         seen |= frontier
     return seen
@@ -125,18 +125,18 @@ class TestGrove:
             elif roll < 0.3:
                 queried = rng.sample(range(num_vertices + 2), 2)
                 expected = {n for v in queried if v in graph for n in graph[v]}
-                assert grove.neighbor(queried) == {n: values[n] for n in expected}
+                assert grove.neighbor_values(queried) == {n: values[n] for n in expected}
             elif roll < 0.42:
                 hops = rng.randrange(4)
-                assert grove.t_hop(vertex, hops) == {v: values[v] for v in _within(graph, vertex, hops)}
+                assert grove.hop_neighborhood(vertex, hops) == {v: values[v] for v in _within(graph, vertex, hops)}
             elif roll < 0.5:
-                walk = grove.t_traversal(vertex, 3)
+                walk = grove.random_walk(vertex, 3)
                 if vertex in graph:
                     assert set(graph[vertex]) | {vertex} <= set(walk)
                 assert set(walk) <= _within(graph, vertex, 3)
                 assert all(walk[v] == values[v] for v in walk)
             elif roll < 0.58:
-                adjacency = grove.neighbors_of(list(graph))
+                adjacency = grove.neighbor_ids(list(graph))
                 assert {v: sorted(n) for v, n in adjacency.items()} == {v: sorted(n) for v, n in graph.items()}
                 bfs_order, dfs_order = reference_orders
                 assert list(grove.bfs(vertex).items()) == [(v, values[v]) for v in bfs_order(adjacency, vertex)]
@@ -166,8 +166,8 @@ class TestGrove:
         grove = _make(client, 8)
         grove.init_server_storage(graph, values)
         for _ in range(40):
-            assert grove.neighbor([0]) == {1: b"\x01", 2: b"\x02", 3: b"\x03"}
-            assert grove.t_hop(3, 2) == values
+            assert grove.neighbor_values([0]) == {1: b"\x01", 2: b"\x02", 3: b"\x03"}
+            assert grove.hop_neighborhood(3, 2) == values
         consistent(grove, graph, values)
 
     def test_traversals_visit_the_component_in_order(self, client, consistent):
@@ -188,7 +188,7 @@ class TestGrove:
         grove.init_server_storage(graph, {v: b"v" for v in graph})
         grove.delete(0)
         assert grove.lookup([0]) == {}
-        assert grove.neighbors_of([1, 2]) == {1: [], 2: []}
+        assert grove.neighbor_ids([1, 2]) == {1: [], 2: []}
         consistent(grove, {1: [], 2: []}, {1: b"v", 2: b"v"})
 
     def test_failed_updates_leave_the_graph_usable_and_unchanged(self, client, consistent):
@@ -204,7 +204,7 @@ class TestGrove:
             grove.insert(4, b"x", [0])
         with pytest.raises(KeyError, match="vertex 7 does not exist"):
             grove.delete(7)
-        assert grove.neighbor([0]) == {1: b"v", 2: b"v", 3: b"v"}
+        assert grove.neighbor_values([0]) == {1: b"v", 2: b"v", 3: b"v"}
         consistent(grove, graph, values)
 
     def test_contract_violations_are_raised_before_any_io(self, client):
@@ -216,9 +216,11 @@ class TestGrove:
             with pytest.raises(ContractError):
                 grove.insert(vertex, value, neighbors)
         hops: list[Any] = [-1, 1.5]
-        for num_hop in hops:
-            with pytest.raises(ContractError, match="num_hop"):
-                grove.t_hop(0, num_hop)
+        for count in hops:
+            with pytest.raises(ContractError, match="hops"):
+                grove.hop_neighborhood(0, count)
+            with pytest.raises(ContractError, match="steps"):
+                grove.random_walk(0, count)
         assert client.metrics.rounds == rounds
 
 
@@ -256,13 +258,13 @@ class TestGroveObliviousness:
         "query",
         [
             lambda g, v: g.lookup([v]),
-            lambda g, v: g.neighbor([v]),
-            lambda g, v: g.t_hop(v, 2),
-            lambda g, v: g.t_traversal(v, 2),
+            lambda g, v: g.neighbor_values([v]),
+            lambda g, v: g.hop_neighborhood(v, 2),
+            lambda g, v: g.random_walk(v, 2),
             lambda g, v: g.bfs(v),
             lambda g, v: g.dfs(v),
         ],
-        ids=["lookup", "neighbor", "t_hop", "t_traversal", "bfs", "dfs"],
+        ids=["lookup", "neighbor_values", "hop_neighborhood", "random_walk", "bfs", "dfs"],
     )
     def test_query_trace_is_degree_independent(self, monkeypatch, query):
         traces = []
@@ -273,7 +275,7 @@ class TestGroveObliviousness:
 
     def test_every_round_reads_its_full_rl_budget(self, monkeypatch):
         client, grove = self._grove(monkeypatch, 6)
-        reads = [count for tree, count in _request_trace(client, grove.neighbor, [0]) if tree == "graph_meta"]
+        reads = [count for tree, count in _request_trace(client, grove.neighbor_values, [0]) if tree == "graph_meta"]
         k = MAX_DEG
         assert reads == [1 + k + grove._index_paths, k + k * k]
 
