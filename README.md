@@ -72,9 +72,11 @@ from oblivlib.oram import PathOram
 with Client.local() as client:
     oram = PathOram(PathOramConfig(num_data=1024, data_size=16, client=client, encryptor=AesGcm()))
     oram.init_server_storage()
-    oram.operate_on_key(3, b"hello")
-    assert oram.operate_on_key(3) == b"hello"
-    print(client.metrics)
+    with client.measure() as measurement:
+        oram.operate_on_key(3, b"hello")
+        assert oram.operate_on_key(3) == b"hello"
+        client.flush()
+    print(measurement.result.rounds, measurement.elapsed_ns, measurement.client_ns)
 ```
 
 To estimate network cost without a real network, put `SimulatedNetwork` in front of an in-process server.
@@ -88,6 +90,26 @@ with Client(TransportBackend(network)) as client:
     ...  # build and use schemes exactly as above
 print(f"{network.request_count} requests, {network.modeled_seconds:.2f}s of modeled network time")
 ```
+
+### Metrics
+
+Every `Client` keeps one cumulative account of its work, and `client.metrics` is a frozen `Metrics`
+snapshot of it: rounds and requests, row bytes written and read, wire bytes sent and received, time spent
+in the client's own message encoding, in the transport and on the server (`network_ns` is the transport
+time the server did not account for), and the rows, bytes and time of bucket encoding, encryption,
+decryption and decoding. Counters only grow; `with client.measure() as m:` gives the difference over a
+span in `m.result`, plus its wall time `m.elapsed_ns` and the time none of the counters cover,
+`m.client_ns` (scheme logic, stash work, PRFs and hashing).
+
+- **One client, one account.** Every scheme on a client feeds it, so the parts of a composed scheme must
+  share one client to be counted together.
+- **A span's I/O is what crossed the wire during it.** A deferred write is sealed, and timed, in the
+  operation that staged it, but its bytes count in the span that sends it. A span over a workload is exact
+  up to one pending batch at each edge; call `client.flush()` at the edges for tight numbers.
+  `measure()` never flushes, since that would change the round count.
+- **In process, wire bytes are 0**; row bytes are the in-process measure.
+- **Cipher counters include building the initial tree**, which with a `build_file` reads and writes
+  sealed rows locally, so `opened_bytes == row_bytes_read` only holds for spans after hosting.
 
 ### Client and server
 

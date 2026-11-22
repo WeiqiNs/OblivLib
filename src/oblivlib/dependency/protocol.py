@@ -22,7 +22,7 @@ class _Message(msgspec.Struct, frozen=True, tag=True, array_like=True):
     pass
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 
 class ReadPath(_Message, frozen=True):
@@ -96,6 +96,12 @@ class ErrorReply(_Message, frozen=True):
 Request = Hello | CreateTree | AttachTree | WriteRange | Batch | Close | Shutdown
 Reply = HelloReply | Ok | BatchReply | ErrorReply
 
+
+class Timed(_Message, frozen=True):
+    server_ns: int
+    reply: Reply
+
+
 ERROR_KINDS: dict[str, type[OblivlibError]] = {
     cls.__name__: cls
     for cls in (UnknownLabelError, DuplicateLabelError, RowSizeError, ProtocolError, StorageError, ServerError)
@@ -103,10 +109,10 @@ ERROR_KINDS: dict[str, type[OblivlibError]] = {
 
 _ENCODER = msgspec.msgpack.Encoder()
 _REQUESTS: msgspec.msgpack.Decoder[Request] = msgspec.msgpack.Decoder(Request)
-_REPLIES: msgspec.msgpack.Decoder[Reply] = msgspec.msgpack.Decoder(Reply)
+_TIMED: msgspec.msgpack.Decoder[Timed] = msgspec.msgpack.Decoder(Timed)
 
 
-def encode(message: Request | Reply) -> bytes:
+def encode(message: Request | Timed) -> bytes:
     return _ENCODER.encode(message)
 
 
@@ -117,9 +123,9 @@ def decode_request(data: bytes) -> Request:
         raise ProtocolError(f"malformed request: {exc}") from exc
 
 
-def decode_reply(data: bytes) -> Reply:
+def decode_timed(data: bytes) -> Timed:
     try:
-        return _REPLIES.decode(data)
+        return _TIMED.decode(data)
     except msgspec.DecodeError as exc:
         raise ProtocolError(f"malformed reply: {exc}") from exc
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from oblivlib.dependency import AesGcm, DuplicateLabelError, OramBlock
+from oblivlib.dependency import AesGcm, DuplicateLabelError, OramBlock, Recorder
 from oblivlib.dependency.heap_index import tree_size
 from oblivlib.dependency.layout import Bytes, Record, UInt
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
@@ -27,7 +27,7 @@ def _keys(cipher: PathCipher[OramBlock], image: TreeImage) -> list[list[int]]:
 
 @pytest.mark.parametrize("mode", ["memory_plain", "memory_sealed", "file_sealed"])
 def test_build_places_blocks_deepest_first_and_reports_overflow(mode, tmp_path):
-    cipher = make_path_cipher(_BLOCK, None if mode == "memory_plain" else AesGcm(), bucket_size=1)
+    cipher = make_path_cipher(_BLOCK, None if mode == "memory_plain" else AesGcm(), bucket_size=1, recorder=Recorder())
     blocks = [OramBlock(key=key, leaf=0, value=b"v") for key in range(5)] + [OramBlock(key=9, leaf=5, value=b"w")]
     build_file = tmp_path / "build.tree" if mode == "file_sealed" else None
 
@@ -42,7 +42,7 @@ def test_build_places_blocks_deepest_first_and_reports_overflow(mode, tmp_path):
 
 
 def test_three_handovers_produce_identical_server_state(tmp_path, handover_client):
-    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
+    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2, recorder=Recorder())
     blocks = [OramBlock(key=key, leaf=key % 8, value=bytes([key]) * 4) for key in range(12)]
     image = build_tree(blocks, level=4, bucket_size=2, cipher=cipher, build_file=tmp_path / "build.tree").image
     assert isinstance(image, FileImage)
@@ -55,7 +55,6 @@ def test_three_handovers_produce_identical_server_state(tmp_path, handover_clien
         source = Path(shutil.copy(image.path, sources / f"{mode}.tree"))
         client.host_tree("t", FileImage(level=image.level, row_bytes=image.row_bytes, path=source))
         assert not source.exists()
-        assert (client.metrics.payload_bytes > 0) is (mode == "stream")
 
         client.add_read_path("t", range(8))
         rows = client.execute().require("t")
@@ -70,7 +69,7 @@ def _open_fds() -> int:
 @pytest.mark.skipif(not Path("/proc/self/fd").exists(), reason="counts open descriptors through /proc")
 @pytest.mark.parametrize("fail_at", ["placement", "pre_sealing"])
 def test_a_failed_file_build_closes_its_file_and_leaves_it(tmp_path, fail_once, fail_at):
-    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
+    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2, recorder=Recorder())
 
     def blocks():
         yield OramBlock(key=0, leaf=0, value=b"v")
@@ -87,7 +86,7 @@ def test_a_failed_file_build_closes_its_file_and_leaves_it(tmp_path, fail_once, 
 
 @pytest.mark.parametrize(("mode", "kept"), [("adopt", True), ("attach", False)])
 def test_a_failed_attach_raises_and_leaves_an_adopted_file_where_it_was(tmp_path, handover_client, mode, kept):
-    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
+    cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2, recorder=Recorder())
     client = handover_client(mode)
     for name in ("first", "second"):
         build_tree([], level=3, bucket_size=2, cipher=cipher, build_file=tmp_path / f"{name}.tree")

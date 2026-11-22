@@ -11,7 +11,6 @@ import pytest
 
 from oblivlib.dependency import (
     AesGcm,
-    Backend,
     Client,
     LocalBackend,
     LoopbackTransport,
@@ -28,29 +27,15 @@ DEFAULT_NUM_DATA = 2**12
 AccessShape = tuple[dict[str, frozenset[int]], dict[str, tuple[int, ...]]]
 
 
-class RecordingBackend(Backend):
-    def __init__(self, inner: Backend):
-        self._inner = inner
+class RecordingBackend(LocalBackend):
+    def __init__(self, server: StorageServer):
+        super().__init__(server)
         self.messages: list[Request] = []
 
     @override
     def call(self, message: Request) -> Reply:
         self.messages.append(message)
-        return self._inner.call(message)
-
-    @property
-    @override
-    def wire_bytes(self) -> int:
-        return self._inner.wire_bytes
-
-    @property
-    @override
-    def storage_dir(self) -> Path | None:
-        return self._inner.storage_dir
-
-    @override
-    def close(self) -> None:
-        self._inner.close()
+        return super().call(message)
 
     @property
     def batches(self) -> list[Batch]:
@@ -139,7 +124,7 @@ def remote_client():
 def recorded_client():
 
     def make(*, defer_writes: bool = True, server: StorageServer | None = None) -> tuple[Client, RecordingBackend]:
-        recorder = RecordingBackend(LocalBackend(server or StorageServer()))
+        recorder = RecordingBackend(server or StorageServer())
         return Client(recorder, defer_writes=defer_writes), recorder
 
     return make

@@ -10,6 +10,7 @@ from oblivlib.dependency import (
     UnknownLabelError,
 )
 from oblivlib.dependency.protocol import (
+    PROTOCOL_VERSION,
     AttachTree,
     Batch,
     BatchReply,
@@ -37,7 +38,7 @@ def server(request, tmp_path):
 
 
 def _open(server: StorageServer) -> str:
-    return expect_reply(server.handle(Hello(version=1)), HelloReply).session
+    return expect_reply(server.handle(Hello(version=PROTOCOL_VERSION)), HelloReply).session
 
 
 def _ok(reply: Reply) -> None:
@@ -53,11 +54,11 @@ def _row(tag: int) -> bytes:
 
 
 def test_hello_opens_sessions_and_checks_version(server):
-    reply = expect_reply(server.handle(Hello(version=1)), HelloReply)
+    reply = expect_reply(server.handle(Hello(version=PROTOCOL_VERSION)), HelloReply)
     assert len(reply.session) == 32
 
-    with pytest.raises(ProtocolError, match="version 2"):
-        expect_reply(server.handle(Hello(version=2)), HelloReply)
+    with pytest.raises(ProtocolError, match="version 1"):
+        expect_reply(server.handle(Hello(version=1)), HelloReply)
     with pytest.raises(ProtocolError, match="unknown session"):
         _ok(server.handle(CreateTree(session="nope", label="t", level=2, row_bytes=ROW)))
 

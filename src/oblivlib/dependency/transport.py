@@ -1,10 +1,11 @@
+import time
 from abc import ABC, abstractmethod
 from typing import override
 
 import zmq
 
 from oblivlib.dependency.errors import TransportError
-from oblivlib.dependency.protocol import Shutdown, decode_request, encode, error_reply
+from oblivlib.dependency.protocol import Reply, Shutdown, Timed, decode_request, encode, error_reply
 from oblivlib.dependency.storage_server import StorageServer
 
 DEFAULT_TIMEOUT_MS = 30_000
@@ -22,11 +23,17 @@ class Transport(ABC):
 
 def handle_wire(server: StorageServer, data: bytes) -> tuple[bytes, bool]:
     """Answer one encoded request; the flag is whether it was a ``Shutdown``. Never raises on bad input."""
+    start = time.perf_counter_ns()
+    shutdown = False
+    reply: Reply
     try:
         message = decode_request(data)
     except Exception as exc:
-        return encode(error_reply(exc)), False
-    return encode(server.handle(message)), isinstance(message, Shutdown)
+        reply = error_reply(exc)
+    else:
+        reply = server.handle(message)
+        shutdown = isinstance(message, Shutdown)
+    return encode(Timed(server_ns=time.perf_counter_ns() - start, reply=reply)), shutdown
 
 
 class LoopbackTransport(Transport):

@@ -149,7 +149,9 @@ class TreeStorageBase[ConfigT: OramConfig, BlockT: Block[object]](ABC):
 
     @cached_property
     def _cipher(self) -> PathCipher[BlockT]:
-        return make_path_cipher(self._block_layout, self._encryptor, self._bucket_size)
+        return make_path_cipher(
+            self._block_layout, self._encryptor, bucket_size=self._bucket_size, recorder=self._client.recorder
+        )
 
     def _build_tree(self, blocks: Iterable[BlockT]) -> TreeImage:
         result = build_tree(

@@ -1,5 +1,6 @@
 import secrets
 import shutil
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Self, override
 
 from oblivlib.dependency.errors import MissingResultError, UnknownLabelError
 from oblivlib.dependency.heap_index import path_indices, path_leaves
+from oblivlib.dependency.metrics import Measurement, Metrics, Recorder
 from oblivlib.dependency.protocol import (
     PROTOCOL_VERSION,
     AttachTree,
@@ -24,7 +26,7 @@ from oblivlib.dependency.protocol import (
     Request,
     WritePath,
     WriteRange,
-    decode_reply,
+    decode_timed,
     encode,
     expect_reply,
 )
@@ -34,16 +36,6 @@ from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage
 from oblivlib.dependency.types import PathRows
 
 WRITE_RANGE_CHUNK_BYTES = 32 * 2**20
-
-
-@dataclass(frozen=True)
-class Metrics:
-    """``rounds`` counts the batches sent; ``payload_bytes`` the row bytes written and
-    read; ``wire_bytes`` the encoded message bytes a transport moved (zero in process)."""
-
-    rounds: int
-    payload_bytes: int
-    wire_bytes: int
 
 
 @dataclass(frozen=True)
@@ -65,7 +57,23 @@ class Backend(ABC):
 
     @property
     @abstractmethod
-    def wire_bytes(self) -> int: ...
+    def bytes_sent(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def bytes_received(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def client_wire_ns(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def transport_ns(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def server_ns(self) -> int: ...
 
     @property
     @abstractmethod
@@ -79,15 +87,39 @@ class Backend(ABC):
 class LocalBackend(Backend):
     def __init__(self, server: StorageServer):
         self._server: StorageServer = server
+        self._server_ns: int = 0
 
     @override
     def call(self, message: Request) -> Reply:
-        return self._server.handle(message)
+        start = time.perf_counter_ns()
+        reply = self._server.handle(message)
+        self._server_ns += time.perf_counter_ns() - start
+        return reply
 
     @property
     @override
-    def wire_bytes(self) -> int:
+    def bytes_sent(self) -> int:
         return 0
+
+    @property
+    @override
+    def bytes_received(self) -> int:
+        return 0
+
+    @property
+    @override
+    def client_wire_ns(self) -> int:
+        return 0
+
+    @property
+    @override
+    def transport_ns(self) -> int:
+        return 0
+
+    @property
+    @override
+    def server_ns(self) -> int:
+        return self._server_ns
 
     @property
     @override
@@ -102,19 +134,51 @@ class LocalBackend(Backend):
 class TransportBackend(Backend):
     def __init__(self, transport: Transport):
         self._transport: Transport = transport
-        self._wire_bytes: int = 0
+        self._bytes_sent: int = 0
+        self._bytes_received: int = 0
+        self._client_wire_ns: int = 0
+        self._transport_ns: int = 0
+        self._server_ns: int = 0
 
     @override
     def call(self, message: Request) -> Reply:
+        start = time.perf_counter_ns()
         data = encode(message)
-        reply = self._transport.request(data)
-        self._wire_bytes += len(data) + len(reply)
-        return decode_reply(reply)
+        sent = time.perf_counter_ns()
+        raw = self._transport.request(data)
+        received = time.perf_counter_ns()
+        timed = decode_timed(raw)
+        self._client_wire_ns += sent - start + time.perf_counter_ns() - received
+        self._transport_ns += received - sent
+        self._server_ns += timed.server_ns
+        self._bytes_sent += len(data)
+        self._bytes_received += len(raw)
+        return timed.reply
 
     @property
     @override
-    def wire_bytes(self) -> int:
-        return self._wire_bytes
+    def bytes_sent(self) -> int:
+        return self._bytes_sent
+
+    @property
+    @override
+    def bytes_received(self) -> int:
+        return self._bytes_received
+
+    @property
+    @override
+    def client_wire_ns(self) -> int:
+        return self._client_wire_ns
+
+    @property
+    @override
+    def transport_ns(self) -> int:
+        return self._transport_ns
+
+    @property
+    @override
+    def server_ns(self) -> int:
+        return self._server_ns
 
     @property
     @override
@@ -164,9 +228,11 @@ class Client:
         self._read_paths: dict[str, set[int]] = {}
         self._write_paths: dict[str, PathRows] = {}
 
+        self._recorder: Recorder = Recorder()
         self._rounds: int = 0
-        self._payload_bytes: int = 0
-        self._wire_baseline: int = 0
+        self._requests: int = 0
+        self._row_bytes_written: int = 0
+        self._row_bytes_read: int = 0
         self._closed: bool = False
 
     @classmethod
@@ -186,17 +252,34 @@ class Client:
         self.close()
 
     @property
+    def recorder(self) -> Recorder:
+        return self._recorder
+
+    @property
     def metrics(self) -> Metrics:
+        backend, recorder = self._backend, self._recorder
         return Metrics(
             rounds=self._rounds,
-            payload_bytes=self._payload_bytes,
-            wire_bytes=self._backend.wire_bytes - self._wire_baseline,
+            requests=self._requests,
+            row_bytes_written=self._row_bytes_written,
+            row_bytes_read=self._row_bytes_read,
+            bytes_sent=backend.bytes_sent,
+            bytes_received=backend.bytes_received,
+            client_wire_ns=backend.client_wire_ns,
+            transport_ns=backend.transport_ns,
+            server_ns=backend.server_ns,
+            rows_sealed=recorder.rows_sealed,
+            rows_opened=recorder.rows_opened,
+            sealed_bytes=recorder.sealed_bytes,
+            opened_bytes=recorder.opened_bytes,
+            encode_ns=recorder.encode_ns,
+            encrypt_ns=recorder.encrypt_ns,
+            decrypt_ns=recorder.decrypt_ns,
+            decode_ns=recorder.decode_ns,
         )
 
-    def reset_metrics(self) -> None:
-        self._rounds = 0
-        self._payload_bytes = 0
-        self._wire_baseline = self._backend.wire_bytes
+    def measure(self) -> Measurement:
+        return Measurement(lambda: self.metrics)
 
     def level_of(self, label: str) -> int:
         self._require_label(label)
@@ -256,7 +339,7 @@ class Client:
 
     def _require_session(self) -> str:
         if self._session is None:
-            self._session = expect_reply(self._backend.call(Hello(version=PROTOCOL_VERSION)), HelloReply).session
+            self._session = expect_reply(self._call(Hello(version=PROTOCOL_VERSION)), HelloReply).session
         return self._session
 
     def _require_label(self, label: str) -> None:
@@ -264,7 +347,7 @@ class Client:
             raise UnknownLabelError(f"Client: tree label {label!r} is not hosted by this client.")
 
     def _expect_ok(self, message: Request) -> None:
-        _ = expect_reply(self._backend.call(message), Ok)
+        _ = expect_reply(self._call(message), Ok)
 
     def _host_file(self, label: str, image: FileImage) -> None:
         self.flush()
@@ -315,7 +398,6 @@ class Client:
 
     def _write_range(self, label: str, start: int, rows: list[bytes]) -> None:
         self._expect_ok(WriteRange(session=self._require_session(), label=label, start=start, rows=rows))
-        self._payload_bytes += sum(len(row) for row in rows)
 
     def _has_pending_writes(self) -> bool:
         return bool(self._write_paths)
@@ -340,13 +422,23 @@ class Client:
 
     def _send_batch(self, writes: list[WritePath], reads: list[ReadPath]) -> ExecuteResult:
         batch = Batch(session=self._require_session(), writes=writes, reads=reads)
-        self._rounds += 1
-        reply = expect_reply(self._backend.call(batch), BatchReply)
-
-        payload = sum(len(row) for op in writes for row in op.rows)
+        reply = expect_reply(self._call(batch), BatchReply)
         results: dict[str, PathRows] = {}
         for op, rows in zip(reads, reply.results, strict=True):
-            payload += sum(len(row) for row in rows)
             results[op.label] = dict(zip(path_indices(op.leaves, self._levels[op.label]), rows, strict=True))
-        self._payload_bytes += payload
         return ExecuteResult(results)
+
+    def _call(self, message: Request) -> Reply:
+        self._requests += 1
+        match message:
+            case Batch(writes=writes):
+                self._rounds += 1
+                self._row_bytes_written += sum(len(row) for op in writes for row in op.rows)
+            case WriteRange(rows=rows):
+                self._row_bytes_written += sum(len(row) for row in rows)
+            case _:
+                pass
+        reply = self._backend.call(message)
+        if isinstance(reply, BatchReply):
+            self._row_bytes_read += sum(len(row) for rows in reply.results for row in rows)
+        return reply

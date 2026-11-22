@@ -1,11 +1,14 @@
 import pytest
 
 from oblivlib.dependency import (
+    GroupOmapConfig,
     OramBlock,
     PathOramConfig,
+    RecursiveOramConfig,
     StashOverflowError,
 )
-from oblivlib.oram import PathOram
+from oblivlib.omap import GroupOmap
+from oblivlib.oram import PathOram, RecursivePathOram
 
 
 def test_default_names_are_unique_per_config(client):
@@ -33,3 +36,27 @@ def test_require_in_stash_finds_the_block_or_names_the_missing_key(client):
     assert base._require_in_stash(1) is block
     with pytest.raises(KeyError, match="Key 2 not found"):
         base._require_in_stash(2)
+
+
+def test_every_tree_of_a_composed_scheme_feeds_the_client_recorder(client, encryptor):
+    upper = RecursivePathOram(
+        RecursiveOramConfig(
+            num_data=64, data_size=GroupOmap.upper_oram_data_size(64), client=client, encryptor=encryptor
+        )
+    )
+    omap = GroupOmap(
+        GroupOmapConfig(num_data=64, key_size=8, data_size=8, client=client, encryptor=encryptor), upper_oram=upper
+    )
+    omap.init_server_storage([(b"k%d" % i, b"v") for i in range(8)])
+    assert upper._levels
+
+    with client.measure() as measurement:
+        for i in range(8, 16):
+            omap.insert(b"k%d" % i, b"w")
+        assert [omap.search(b"k%d" % i) for i in range(16)] == [b"v"] * 8 + [b"w"] * 8
+        client.flush()
+
+    spent = measurement.result
+    assert spent.row_bytes_read > 0
+    assert spent.opened_bytes == spent.row_bytes_read
+    assert spent.sealed_bytes == spent.row_bytes_written
