@@ -432,9 +432,9 @@ def test_row_size_is_the_declared_node_layout(make, expected_row, client):
 
 
 def test_composed_map_slots_are_sized_from_their_declared_layouts(client):
-    avl = AVLOmap(AvlOmapConfig(client=client, **_ROW_LAYOUT_CONFIG))
-    bplus = BPlusOmap(BPlusOmapConfig(order=3, client=client, **_ROW_LAYOUT_CONFIG))
-    assert (OramOstOmap.oram_data_size(avl), OramOstOmap.oram_data_size(bplus)) == (11, 10)
+    avl = AvlOmapConfig(client=client, **_ROW_LAYOUT_CONFIG)
+    bplus = BPlusOmapConfig(order=3, client=client, **_ROW_LAYOUT_CONFIG)
+    assert (OramOstOmap.oram_data_size(AVLOmap, avl), OramOstOmap.oram_data_size(BPlusOmap, bplus)) == (11, 10)
 
     upper_size = GroupOmap.upper_oram_data_size(num_data=64)
     upper = PathOram(PathOramConfig(num_data=64, data_size=upper_size, client=client, encryptor=AesGcm()))

@@ -70,8 +70,8 @@ class _BPlusNodeLayout(Field[BPlusNode]):
 
 
 class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
-    def __init__(self, config: BPlusOmapConfig):
-        super().__init__(config)
+    def __init__(self, config: BPlusOmapConfig, *, num_trees: int = 1):
+        super().__init__(config, num_trees=num_trees)
 
         self._mid: int = config.order // 2
         self._block_id: int = 0

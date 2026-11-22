@@ -11,31 +11,35 @@ from oblivlib.oram.tree_base_oram import Oram
 
 
 class OramOstOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](BaseOmap):
-    def __init__(self, config: OramOstOmapConfig, ost: OstBaseOmap[OmapConfigT, KeyT, NodeT], oram: Oram):
-        required = self.oram_data_size(ost)
+    def __init__(
+        self,
+        config: OramOstOmapConfig,
+        ost: type[OstBaseOmap[OmapConfigT, KeyT, NodeT]],
+        ost_config: OmapConfigT,
+        oram: Oram,
+    ):
+        if ost_config.num_data < config.num_data:
+            raise ValueError(
+                f"OramOstOmap num_data={config.num_data} exceeds its tree map's num_data={ost_config.num_data}; the "
+                + "tree map must be able to hold every key."
+            )
+        self._ost: OstBaseOmap[OmapConfigT, KeyT, NodeT] = ost(ost_config, num_trees=config.num_data)
+        required = self._ost.root_layout.size
         if oram.data_size < required:
             raise ValueError(
                 f"OramOstOmap ORAM data_size={oram.data_size} is too small for an ODS root pointer; it must be at "
-                + f"least {required}. Size it with OramOstOmap.oram_data_size(ost)."
-            )
-        if ost.num_data < config.num_data:
-            raise ValueError(
-                f"OramOstOmap num_data={config.num_data} exceeds its tree map's num_data={ost.num_data}; the tree "
-                + "map must be able to hold every key."
+                + f"least {required}. Size it with OramOstOmap.oram_data_size(ost, ost_config)."
             )
 
         self._config: OramOstOmapConfig = config
-        self._ost: OstBaseOmap[OmapConfigT, KeyT, NodeT] = ost
         self._oram: Oram = oram
-
-        self._ost.update_mul_tree_height(num_tree=self._num_data)
 
         self._prf: Blake2Prf = Blake2Prf()
         self._size: int = 0
 
     @staticmethod
-    def oram_data_size[C: TreeOmapConfig, K, N: Block[object]](ost: OstBaseOmap[C, K, N]) -> int:
-        return ost.root_layout.size
+    def oram_data_size[C: TreeOmapConfig, K, N: Block[object]](ost: type[OstBaseOmap[C, K, N]], ost_config: C) -> int:
+        return ost(ost_config).root_layout.size
 
     def _encode_root(self, root: Root[KeyT] | None) -> bytes:
         return self._ost.root_layout.encode(root)

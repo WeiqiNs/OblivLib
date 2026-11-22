@@ -82,12 +82,12 @@ class _LocalNodes[KeyT, NodeT]:
 class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
     TreeStorageBase[OmapConfigT, NodeT], BaseOmap, ABC
 ):
-    def __init__(self, config: OmapConfigT):
+    def __init__(self, config: OmapConfigT, *, num_trees: int = 1):
         super().__init__(config)
 
         self.root: Root[KeyT] | None = None
         self._local: _LocalNodes[KeyT, NodeT] = _LocalNodes()
-        self._max_height: int = self._height_bound(self._num_data)
+        self._max_height: int = self._height_bound(self._num_data if num_trees == 1 else max_bin_load(num_trees))
         self._budget: int = 0
         self._op_rounds: int = 0
         self._op_fetches: int = 0
@@ -120,9 +120,6 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
     @abstractmethod
     def _height_bound(self, num_nodes: int) -> int:
         raise NotImplementedError
-
-    def update_mul_tree_height(self, num_tree: int) -> None:
-        self._max_height = self._height_bound(max_bin_load(num_tree))
 
     @cached_property
     def root_layout(self) -> Optional[Root[KeyT]]:

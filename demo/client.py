@@ -22,13 +22,13 @@ def run_oram(client: Client, num_data: int) -> None:
 
 def run_omap(client: Client, num_data: int) -> None:
     encryptor = AesGcm()
-    ost = AVLOmap(
-        AvlOmapConfig(num_data=num_data, key_size=KEY_SIZE, data_size=DATA_SIZE, client=client, encryptor=encryptor)
-    )
+    ost = AvlOmapConfig(num_data=num_data, key_size=KEY_SIZE, data_size=DATA_SIZE, client=client, encryptor=encryptor)
     oram = DAOram(
-        DaOramConfig(num_data=num_data, data_size=OramOstOmap.oram_data_size(ost), client=client, encryptor=encryptor)
+        DaOramConfig(
+            num_data=num_data, data_size=OramOstOmap.oram_data_size(AVLOmap, ost), client=client, encryptor=encryptor
+        )
     )
-    omap = OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=ost, oram=oram)
+    omap = OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=AVLOmap, ost_config=ost, oram=oram)
     omap.init_server_storage()
 
     start = time.perf_counter()

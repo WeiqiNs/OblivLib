@@ -177,17 +177,17 @@ def _upper_build_file(build_file):
 
 def _ost_builder(ods_cls, ods_config_cls, extra, oram_kind):
     def build(*, client, num_data, encryptor=None, build_file=None, **kw):
-        ost = ods_cls(
-            ods_config_cls(num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **extra, **kw)
+        ost = ods_config_cls(
+            num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **extra, **kw
         )
         oram = ORAM_MAKERS[oram_kind](
             num_data=num_data,
-            data_size=OramOstOmap.oram_data_size(ost),
+            data_size=OramOstOmap.oram_data_size(ods_cls, ost),
             client=client,
             encryptor=encryptor,
             build_file=_upper_build_file(build_file),
         )
-        return OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=ost, oram=oram)
+        return OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=ods_cls, ost_config=ost, oram=oram)
 
     return build
 
