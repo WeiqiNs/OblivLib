@@ -1,3 +1,4 @@
+import msgspec
 import pytest
 
 from oblivlib.dependency import (
@@ -61,6 +62,11 @@ def test_every_message_round_trips():
         assert decode_request(encode(request)) == request
     for reply in replies:
         assert decode_timed(encode(Timed(server_ns=7, reply=reply))) == Timed(server_ns=7, reply=reply)
+
+
+def test_a_reply_outside_its_timed_envelope_is_malformed():
+    with pytest.raises(ProtocolError, match="malformed reply"):
+        decode_timed(msgspec.msgpack.encode(Ok()))
 
 
 def test_error_replies_map_to_error_classes():

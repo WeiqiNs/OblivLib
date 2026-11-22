@@ -11,13 +11,13 @@ from oblivlib.dependency.protocol import (
     AttachTree,
     Batch,
     BatchReply,
-    Close,
     CreateTree,
     Hello,
     HelloReply,
     Ok,
     Reply,
     Request,
+    SessionRequest,
     Shutdown,
     WriteRange,
     error_reply,
@@ -194,17 +194,21 @@ class StorageServer:
                 return self._hello(version)
             case Shutdown():
                 return Ok()
-            case Batch(session=session_id):
-                session = self._require_session(session_id)
+            case _:
+                return self._dispatch_in_session(self._require_session(message.session), message)
+
+    def _dispatch_in_session(self, session: _Session, message: SessionRequest) -> Reply:
+        match message:
+            case Batch():
                 _validate_batch(session, message)
                 return _apply_batch(session, message)
-            case CreateTree(session=session_id, label=label, level=level, row_bytes=row_bytes):
-                self._create_tree(self._require_session(session_id), label, level, row_bytes)
-            case AttachTree(session=session_id):
-                self._attach_tree(self._require_session(session_id), message)
-            case WriteRange(session=session_id):
-                self._write_range(self._require_session(session_id), message)
-            case Close(session=session_id):
-                self._require_session(session_id).close()
-                del self._sessions[session_id]
+            case CreateTree(label=label, level=level, row_bytes=row_bytes):
+                self._create_tree(session, label, level, row_bytes)
+            case AttachTree():
+                self._attach_tree(session, message)
+            case WriteRange():
+                self._write_range(session, message)
+            case _:
+                session.close()
+                del self._sessions[message.session]
         return Ok()

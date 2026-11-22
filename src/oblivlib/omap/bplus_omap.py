@@ -49,15 +49,14 @@ class _BPlusNodeLayout(Field[BPlusNode]):
         self._key.write(value.key, out)
         self._leaf.write(value.leaf, out)
         start = len(out) + 1
-        match value:
-            case BPlusLeaf():
-                out.append(_LEAF_TAG)
-                self._keys.write(value.keys, out)
-                self._values.write(value.values, out)
-            case BPlusInternal():
-                out.append(_INTERNAL_TAG)
-                self._keys.write(value.keys, out)
-                self._children.write(value.children, out)
+        if isinstance(value, BPlusLeaf):
+            out.append(_LEAF_TAG)
+            self._keys.write(value.keys, out)
+            self._values.write(value.values, out)
+        else:
+            out.append(_INTERNAL_TAG)
+            self._keys.write(value.keys, out)
+            self._children.write(value.children, out)
         out += bytes(self._width - (len(out) - start))
 
     @override
@@ -71,10 +70,6 @@ class _BPlusNodeLayout(Field[BPlusNode]):
             return BPlusLeaf(key=key, leaf=leaf, keys=keys, values=values), end
         children, _ = self._children.read(data, offset)
         return BPlusInternal(key=key, leaf=leaf, keys=keys, children=children), end
-
-    @override
-    def __repr__(self) -> str:
-        return f"_BPlusNodeLayout({self._key!r}, {self._leaf!r}, {self._keys!r}, {self._values!r}, {self._children!r})"
 
 
 class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):

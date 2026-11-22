@@ -50,8 +50,9 @@ class _AvlLocal(LocalNodes[bytes, AVLNode]):
         parent_key = self._parent_of.get(key)
         return self.nodes.get(parent_key) if parent_key is not None else None
 
-    def root(self) -> AVLNode | None:
-        return self.nodes.get(self._root_key) if self._root_key is not None else None
+    def root(self) -> AVLNode:
+        assert self._root_key is not None
+        return self.nodes[self._root_key]
 
     def path_to(self, key: bytes) -> list[bytes]:
         path: list[bytes] = []
@@ -67,16 +68,14 @@ class _AvlLocal(LocalNodes[bytes, AVLNode]):
 
     def swap_in_path(self, key_a: bytes, key_b: bytes) -> None:
         path = self.path
-        if key_a in path and key_b in path:
-            idx_a = path.index(key_a)
-            idx_b = path.index(key_b)
-            path[idx_a], path[idx_b] = path[idx_b], path[idx_a]
+        idx_a = path.index(key_a)
+        idx_b = path.index(key_b)
+        path[idx_a], path[idx_b] = path[idx_b], path[idx_a]
 
     def replace_key(self, old_key: bytes, new_key: bytes) -> None:
         self.nodes[new_key] = self.nodes.pop(old_key)
         self._parent_of[new_key] = self._parent_of.pop(old_key)
-        if old_key in self.path:
-            self.path[self.path.index(old_key)] = new_key
+        self.path[self.path.index(old_key)] = new_key
         if self._root_key == old_key:
             self._root_key = new_key
         for key, parent_key in self._parent_of.items():
@@ -85,11 +84,10 @@ class _AvlLocal(LocalNodes[bytes, AVLNode]):
 
     @override
     def remove(self, key: bytes) -> None:
-        if key in self.nodes:
-            super().remove(key)
-            _ = self._parent_of.pop(key, None)
-            if self._root_key == key:
-                self._root_key = None
+        super().remove(key)
+        _ = self._parent_of.pop(key, None)
+        if self._root_key == key:
+            self._root_key = None
 
     @override
     def clear(self) -> None:
@@ -173,7 +171,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, bytes, AVLNode]):
         if parent is not None:
             if parent.l_key == key:
                 parent.l_leaf = node.leaf
-            elif parent.r_key == key:
+            else:
                 parent.r_leaf = node.leaf
 
     def _update_child_in_parent(
@@ -193,7 +191,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, bytes, AVLNode]):
             parent.l_key = new_key
             parent.l_leaf = new_leaf
             parent.l_height = new_height
-        elif parent.r_key == old_child_key:
+        else:
             parent.r_key = new_key
             parent.r_leaf = new_leaf
             parent.r_height = new_height
@@ -298,7 +296,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, bytes, AVLNode]):
                     parent.r_key = key
                     parent.r_leaf = leaf
                     parent.r_height = height
-                elif parent.l_key == node_key or parent.l_key == key:
+                else:
                     parent.l_key = key
                     parent.l_leaf = leaf
                     parent.l_height = height
@@ -309,8 +307,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, bytes, AVLNode]):
             idx -= 1
 
         root_node = self._local.root()
-        if root_node is not None:
-            self._root: Root[bytes] | None = (root_node.key, root_node.leaf)
+        self._root: Root[bytes] | None = (root_node.key, root_node.leaf)
 
     @override
     def _descend(
@@ -320,7 +317,7 @@ class AVLOmap(OstBaseOmap[AvlOmapConfig, bytes, AVLNode]):
         self._local.set_parent(root_key, None)
         at = dict.fromkeys(range(len(keys)), root_key)
         level = [root_key]
-        while at:
+        while True:
             requests: dict[bytes, tuple[int, int]] = {}
             parents: dict[bytes, bytes] = {}
             for lane, node_key in list(at.items()):

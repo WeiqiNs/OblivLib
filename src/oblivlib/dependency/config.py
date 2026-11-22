@@ -240,13 +240,7 @@ class TreeOmapConfig(OmapConfig):
         return self.MIN_CACHED_BUDGETS if cached else self.MIN_BUDGETS
 
     def budget(self, op: OdsOp) -> AccessBudget:
-        match op:
-            case "search":
-                given = self.search_budget
-            case "insert":
-                given = self.insert_budget
-            case "delete":
-                given = self.delete_budget
+        given = {"search": self.search_budget, "insert": self.insert_budget, "delete": self.delete_budget}[op]
         return given or self.minimums(cached=self.cached)[op]
 
     def __post_init__(self) -> None:
@@ -334,3 +328,28 @@ class BPlusOmapConfig(TreeOmapConfig):
 @dataclass(frozen=True, kw_only=True)
 class GroupOmapConfig(OmapConfig):
     name: str = field(default_factory=unique_name("group_omap"))
+
+
+@dataclass(frozen=True, kw_only=True)
+class GraphOsConfig(OramConfig):
+    """``num_data``: the most vertices the graph may hold. ``max_degree``: the most neighbors a vertex may
+    have; every query pads to it. ``data_size``: the most bytes a vertex value may hold."""
+
+    name: str = field(default_factory=unique_name("graphos"))
+    max_degree: int
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not 1 <= self.max_degree < self.num_data:
+            raise ValueError(
+                f"max_degree must be >= 1 and below num_data ({self.num_data}), as in a simple graph, "
+                + f"got {self.max_degree}."
+            )
+
+    @property
+    def batch_size(self) -> int:
+        return 2 * self.max_degree + 1
+
+    @property
+    def num_entries(self) -> int:
+        return self.num_data * self.batch_size

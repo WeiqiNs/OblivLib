@@ -12,7 +12,7 @@ class TestAesGcm:
             aesgcm = AesGcm(key_byte_length=key_size)
             assert aesgcm.dec(aesgcm.enc(b"Hello")) == b"Hello"
 
-    def test_ciphertext_length(self):
+    def test_ciphertext_length_is_exact_for_every_plaintext_length(self):
         aesgcm = AesGcm()
         for length in [0, 1, 15, 16, 17, 32, 100]:
             assert aesgcm.ciphertext_length(length) == len(aesgcm.enc(os.urandom(length)))
@@ -28,13 +28,13 @@ class TestAesGcm:
         with pytest.raises(InvalidTag):
             aesgcm.dec(bytes(ciphertext))
 
-    def test_distinct_nonce_per_encryption(self):
+    def test_encrypting_twice_gives_distinct_ciphertexts(self):
         aesgcm = AesGcm()
         assert aesgcm.enc(b"same") != aesgcm.enc(b"same")
 
 
-class TestPrf:
-    def test_same_key_same_digest(self):
+class TestBlake2Prf:
+    def test_digest_is_deterministic_for_a_key(self):
         key = os.urandom(Blake2Prf.KEY_SIZE)
         assert Blake2Prf(key=key).digest(b"msg") == Blake2Prf(key=key).digest(b"msg")
 

@@ -8,12 +8,14 @@ from oblivlib.dependency import (
     BPlusOmapConfig,
     DaOramConfig,
     FreecursiveOramConfig,
+    GraphOsConfig,
     PathOramConfig,
     RecursiveOramConfig,
 )
 
 _ORAM: dict[str, Any] = {"num_data": 16, "data_size": 10}
 _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
+_GRAPH: dict[str, Any] = {"num_data": 4, "max_degree": 2, "data_size": 8}
 
 
 @pytest.mark.parametrize(
@@ -49,6 +51,8 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (AvlOmapConfig, _OMAP, {"paths_per_round": 2}, "paths_per_round"),
         (AvlOmapConfig, {**_OMAP, "cached": True}, {"delete_budget": AccessBudget(1, 9)}, r"a must be >= 3/2"),
         (AvlOmapConfig, _OMAP, {"batch_size": 0}, "batch_size must be >= 1"),
+        (GraphOsConfig, _GRAPH, {"max_degree": 0}, "max_degree"),
+        (GraphOsConfig, _GRAPH, {"max_degree": 4}, "max_degree must be >= 1 and below num_data"),
         (AvlOmapConfig, _OMAP, {"batch_size": 17}, "exceeds the 16 leaves"),
     ],
 )
@@ -87,3 +91,10 @@ def test_a_budget_override_may_raise_a_minimum_but_keeps_the_others(client):
         10,
         11,
     ]
+
+
+def test_default_names_are_unique_per_config(client):
+    first = PathOramConfig(num_data=4, data_size=4, client=client)
+    second = PathOramConfig(num_data=4, data_size=4, client=client)
+    assert first.name.startswith("po-")
+    assert first.name != second.name

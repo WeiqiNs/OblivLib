@@ -129,3 +129,4 @@ def test_metrics_match_between_local_and_loopback():
     assert local.bytes_sent == local.bytes_received == local.transport_ns == 0
     assert remote.bytes_sent > remote.row_bytes_written and remote.bytes_received > remote.row_bytes_read
     assert 0 <= remote.server_ns <= remote.transport_ns
+    assert (local.network_ns, remote.network_ns) == (0, remote.transport_ns - remote.server_ns)

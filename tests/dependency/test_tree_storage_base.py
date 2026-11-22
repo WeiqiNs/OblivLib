@@ -11,14 +11,7 @@ from oblivlib.omap import GroupOmap
 from oblivlib.oram import PathOram, RecursivePathOram
 
 
-def test_default_names_are_unique_per_config(client):
-    first = PathOramConfig(num_data=4, data_size=4, client=client)
-    second = PathOramConfig(num_data=4, data_size=4, client=client)
-    assert first.name.startswith("po-")
-    assert first.name != second.name
-
-
-def test_stash_overflow_raises(client):
+def test_a_stash_over_capacity_raises_naming_the_scheme(client):
     base = PathOram(PathOramConfig(num_data=4, data_size=4, stash_scale=1, client=client, name="tiny"))
     base._stash = [OramBlock(key=i, leaf=0, value=b"") for i in range(base._stash_capacity)]
     base._check_stash()

@@ -21,6 +21,18 @@ class Oram(Protocol):
     def update[T](self, key: int, change: Callable[[bytes], tuple[bytes, T]]) -> T: ...
 
 
+def require_oram_fits(owner: str, oram: Oram, *, num_data: int, data_size: int, unit: str, sizing: str) -> None:
+    if oram.num_data != num_data:
+        raise ValueError(
+            f"{owner}: the ORAM has num_data={oram.num_data}, not {num_data}; it needs one slot per {unit}."
+        )
+    if oram.data_size < data_size:
+        raise ValueError(
+            f"{owner}: the ORAM has data_size={oram.data_size}, too small for the {data_size} bytes a {unit} needs; "
+            + f"size it with {sizing}."
+        )
+
+
 class PosMapLevel(Protocol):
     @property
     def max_stash(self) -> int: ...

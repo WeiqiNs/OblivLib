@@ -151,7 +151,7 @@ class OmapSpec:
         if isinstance(omap, OramOstOmap):
             return {omap._ost.name}
         if isinstance(omap, GroupOmap):
-            return {omap._lower_oram.name}
+            return {omap._buckets.name}
         return {omap.name}
 
 
