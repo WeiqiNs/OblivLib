@@ -8,33 +8,29 @@ stores encrypted data.
 
 Related publications by the maintainers:
 
-- [Towards Practical Oblivious Map](https://dl.acm.org/doi/10.14778/3712221.3712235)
+- [Towards Practical Oblivious Map](https://doi.org/10.14778/3712221.3712235)
 - [Enabling Index-free Adjacency in Oblivious Graph Processing with Delayed Duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf)
 
 ## ORAM
 
-- [Path ORAM](https://dl.acm.org/doi/10.1145/2508859.2516660):
-  [`path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/path_oram.py)
-- [Recursive Path ORAM](https://link.springer.com/chapter/10.1007/978-3-642-25385-0_11):
-  [`recursive_path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/recursive_path_oram.py)
-- [Freecursive ORAM](https://people.csail.mit.edu/devadas/pubs/freecursive.pdf), insecure
-  original: [`freecursive_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/freecursive_oram.py) with `reset_method="hard"`
-- [Freecursive ORAM with probabilistic resets](https://eprint.iacr.org/2016/1084):
-  [`freecursive_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/freecursive_oram.py) with `reset_method="prob"` (default)
-- [DAORAM, de-amortized fixed resets](https://dl.acm.org/doi/10.14778/3712221.3712235):
-  [`da_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/da_oram.py)
-- Multi-path and static (PRF-positioned) Path ORAM variants:
-  [`mul_path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/mul_path_oram.py), [`static_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/static_oram.py)
+- [Path ORAM](https://doi.org/10.1145/2508859.2516660): `oblivlib.oram.PathOram`
+- [Recursive Path ORAM](https://doi.org/10.1007/978-3-642-25385-0_11): `oblivlib.oram.RecursivePathOram`
+- [Freecursive ORAM](https://doi.org/10.1145/2694344.2694353): `oblivlib.oram.FreecursiveOram` with
+  `reset_method="hard"` (insecure as published)
+- Freecursive ORAM with [probabilistic resets](https://eprint.iacr.org/2016/1084):
+  `oblivlib.oram.FreecursiveOram` with `reset_method="prob"` (default)
+- [DAORAM, de-amortized fixed resets](https://doi.org/10.14778/3712221.3712235): `oblivlib.oram.DAOram`
+- Multi-path and static (PRF-positioned) Path ORAM variants: `oblivlib.oram.MulPathOram`,
+  `oblivlib.oram.StaticOram`
 
 ## OMAP
 
-- [AVL-tree OMAP](https://dl.acm.org/doi/10.1145/2660267.2660314) with the
-  [streaming search](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf): [`avl_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/avl_omap.py)
-- [B+-tree OMAP](https://people.eecs.berkeley.edu/~matei/papers/2020/vldb_oblidb.pdf):
-  [`bplus_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/bplus_omap.py)
-- [ORAM + search-tree framework](https://dl.acm.org/doi/10.14778/3712221.3712235), composing
-  any ORAM with any tree OMAP: [`oram_ost_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/oram_ost_omap.py)
-- Group-by-hash OMAP: [`group_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/group_omap.py)
+- [AVL-tree OMAP](https://doi.org/10.1145/2660267.2660314) with the
+  [streaming search](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf): `oblivlib.omap.AVLOmap`
+- [B+-tree OMAP](https://doi.org/10.14778/3364324.3364331): `oblivlib.omap.BPlusOmap`
+- [ORAM + search-tree framework](https://doi.org/10.14778/3712221.3712235), composing any ORAM with any
+  tree OMAP: `oblivlib.omap.OramOstOmap`
+- Group-by-hash OMAP: `oblivlib.omap.GroupOmap`
 
 Tree OMAPs hide the operation type by default (`distinguishable=False`); set it to `True` to let each
 operation pad only to its own bound. Every search, insert, and delete pads to a fixed number of
@@ -50,10 +46,13 @@ same number of rounds as one key, each round reading up to `k` paths.
 
 ## Graph
 
-- [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf), over a batched AVL OMAP and a keyed value tree:
-  [`graphos.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/graphos.py)
-- [Grove, index-free adjacency with delayed duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf), over an AVL OMAP index, a graph tree and two meta trees:
-  [`grove.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/grove.py), [`meta.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/meta.py)
+- [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf), over a batched AVL OMAP and a keyed value
+  tree: `oblivlib.graph.GraphOS`
+- [Grove, index-free adjacency with delayed duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf),
+  over an AVL OMAP index, a graph tree and two meta trees: `oblivlib.graph.Grove`
+
+Each scheme is built from its config in `oblivlib.dependency` (`PathOramConfig`, `AvlOmapConfig`,
+`GraphOsConfig`, ...).
 
 ## Installation
 
