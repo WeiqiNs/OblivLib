@@ -1,6 +1,7 @@
 import secrets
 import struct
-from collections.abc import Callable, Mapping, Sequence
+from collections import deque
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, override
@@ -439,6 +440,53 @@ class Grove:
             step = secrets.choice(list(layer)) if layer else None
             current = {step: layer[step]} if step is not None else {}
         return {vertex_id: v.value for vertex_id, v in found.items()}
+
+    def _traverse(
+        self, source: int, next_vertex: Callable[[], Target], expand: Callable[[int, Vertex], None]
+    ) -> dict[int, bytes]:
+        self._require_vertex(source)
+        order: dict[int, bytes] = {}
+        found = self._lookup_all([source])
+        for step in range(self._num_vertices):
+            if step:
+                found = self._access([next_vertex()], {})[0]
+            for vertex_id, vertex in found.items():
+                order[vertex_id] = vertex.value
+                expand(vertex_id, vertex)
+        return order
+
+    def bfs(self, source: int) -> dict[int, bytes]:
+        queue: deque[tuple[int, int]] = deque()
+        discovered = {source}
+
+        def next_vertex() -> Target:
+            return queue.popleft() if queue else None
+
+        def expand(_: int, vertex: Vertex) -> None:
+            for neighbor, leaf in vertex.neighbors.items():
+                if neighbor not in discovered:
+                    discovered.add(neighbor)
+                    queue.append((neighbor, leaf))
+
+        return self._traverse(source, next_vertex, expand)
+
+    def dfs(self, source: int) -> dict[int, bytes]:
+        visited: set[int] = set()
+        stack: list[Iterator[tuple[int, int]]] = []
+
+        def next_vertex() -> Target:
+            while stack:
+                for neighbor, leaf in stack[-1]:
+                    if neighbor not in visited:
+                        return neighbor, leaf
+                stack.pop()
+            return None
+
+        def expand(vertex_id: int, vertex: Vertex) -> None:
+            visited.add(vertex_id)
+            stack.append(iter(list(vertex.neighbors.items())))
+
+        return self._traverse(source, next_vertex, expand)
 
     def _finish_index_op(self, run: Callable[[], Any]) -> Any:
         self._index.placed = {}

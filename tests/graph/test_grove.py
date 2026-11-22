@@ -107,7 +107,7 @@ def consistent(read_all_blocks):
 
 class TestGrove:
     @pytest.mark.parametrize("enc", [False, True])
-    def test_oracle(self, client, enc, consistent):
+    def test_oracle(self, client, enc, consistent, reference_orders):
         rng = random.Random(21 + enc)
         num_vertices = 24
         graph = _random_graph(rng, num_vertices - 6, MAX_DEG)
@@ -135,7 +135,13 @@ class TestGrove:
                     assert set(graph[vertex]) | {vertex} <= set(walk)
                 assert set(walk) <= _within(graph, vertex, 3)
                 assert all(walk[v] == values[v] for v in walk)
-            elif roll < 0.75 and vertex not in graph and len(graph) < num_vertices:
+            elif roll < 0.58:
+                adjacency = grove.neighbors_of(list(graph))
+                assert {v: sorted(n) for v, n in adjacency.items()} == {v: sorted(n) for v, n in graph.items()}
+                bfs_order, dfs_order = reference_orders
+                assert list(grove.bfs(vertex).items()) == [(v, values[v]) for v in bfs_order(adjacency, vertex)]
+                assert list(grove.dfs(vertex).items()) == [(v, values[v]) for v in dfs_order(adjacency, vertex)]
+            elif roll < 0.78 and vertex not in graph and len(graph) < num_vertices:
                 open_slots = [v for v in graph if len(graph[v]) < MAX_DEG]
                 neighbors = rng.sample(open_slots, min(len(open_slots), rng.randrange(MAX_DEG + 1)))
                 value = rng.randbytes(rng.randrange(9))
@@ -162,6 +168,18 @@ class TestGrove:
         for _ in range(40):
             assert grove.neighbor([0]) == {1: b"\x01", 2: b"\x02", 3: b"\x03"}
             assert grove.t_hop(3, 2) == values
+        consistent(grove, graph, values)
+
+    def test_traversals_visit_the_component_in_order(self, client, consistent):
+        graph = {0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2, 4], 4: [3], 5: [6], 6: [5]}
+        values = {v: bytes([v]) for v in graph}
+        grove = _make(client, 10)
+        grove.init_server_storage(graph, values)
+        assert list(grove.bfs(0)) == [0, 1, 2, 3, 4]
+        assert list(grove.dfs(0)) == [0, 1, 3, 2, 4]
+        assert list(grove.dfs(5)) == [5, 6]
+        assert grove.bfs(9) == {}
+        assert grove.bfs(0)[4] == bytes([4])
         consistent(grove, graph, values)
 
     def test_a_deleted_vertex_leaves_the_index_and_its_neighbors(self, client, consistent):
@@ -241,8 +259,10 @@ class TestGroveObliviousness:
             lambda g, v: g.neighbor([v]),
             lambda g, v: g.t_hop(v, 2),
             lambda g, v: g.t_traversal(v, 2),
+            lambda g, v: g.bfs(v),
+            lambda g, v: g.dfs(v),
         ],
-        ids=["lookup", "neighbor", "t_hop", "t_traversal"],
+        ids=["lookup", "neighbor", "t_hop", "t_traversal", "bfs", "dfs"],
     )
     def test_query_trace_is_degree_independent(self, monkeypatch, query):
         traces = []
