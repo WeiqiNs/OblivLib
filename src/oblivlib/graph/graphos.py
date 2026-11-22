@@ -1,6 +1,7 @@
 import secrets
 import struct
-from collections.abc import Mapping, Sequence
+from collections import deque
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from functools import cached_property
 from typing import Any
 
@@ -284,6 +285,55 @@ class GraphOS:
             degrees = self._degrees(layer)
             current = secrets.choice(list(layer)) if layer else None
         return self._values(info)
+
+    def _traverse(
+        self, next_vertex: Callable[[], int | None], expand: Callable[[int, list[int]], None]
+    ) -> dict[int, bytes]:
+        order: dict[int, bytes] = {}
+        for _ in range(self._num_vertices):
+            vertex = next_vertex()
+            info = self._vertices([vertex])
+            found = vertex if vertex in info else None
+            neighbors = self._neighbors_of([found], self._degrees(info))
+            if found is not None:
+                order[found] = info[found][0]
+                expand(found, [neighbor for neighbor in neighbors if neighbor is not None])
+        return order
+
+    def bfs(self, source: int) -> dict[int, bytes]:
+        self._require_vertex(source)
+        queue = deque([source])
+        discovered = {source}
+
+        def next_vertex() -> int | None:
+            return queue.popleft() if queue else None
+
+        def expand(_: int, neighbors: list[int]) -> None:
+            for neighbor in neighbors:
+                if neighbor not in discovered:
+                    discovered.add(neighbor)
+                    queue.append(neighbor)
+
+        return self._traverse(next_vertex, expand)
+
+    def dfs(self, source: int) -> dict[int, bytes]:
+        self._require_vertex(source)
+        visited: set[int] = set()
+        stack: list[Iterator[int]] = [iter([source])]
+
+        def next_vertex() -> int | None:
+            while stack:
+                for neighbor in stack[-1]:
+                    if neighbor not in visited:
+                        return neighbor
+                stack.pop()
+            return None
+
+        def expand(vertex: int, neighbors: list[int]) -> None:
+            visited.add(vertex)
+            stack.append(iter(neighbors))
+
+        return self._traverse(next_vertex, expand)
 
     def insert(self, vertex: int, value: bytes, neighbors: Sequence[int]) -> None:
         self._require_vertex(vertex)

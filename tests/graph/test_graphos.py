@@ -61,6 +61,52 @@ def _assert_matches_model(graphos, graph, values, read_all_blocks, duplicate_blo
         assert graphos._leaf.decode(graphos._omap.search(key)) == block.leaf
 
 
+def _bfs_order(adjacency, source):
+    if source not in adjacency:
+        return []
+    order, discovered, queue = [], {source}, [source]
+    while queue:
+        vertex = queue.pop(0)
+        order.append(vertex)
+        for neighbor in adjacency[vertex]:
+            if neighbor not in discovered:
+                discovered.add(neighbor)
+                queue.append(neighbor)
+    return order
+
+
+def _dfs_order(adjacency, source):
+    order = []
+
+    def visit(vertex):
+        order.append(vertex)
+        for neighbor in adjacency[vertex]:
+            if neighbor not in order:
+                visit(neighbor)
+
+    if source in adjacency:
+        visit(source)
+    return order
+
+
+@pytest.fixture
+def stored_adjacency(read_all_blocks):
+    """Each vertex's neighbors in the order the E entries hold them, which deletes reorder."""
+
+    def read(graphos):
+        store = graphos._store
+        stored = {block.key: block for block in read_all_blocks(store) + store._stash if block.key is not None}
+        adjacency = {}
+        for key, block in stored.items():
+            if key[:1] == b"V":
+                vertex = int.from_bytes(key[1:])
+                _, degree = graphos._decode_vertex(block.value)
+                adjacency[vertex] = [graphos._id.decode(stored[_edge_key(vertex, i)].value) for i in range(degree)]
+        return adjacency
+
+    return read
+
+
 @pytest.fixture
 def matches_model(read_all_blocks, duplicate_blocks):
     def check(graphos, graph, values):
@@ -71,7 +117,7 @@ def matches_model(read_all_blocks, duplicate_blocks):
 
 class TestGraphOS:
     @pytest.mark.parametrize("enc", [False, True])
-    def test_oracle(self, client, enc, matches_model):
+    def test_oracle(self, client, enc, matches_model, stored_adjacency):
         rng = random.Random(11 + enc)
         num_vertices = 24
         graph = _random_graph(rng, num_vertices - 6, MAX_DEG)
@@ -98,7 +144,12 @@ class TestGraphOS:
                     assert set(graph[vertex]) | {vertex} <= set(walk)
                 assert set(walk) <= _within(graph, vertex, 3)
                 assert all(walk[v] == values[v] for v in walk)
-            elif roll < 0.8 and vertex not in graph and len(graph) < num_vertices:
+            elif roll < 0.7:
+                adjacency = stored_adjacency(graphos)
+                assert {v: sorted(n) for v, n in adjacency.items()} == {v: sorted(n) for v, n in graph.items()}
+                assert list(graphos.bfs(vertex).items()) == [(v, values[v]) for v in _bfs_order(adjacency, vertex)]
+                assert list(graphos.dfs(vertex).items()) == [(v, values[v]) for v in _dfs_order(adjacency, vertex)]
+            elif roll < 0.85 and vertex not in graph and len(graph) < num_vertices:
                 open_slots = [v for v in graph if len(graph[v]) < MAX_DEG]
                 neighbors = rng.sample(open_slots, min(len(open_slots), rng.randrange(MAX_DEG + 1)))
                 value = rng.randbytes(rng.randrange(9))
@@ -123,6 +174,16 @@ class TestGraphOS:
         queried = [1, 1, 2, 3, 1, 4, 5, 6, 7, 8, 9, 0, 3]
         assert graphos.lookup(queried) == {v: bytes([v]) for v in queried}
         assert graphos.lookup(queried) == {v: bytes([v]) for v in queried}
+
+    def test_traversals_visit_the_component_in_order(self, client):
+        graph = {0: [1, 2], 1: [0, 3], 2: [0, 3], 3: [1, 2, 4], 4: [3], 5: [6], 6: [5]}
+        graphos = _make(client, 10)
+        graphos.init_server_storage(graph, {v: bytes([v]) for v in graph})
+        assert list(graphos.bfs(0)) == [0, 1, 2, 3, 4]
+        assert list(graphos.dfs(0)) == [0, 1, 3, 2, 4]
+        assert list(graphos.dfs(5)) == [5, 6]
+        assert graphos.bfs(9) == {}
+        assert graphos.bfs(0)[4] == bytes([4])
 
     def test_delete_swaps_tail_edge_into_the_hole(self, client, matches_model):
         graph = {0: [1, 2, 3], 1: [0], 2: [0], 3: [0]}
@@ -189,6 +250,9 @@ class TestGraphOS:
         for vertex, value, neighbors in cases:
             with pytest.raises(ContractError):
                 graphos.insert(vertex, value, neighbors)
+        for traversal in (graphos.bfs, graphos.dfs):
+            with pytest.raises(ContractError, match="vertex"):
+                traversal(-1)
         hops: list[Any] = [-1, 1.5, "2"]
         for num_hop in hops:
             with pytest.raises(ContractError, match="num_hop"):
@@ -247,8 +311,10 @@ class TestGraphOsObliviousness:
             lambda g, v: g.neighbor([v]),
             lambda g, v: g.t_hop(v, 2),
             lambda g, v: g.t_traversal(v, 2),
+            lambda g, v: g.bfs(v),
+            lambda g, v: g.dfs(v),
         ],
-        ids=["lookup", "neighbor", "t_hop", "t_traversal"],
+        ids=["lookup", "neighbor", "t_hop", "t_traversal", "bfs", "dfs"],
     )
     def test_query_trace_is_degree_independent(self, query):
         traces = []
