@@ -44,6 +44,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
     strategy:
       fail-fast: false
       matrix:
@@ -72,7 +76,7 @@ jobs:
         if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v7
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
           files: coverage.xml
           disable_search: true
           flags: unittests
