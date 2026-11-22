@@ -1,62 +1,101 @@
 import random
+from typing import Any
 
 import pytest
 
-from oblivlib.dependency import UNSET, DaOramConfig, FreecursiveOramConfig, PathOramConfig, RecursiveOramConfig
-from oblivlib.oram import DAOram, FreecursiveOram, PathOram, RecursivePathOram
+from oblivlib.dependency import UNSET, ContractError, DaOramConfig, Data, FreecursiveOramConfig, RecursiveOramConfig
+from oblivlib.oram import DAOram, FreecursiveOram, RecursivePathOram
 
 
 class TestOramCommon:
-    def test_with_init(self, make_oram, num_data, client):
-        oram = make_oram(num_data=num_data, data_size=10, client=client)
-        oram.init_server_storage(data={i: b"%d" % (i * 2) for i in range(num_data)})
+    @pytest.mark.parametrize("storage", ["plain", "encrypted", "file"])
+    def test_init_with_data_serves_every_key(self, make_oram, client, tmp_path, encryptor, storage):
+        build_file = tmp_path / "build.tree"
+        config: dict[str, Any] = {
+            "plain": {},
+            "encrypted": {"encryptor": encryptor},
+            "file": {"encryptor": encryptor, "build_file": build_file},
+        }[storage]
+        oram = make_oram(num_data=100, data_size=10, client=client, **config)
+        oram.init_server_storage(data=((key, b"v%d" % key) for key in range(100) if key % 3))
 
-        for i in range(num_data):
-            assert oram.operate_on_key(key=i) == b"%d" % (i * 2)
+        assert not build_file.exists()
+        assert [oram.operate_on_key(key) for key in range(100)] == [
+            b"v%d" % key if key % 3 else b"" for key in range(100)
+        ]
 
-    def test_operations_match_a_dict_model(self, make_oram, num_data, client, duplicate_blocks):
+    @pytest.mark.parametrize("num_data", [100, 1025])
+    def test_reads_writes_and_updates_match_a_dict_model(self, make_oram, client, duplicate_blocks, num_data):
         oram = make_oram(num_data=num_data, data_size=10, client=client)
-        oram.init_server_storage()
-        model = dict.fromkeys(range(num_data), b"")
-        rng = random.Random(4)
+        model = {key: b"i%d" % key if key % 2 else b"" for key in range(num_data)}
+        oram.init_server_storage(data={key: value for key, value in model.items() if value})
+        rng = random.Random(num_data)
 
         key = 0
         for step in range(num_data * 4):
             key = key if rng.random() < 0.25 else rng.randrange(num_data)
-            value = rng.choice([UNSET, b"", b"%d" % step])
-            assert oram.operate_on_key(key, value) == model[key]
-            if isinstance(value, bytes):
-                model[key] = value
+            new = rng.choice([b"", b"%d" % step])
+            match rng.choice(["read", "write", "update"]):
+                case "read":
+                    assert oram.operate_on_key(key) == model[key]
+                case "write":
+                    assert oram.operate_on_key(key, new) == model[key]
+                    model[key] = new
+                case _:
+                    assert oram.update(key, lambda old, new=new: (new, old + b"!")) == model[key] + b"!"
+                    model[key] = new
+        assert [oram.operate_on_key(key) for key in range(num_data)] == list(model.values())
         assert not duplicate_blocks(oram)
 
-    def test_operate_then_evict(self, make_oram, num_data, client):
-        oram = make_oram(num_data=num_data, data_size=10, client=client)
+    def test_contract_violations_raise_before_any_message(self, make_oram, recorded_client):
+        client, recorder = recorded_client()
+        oram = make_oram(num_data=64, data_size=10, client=client)
+        init_cases: list[tuple[list[tuple[Any, Any]], str]] = [
+            ([(1, b"a"), (1, b"b")], "given twice"),
+            ([(64, b"a")], r"\[0, 64\)"),
+            ([(-1, b"a")], r"\[0, 64\)"),
+            ([(1, "a")], "must be bytes"),
+            ([(1, b"x" * 11)], "data_size is 10"),
+        ]
+        for pairs, match in init_cases:
+            with pytest.raises(ContractError, match=match):
+                oram.init_server_storage(data=iter(pairs))
+        assert not recorder.messages
+
+        oram.init_server_storage(data={5: b"kept"})
+        sent = len(recorder.messages)
+        access_cases: list[tuple[Any, Any]] = [
+            (5, "hello"),
+            (5, b"x" * 11),
+            (5, None),
+            (-1, b"v"),
+            (64, b"v"),
+            ("0", b"v"),
+            (True, b"v"),
+        ]
+        for key, value in access_cases:
+            with pytest.raises(ContractError, match=f"{type(oram).__name__} '"):
+                oram.operate_on_key(key=key, value=value)
+        for key in (-1, 64, "0", True):
+            with pytest.raises(ContractError, match=f"{type(oram).__name__} '"):
+                oram.update(key, lambda old: pytest.fail("change ran"))
+
+        assert len(recorder.messages) == sent
+        assert oram.operate_on_key(key=5) == b"kept"
+
+    @pytest.mark.parametrize("new", ["v", b"x" * 11], ids=["str", "oversized"])
+    def test_update_rejects_a_value_its_change_returns_out_of_contract(self, make_oram, client, new):
+        oram = make_oram(num_data=64, data_size=10, client=client)
         oram.init_server_storage()
+        with pytest.raises(ContractError, match=f"{type(oram).__name__} '"):
+            oram.update(3, lambda old: (new, None))
 
-        for i in range(num_data):
-            oram.operate_on_key_without_eviction(key=i)
-            oram.eviction_with_update_stash(key=i, value=b"%d" % i)
-
-        for i in range(num_data):
-            assert oram.operate_on_key(key=i) == b"%d" % i
-
-    def test_split_access_matches_fused_access(self, make_oram, seeded_access):
-        def run(split):
-            def workload(client):
-                oram = make_oram(num_data=64, data_size=10, client=client)
-                oram.init_server_storage()
-                rng = random.Random(8)
-                for step in range(80):
-                    key = rng.randrange(64)
-                    if split:
-                        oram.operate_on_key_without_eviction(key)
-                        oram.eviction_with_update_stash(key, b"%d" % step)
-                    else:
-                        oram.operate_on_key(key, b"%d" % step)
-
-            return seeded_access(workload)[0]
-
-        assert run(split=True) == run(split=False)
+    def test_a_full_bucket_of_widest_blocks_seals_to_one_row(self, make_oram, client, encryptor):
+        oram = make_oram(num_data=1000, data_size=33, client=client, encryptor=encryptor, bucket_size=5)
+        widest = [Data(key=999, leaf=oram._leaf_range - 1, value=b"\xff" * 33) for _ in range(5)]
+        row = oram._cipher.seal_bucket(widest)
+        assert len(row) == oram._cipher.row_bytes
+        assert oram._cipher.open_bucket(row) == widest
 
     def test_write_deferral_preserves_access_sequence(self, make_oram, assert_deferral_preserves_access):
         def workload(client):
@@ -65,8 +104,7 @@ class TestOramCommon:
             rng = random.Random(5)
             for step in range(60):
                 oram.operate_on_key(key=rng.randrange(64), value=b"%d" % step if step % 2 else UNSET)
-            oram.operate_on_key_without_eviction(key=3)
-            oram.eviction_with_update_stash(key=3, value=b"1")
+            oram.update(3, lambda old: (b"1", None))
 
         rounds_off, rounds_on = assert_deferral_preserves_access(workload)
         assert rounds_on * 2 == rounds_off
@@ -90,23 +128,6 @@ def test_max_stash_adds_every_level_peak(make, level_count, client):
     assert len(oram._levels) == level_count
     assert all(level._max_stash >= 1 for level in oram._levels)
     assert oram.max_stash > oram._max_stash
-
-
-def test_eviction_without_a_pending_access_raises(client):
-    oram = PathOram(PathOramConfig(num_data=64, data_size=10, client=client))
-    oram.init_server_storage()
-    oram.operate_on_key_without_eviction(1)
-    oram.eviction_with_update_stash(1, b"a")
-
-    with pytest.raises(ValueError, match="no access is waiting"):
-        oram.eviction_with_update_stash(1, b"b")
-    assert oram.operate_on_key(1) == b"a"
-
-
-def test_recursive_pos_map_compressed(num_data, client):
-    oram = RecursivePathOram(RecursiveOramConfig(num_data=num_data, data_size=10, client=client))
-    oram.init_server_storage()
-    assert len(oram._pos_map) <= 10
 
 
 _RESETTING_COUNTER_ORAMS = pytest.mark.parametrize(
@@ -133,28 +154,20 @@ def test_write_deferral_preserves_counter_resets(make_counter_oram, assert_defer
         for step in range(120):
             oram.operate_on_key(key=rng.randrange(256), value=b"%d" % step)
         for key in range(4):
-            oram.operate_on_key_without_eviction(key=key)
-            oram.eviction_with_update_stash(key=key, value=b"%d" % key)
+            oram.update(key, lambda old, key=key: (b"%d" % key, None))
 
     assert_deferral_preserves_access(workload)
 
 
 @_RESETTING_COUNTER_ORAMS
-@pytest.mark.parametrize("defer_writes", [True, False])
-def test_split_access_matches_fused_access_through_counter_resets(make_counter_oram, defer_writes, seeded_access):
-    def run(split):
-        def workload(client):
-            oram = make_counter_oram(client)
-            oram.init_server_storage()
-            rng = random.Random(9)
-            for step in range(200):
-                key = rng.randrange(16)
-                if split:
-                    oram.operate_on_key_without_eviction(key)
-                    oram.eviction_with_update_stash(key, b"%d" % step)
-                else:
-                    oram.operate_on_key(key, b"%d" % step)
-
-        return seeded_access(workload, defer_writes=defer_writes)
-
-    assert run(split=True) == run(split=False)
+def test_updates_through_counter_resets_match_a_dict_model(make_counter_oram, client, duplicate_blocks):
+    oram = make_counter_oram(client)
+    oram.init_server_storage()
+    model = dict.fromkeys(range(16), b"")
+    rng = random.Random(9)
+    for step in range(400):
+        key = rng.randrange(16)
+        assert oram.update(key, lambda old, step=step: (b"%d" % step, old)) == model[key]
+        model[key] = b"%d" % step
+    assert [oram.operate_on_key(key) for key in range(16)] == list(model.values())
+    assert not duplicate_blocks(oram)

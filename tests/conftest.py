@@ -193,11 +193,6 @@ def assert_deferral_preserves_access(seeded_access):
 
 
 @pytest.fixture
-def read_all_blocks():
-    return _read_all_blocks
-
-
-@pytest.fixture
 def duplicate_blocks():
     return _duplicate_blocks
 

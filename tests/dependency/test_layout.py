@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -87,11 +88,40 @@ def test_a_block_layout_rebuilds_the_block_without_touching_it():
         pytest.param(Seq(UInt(4), 2), [1, 2, 3], "at most 2", id="seq-too-many"),
         pytest.param(Record((UInt(4), UInt(4))), (1, 16), "4-bit", id="record-inner-field"),
         pytest.param(Optional(UInt(4)), 16, "4-bit", id="optional-inner-field"),
+        pytest.param(Record((UInt(4), UInt(4))), (1,), "1 values do not fit a record of 2", id="record-short"),
     ],
 )
 def test_a_value_that_does_not_fit_its_field_raises_capacity_error(field, value, message):
     with pytest.raises(CapacityError, match=message):
         field.encode(value)
+
+
+@pytest.mark.parametrize(
+    ("field", "name"),
+    [
+        pytest.param(UInt(8), "UInt(8)", id="uint"),
+        pytest.param(Bytes(2), "Bytes(2)", id="bytes"),
+        pytest.param(FixedBytes(2), "FixedBytes(2)", id="fixed-bytes"),
+        pytest.param(Optional(UInt(4)), "Optional(UInt(4))", id="optional"),
+        pytest.param(Array(UInt(4), 2), "Array(UInt(4), 2)", id="array"),
+        pytest.param(Seq(Bytes(2), 3), "Seq(Bytes(2), 3)", id="seq"),
+        pytest.param(Record((UInt(8), Bytes(1))), "Record(tuple, [UInt(8), Bytes(1)])", id="record-tuple"),
+        pytest.param(block_layout(UInt(8), UInt(6), Bytes(4)), "Record(Data, [", id="record-class"),
+        pytest.param(Variant((UInt(8), Bytes(1)), lambda value: 0), "Variant([UInt(8), Bytes(1)])", id="variant"),
+    ],
+)
+def test_a_row_of_the_wrong_length_names_its_layout(field, name):
+    with pytest.raises(ValueError, match=re.escape(f"{name}") + ".*expected"):
+        field.decode(bytes(field.size + 1))
+
+
+@pytest.mark.parametrize(
+    "build",
+    [pytest.param(lambda: UInt(0), id="uint"), pytest.param(lambda: BitFields((2, 0)), id="bit-fields")],
+)
+def test_a_zero_bit_field_is_refused(build):
+    with pytest.raises(ValueError, match="at least 1 bit"):
+        build()
 
 
 def test_bit_fields_set_and_get_each_field_in_place():

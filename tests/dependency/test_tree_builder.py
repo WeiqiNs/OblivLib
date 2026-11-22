@@ -90,9 +90,10 @@ def test_a_failed_file_build_closes_its_file_and_leaves_it(tmp_path, fail_once, 
     assert (tmp_path / "build.tree").exists()
 
 
-def test_a_failed_adopt_attach_leaves_the_file_where_it_was(tmp_path, handover_client):
+@pytest.mark.parametrize(("mode", "kept"), [("adopt", True), ("attach", False)])
+def test_a_failed_attach_raises_and_leaves_an_adopted_file_where_it_was(tmp_path, handover_client, mode, kept):
     cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
-    client = handover_client("adopt")
+    client = handover_client(mode)
     for name in ("first", "second"):
         build_tree([], level=3, bucket_size=2, cipher=cipher, build_file=tmp_path / f"{name}.tree")
     assert cipher.row_bytes is not None
@@ -103,6 +104,6 @@ def test_a_failed_adopt_attach_leaves_the_file_where_it_was(tmp_path, handover_c
     with pytest.raises(DuplicateLabelError):
         client.host_tree("t", FileImage(level=3, row_bytes=image.row_bytes, path=second))
 
-    assert second.exists()
-    assert not list((tmp_path / "adopt_server").glob("adopt-*.tree"))
+    assert second.exists() == kept
+    assert not list((tmp_path / f"{mode}_server").glob("adopt-*.tree"))
     client.close()
