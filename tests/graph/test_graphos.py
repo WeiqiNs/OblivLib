@@ -291,7 +291,7 @@ def _value_leaves_read(client, graphos, run, *args):
 
     def record(label, leaves):
         leaves = list(leaves)
-        if label == graphos._store._name:
+        if label == graphos._store.name:
             requested.extend(leaves)
         original(label, leaves)
 

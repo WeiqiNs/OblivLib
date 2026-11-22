@@ -1,15 +1,16 @@
 import secrets
 import struct
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from functools import cached_property
-from typing import Any
+from typing import override
 
-from oblivlib.dependency import ContractError, Data
+from oblivlib.dependency import ContractError
 from oblivlib.dependency.config import AvlOmapConfig, GraphOsConfig, OramConfig
 from oblivlib.dependency.contract import require_value
-from oblivlib.dependency.layout import Bytes, Field, Record, UInt
-from oblivlib.dependency.tree_storage_base import KeyedStore
+from oblivlib.dependency.layout import Bytes, Col, Field, Pair, Record, UInt
+from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.omap import AVLOmap
 
 KEY_SIZE = 17
@@ -31,6 +32,58 @@ def _slot_key(vertex: int, neighbor: int) -> bytes:
     return b"P" + _ID.pack(vertex) + _ID.pack(neighbor)
 
 
+@dataclass
+class _Entry:
+    key: bytes
+    leaf: int
+    value: bytes
+
+
+class _ValueStore(TreeStorageBase[OramConfig, _Entry]):
+    @property
+    @override
+    def _block_layout(self) -> Field[_Entry]:
+        return Record(
+            _Entry,
+            [
+                Col(lambda block: block.key, Bytes(KEY_SIZE)),
+                Col(lambda block: block.leaf, self._leaf_field),
+                Col(lambda block: block.value, Bytes(self.data_size)),
+            ],
+        )
+
+    @property
+    def leaf_field(self) -> UInt:
+        return self._leaf_field
+
+    def new_leaf(self) -> int:
+        return self._get_new_leaf()
+
+    def host(self, entries: list[_Entry]) -> None:
+        self._host_tree(self._build_tree(entries))
+
+    def open(self, leaves: Sequence[int], width: int) -> None:
+        paths = set(leaves)
+        while len(paths) < width:
+            paths.add(self._get_new_leaf())
+        self._read_paths(sorted(paths))
+
+    def take(self, keys: Iterable[bytes]) -> dict[bytes, _Entry]:
+        wanted = set(keys)
+        return {block.key: block for block in self._stash if block.key in wanted}
+
+    def add(self, entries: Iterable[_Entry]) -> None:
+        self._stash.extend(entries)
+        self._check_stash()
+
+    def drop(self, keys: Iterable[bytes]) -> None:
+        doomed = set(keys)
+        self._stash[:] = [block for block in self._stash if block.key not in doomed]
+
+    def close(self) -> None:
+        self._write_paths()
+
+
 class GraphOS:
     def __init__(self, config: GraphOsConfig):
         self._config: GraphOsConfig = config
@@ -38,7 +91,7 @@ class GraphOS:
         self._batch: int = 2 * config.max_deg + 1
         self._num_vertices: int = 0
 
-        self._store = KeyedStore(
+        self._store: _ValueStore = _ValueStore(
             OramConfig(
                 num_data=config.num_entries,
                 data_size=self._value_width,
@@ -47,10 +100,9 @@ class GraphOS:
                 bucket_size=config.bucket_size,
                 stash_scale=config.stash_scale * self._batch,
                 encryptor=config.encryptor,
-            ),
-            key_size=KEY_SIZE,
+            )
         )
-        self._omap = AVLOmap(
+        self._omap: AVLOmap = AVLOmap(
             AvlOmapConfig(
                 num_data=config.num_entries,
                 key_size=KEY_SIZE,
@@ -66,8 +118,8 @@ class GraphOS:
         )
 
     @cached_property
-    def _vertex_record(self) -> Record:
-        return Record((Bytes(self._config.data_size), UInt.covering(self._max_deg)))
+    def _vertex_record(self) -> Pair[bytes, int]:
+        return Pair(Bytes(self._config.data_size), UInt.covering(self._max_deg))
 
     @cached_property
     def _id(self) -> Field[int]:
@@ -83,7 +135,7 @@ class GraphOS:
 
     @property
     def _leaf(self) -> Field[int]:
-        return self._store._leaf_field
+        return self._store.leaf_field
 
     @property
     def _identity(self) -> str:
@@ -93,15 +145,13 @@ class GraphOS:
     def num_vertices(self) -> int:
         return self._num_vertices
 
-    def _require_vertex(self, vertex: object) -> int:
+    def _require_vertex(self, vertex: object) -> None:
         if type(vertex) is not int or not 0 <= vertex < 1 << _ID_BITS:
             raise ContractError(f"{self._identity}: a vertex must be an int in [0, 2**64), got {vertex!r}.")
-        return vertex
 
-    def _require_count(self, name: str, count: object) -> int:
+    def _require_count(self, name: str, count: object) -> None:
         if type(count) is not int or count < 0:
             raise ContractError(f"{self._identity}: {name} must be an int >= 0, got {count!r}.")
-        return count
 
     def _require_value(self, value: object) -> None:
         require_value(self._identity, value, self._config.data_size)
@@ -154,47 +204,33 @@ class GraphOS:
                 entries.append((_edge_key(vertex, index), self._id.encode(neighbor)))
                 entries.append((_slot_key(vertex, neighbor), self._index.encode(index)))
 
-        leaves = {key: self._store._get_new_leaf() for key, _ in entries}
+        leaves = {key: self._store.new_leaf() for key, _ in entries}
         self._omap.init_server_storage([(key, self._leaf.encode(leaf)) for key, leaf in leaves.items()])
-        self._store._host_tree(
-            self._store._build_tree(Data(key=key, leaf=leaves[key], value=value) for key, value in entries)
-        )
+        self._store.host([_Entry(key=key, leaf=leaves[key], value=value) for key, value in entries])
         self._num_vertices = len(graph)
-
-    def _padded(self, leaves: Sequence[int], width: int) -> list[int]:
-        paths = set(leaves)
-        while len(paths) < width:
-            paths.add(self._store._get_new_leaf())
-        return sorted(paths)
 
     def _chunks[T](self, items: Sequence[T]) -> list[Sequence[T]]:
         return [items[start : start + self._batch] for start in range(0, len(items), self._batch)]
 
-    def _fetch(self, keys: Sequence[Slot]) -> dict[bytes, Data]:
-        new_leaves: dict[bytes, int] = {}
-        pairs: list[tuple[Any, Any]] = []
-        for key in keys:
-            if key is None:
-                pairs.append((None, None))
-                continue
-            new_leaves[key] = self._store._get_new_leaf()
-            pairs.append((key, self._leaf.encode(new_leaves[key])))
+    def _fetch(self, keys: Sequence[Slot]) -> dict[bytes, _Entry]:
+        lanes = [(key, self._store.new_leaf()) for key in keys if key is not None]
+        found = self._omap.search_batch([(key, self._leaf.encode(leaf)) for key, leaf in lanes])
 
         located: dict[bytes, int] = {}
         old_leaves: list[int] = []
-        for (key, _), old_leaf in zip(pairs, self._omap.search_batch(pairs), strict=True):
-            if key is not None and old_leaf is not None:
-                located[key] = new_leaves[key]
+        for (key, leaf), old_leaf in zip(lanes, found, strict=True):
+            if old_leaf is not None:
+                located[key] = leaf
                 old_leaves.append(self._leaf.decode(old_leaf))
 
-        self._store._read_paths(self._padded(old_leaves, len(keys)))
-        blocks = {block.key: block for block in self._store._stash if block.key in located}
+        self._store.open(old_leaves, len(keys))
+        blocks = self._store.take(located)
         for key, leaf in located.items():
             blocks[key].leaf = leaf
         return blocks
 
     def _commit(self) -> None:
-        self._store._write_paths()
+        self._store.close()
 
     def _read(self, keys: Sequence[Slot]) -> dict[bytes, bytes]:
         values: dict[bytes, bytes] = {}
@@ -205,21 +241,17 @@ class GraphOS:
 
     def _add(self, entries: Sequence[tuple[bytes, bytes] | None]) -> None:
         for chunk in self._chunks(entries):
-            placed = [(key, value, self._store._get_new_leaf()) for key, value in filter(None, chunk)]
-            self._omap.insert_batch([(key, self._leaf.encode(leaf)) for key, _, leaf in placed])
-            self._store._read_paths(self._padded([], len(chunk)))
-            self._store._stash += [Data(key=key, leaf=leaf, value=value) for key, value, leaf in placed]
-            self._store._check_stash()
+            placed = [_Entry(key=key, leaf=self._store.new_leaf(), value=value) for key, value in filter(None, chunk)]
+            self._omap.insert_batch([(entry.key, self._leaf.encode(entry.leaf)) for entry in placed])
+            self._store.open([], len(chunk))
+            self._store.add(placed)
             self._commit()
 
     def _remove(self, keys: Sequence[Slot]) -> None:
         for chunk in self._chunks(keys):
             old_leaves = [self._omap.delete(key) for key in chunk]
-            doomed = {key for key in chunk if key is not None}
-            self._store._read_paths(
-                self._padded([self._leaf.decode(leaf) for leaf in old_leaves if leaf is not None], len(chunk))
-            )
-            self._store._stash = [block for block in self._store._stash if block.key not in doomed]
+            self._store.open([self._leaf.decode(leaf) for leaf in old_leaves if leaf is not None], len(chunk))
+            self._store.drop(key for key in chunk if key is not None)
             self._commit()
 
     def _vertices(self, vertices: Sequence[int | None]) -> dict[int, tuple[bytes, int]]:
@@ -263,10 +295,12 @@ class GraphOS:
         self._require_count("hops", hops)
         info = self._vertices([vertex])
         frontier: list[int | None] = [vertex if vertex in info else None]
-        for hop in range(1, hops + 1):
+        reach = 1
+        for _ in range(hops):
+            reach *= self._max_deg
             reached = self._neighbors_of(frontier, self._degrees(info))
             fresh = [neighbor for neighbor in dict.fromkeys(reached) if neighbor is not None and neighbor not in info]
-            width = min(self._max_deg**hop, self._num_vertices)
+            width = min(reach, self._num_vertices)
             assert len(fresh) <= width
             layer = self._vertices([*fresh, *[None] * (width - len(fresh))])
             info.update(layer)
@@ -327,7 +361,7 @@ class GraphOS:
                 for neighbor in stack[-1]:
                     if neighbor not in visited:
                         return neighbor
-                stack.pop()
+                del stack[-1]
             return None
 
         def expand(vertex: int, neighbors: list[int]) -> None:
@@ -356,7 +390,7 @@ class GraphOS:
                 problem = f"neighbor {neighbor} does not exist"
             elif problem is None and block is not None and self._decode_vertex(block.value)[1] >= self._max_deg:
                 problem = f"neighbor {neighbor} already has max_deg {self._max_deg} neighbors"
-        linked = neighbors if problem is None else []
+        linked: Sequence[int] = neighbors if problem is None else []
         old_degrees: dict[int, int] = {}
         for neighbor in linked:
             block = blocks[_vertex_key(neighbor)]
