@@ -55,14 +55,15 @@ class _RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig, _PosMapBlock]):
         self._host_tree(tree)
         return leaves
 
-    def access(self, cur_key: int, cur_index: int, cur_leaf: int, new_cur_leaf: int, new_next_leaf: int) -> int:
+    def access(self, cur_key: int, cur_index: int, cur_leaf: int, new_cur_leaf: int) -> tuple[int, int]:
+        new_next_leaf = secrets.randbelow(self._child_leaf_range)
         self._read_paths([cur_leaf])
         data = self._require_in_stash(key=cur_key)
         next_leaf = data.leaves[cur_index]
         data.leaves[cur_index] = new_next_leaf
         data.leaf = new_cur_leaf
         self._write_paths()
-        return next_leaf
+        return next_leaf, new_next_leaf
 
 
 class RecursivePathOram(TreeBaseOram[RecursiveOramConfig]):
@@ -116,17 +117,10 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig]):
         cur_leaf, new_cur_leaf = self._pos_map[top_key], secrets.randbelow(self._levels[0].leaf_range)
         self._pos_map[top_key] = new_cur_leaf
 
-        child_leaf_ranges = [*(level.leaf_range for level in self._levels[1:]), self.leaf_range]
-        for level, child_leaf_range, (cur_key, cur_index) in zip(self._levels, child_leaf_ranges, keys, strict=True):
-            new_next_leaf = secrets.randbelow(child_leaf_range)
-            cur_leaf = level.access(
-                cur_key=cur_key,
-                cur_index=cur_index,
-                cur_leaf=cur_leaf,
-                new_cur_leaf=new_cur_leaf,
-                new_next_leaf=new_next_leaf,
+        for level, (cur_key, cur_index) in zip(self._levels, keys, strict=True):
+            cur_leaf, new_cur_leaf = level.access(
+                cur_key=cur_key, cur_index=cur_index, cur_leaf=cur_leaf, new_cur_leaf=new_cur_leaf
             )
-            new_cur_leaf = new_next_leaf
 
         return cur_leaf, new_cur_leaf
 

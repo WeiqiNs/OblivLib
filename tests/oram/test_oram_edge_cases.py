@@ -152,8 +152,7 @@ def test_position_map_leaves_are_independent_of_data_leaves(cls, config_cls, num
     level = oram._levels[-1]
     leaf_range = 2 ** (level._level - 1)
     matches = sum(
-        level._counters.prf_leaf(key=key, gc=0, ic=0, level=level._level, num_data=level.num_data)
-        == oram._counters.prf_leaf(key=key, gc=0, ic=0, level=oram._level, num_data=oram.num_data) % leaf_range
+        level._own_counters.leaf(key, gc=0, ic=0) == oram._own_counters.leaf(key, gc=0, ic=0) % leaf_range
         for key in range(level.num_data)
     )
     assert matches <= max(3, 3 * level.num_data // leaf_range)

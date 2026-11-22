@@ -41,8 +41,8 @@ def _moves(chunk: ResetChunk, *, skip: int | None = None) -> list[_Move]:
 
 
 class _FreecursiveCounters(Counters):
-    def __init__(self, config: FreecursiveOramConfig, prf: Blake2Prf, *, child_num_data: int, child_level: int):
-        super().__init__(config, prf, child_num_data=child_num_data, child_level=child_level)
+    def __init__(self, config: FreecursiveOramConfig, prf: Blake2Prf, *, num_data: int, leaf_range: int):
+        super().__init__(config, prf, num_data=num_data, leaf_range=leaf_range)
         self._hard_reset: bool = config.reset_method == "hard"
         self._reset_prob: float = 1 / config.num_ic if config.reset_prob is None else config.reset_prob
 
@@ -65,11 +65,11 @@ class _FreecursiveCounters(Counters):
 
         reset_leaves = [
             _ResetEntry(
-                self.previous_leaf(key=key * num_ic + i, gc=gc, ic=ic[i]),
-                _Move(key * num_ic + i, self.previous_leaf(key=key * num_ic + i, gc=gc + 1, ic=0)),
+                self.leaf(key * num_ic + i, gc=gc, ic=ic[i]),
+                _Move(key * num_ic + i, self.leaf(key * num_ic + i, gc=gc + 1, ic=0)),
             )
-            if self.has_child(key * num_ic + i)
-            else _ResetEntry(self.random_child_leaf(), None)
+            if self.contains(key * num_ic + i)
+            else _ResetEntry(self.random_leaf(), None)
             for i in range(num_ic)
         ]
         return [reset_leaves[i : i + 2] for i in range(0, len(reset_leaves), 2)]
@@ -79,8 +79,8 @@ class _FreecursiveCounters(Counters):
         return [
             [
                 _ResetEntry(
-                    self.previous_leaf(key=child, gc=gc, ic=ic),
-                    _Move(child, self.previous_leaf(key=child, gc=gc, ic=ic + 1)),
+                    self.leaf(child, gc=gc, ic=ic),
+                    _Move(child, self.leaf(child, gc=gc, ic=ic + 1)),
                 )
             ]
         ]
@@ -110,12 +110,14 @@ class FreecursiveOram(CounterOram[FreecursiveOramConfig, _FreecursiveCounters, _
         self._pending_reset_chunks: ResetLeaves = []
 
     @override
-    def _new_counters(self, *, child_num_data: int, child_level: int) -> _FreecursiveCounters:
-        return _FreecursiveCounters(self._config, self._prf, child_num_data=child_num_data, child_level=child_level)
+    def _new_counters(self, *, num_data: int, leaf_range: int) -> _FreecursiveCounters:
+        return _FreecursiveCounters(self._config, self._prf, num_data=num_data, leaf_range=leaf_range)
 
     @override
-    def _new_level(self, config: FreecursiveOramConfig, counters: _FreecursiveCounters) -> _FreecursivePosMapLevel:
-        return _FreecursivePosMapLevel(config, counters)
+    def _new_level(
+        self, config: FreecursiveOramConfig, *, own: _FreecursiveCounters, child: _FreecursiveCounters
+    ) -> _FreecursivePosMapLevel:
+        return _FreecursivePosMapLevel(config, own=own, child=child)
 
     def _get_leaf_from_pos_map(self, key: int) -> ResetLeaves:
         counters = self._counters
