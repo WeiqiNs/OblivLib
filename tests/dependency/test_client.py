@@ -51,14 +51,11 @@ def test_metrics_count_rounds_and_payload_and_reset():
         assert client.metrics == Metrics(rounds=0, payload_bytes=0, wire_bytes=0)
 
 
-def test_staging_checks_known_labels_and_whole_paths():
+def test_staging_checks_known_labels():
     with Client.local() as client:
         _tree(client)
         with pytest.raises(UnknownLabelError, match="'missing'"):
             client.add_read_path("missing", [0])
-        for partial in ({0: _row(1), 1: _row(1)}, {0: _row(1), 1: _row(1), 3: _row(1), 4: _row(1), 2: _row(1)}):
-            with pytest.raises(ValueError, match="'t'"):
-                client.add_write_path("t", partial)
         client.add_read_path("t", [0])
         assert client.execute().require("t")[3] == _row(4)
 

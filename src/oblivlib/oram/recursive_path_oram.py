@@ -55,7 +55,6 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel])
     def __init__(self, config: RecursiveOramConfig):
         if config.num_data <= config.on_chip_mem:
             raise ValueError(f"num_data ({config.num_data}) must be greater than on_chip_mem ({config.on_chip_mem}).")
-
         super().__init__(config)
 
         self._pos_map: PosMap = {i: self._get_new_leaf() for i in range(self._num_data)}

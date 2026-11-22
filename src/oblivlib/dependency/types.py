@@ -31,8 +31,7 @@ class Data(FieldTuple):
     value: Any = None
 
     def require_leaf(self) -> int:
-        if self.leaf is None:
-            raise ValueError("Data block has no leaf assigned.")
+        assert self.leaf is not None
         return self.leaf
 
 

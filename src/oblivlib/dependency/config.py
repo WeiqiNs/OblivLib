@@ -16,6 +16,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_args, override
 
+from oblivlib.dependency.heap_index import compute_level
+
 if TYPE_CHECKING:
     from oblivlib.dependency.client import Client
     from oblivlib.dependency.crypto import Encryptor
@@ -268,6 +270,9 @@ class TreeOmapConfig(OmapConfig):
             raise ValueError(f"paths_per_round must be {allowed}, got {self.paths_per_round}.")
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}.")
+        leaf_range = 1 << (compute_level(self.num_data) - 1)
+        if self.batch_size > leaf_range:
+            raise ValueError(f"batch_size {self.batch_size} exceeds the {leaf_range} leaves of the tree.")
         for op in ODS_OPS:
             given, least = self.budget(op), self.minimums(cached=self.cached)[op]
             if given.a < least.a or given.a + given.b < least.a + least.b:

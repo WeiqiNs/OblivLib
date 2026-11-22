@@ -110,7 +110,9 @@ def test_each_avl_bound_is_reached(client, height):
 
 
 @pytest.mark.parametrize(
-    ("rounds_short", "message"), [(1, "needs more than its"), (0, "still need an eviction")], ids=["fetch", "evict"]
+    ("rounds_short", "message"),
+    [(1, "more rounds than its proven budget"), (0, "more evictions owed than its budget")],
+    ids=["fetch", "evict"],
 )
 def test_an_op_short_of_its_bound_raises_instead_of_skipping_evictions(client, monkeypatch, rounds_short, message):
     spine = _keys_by_path(_worst_insert_tree(5))
@@ -122,7 +124,7 @@ def test_an_op_short_of_its_bound_raises_instead_of_skipping_evictions(client, m
         omap._budget = omap._max_height - rounds_short
 
     monkeypatch.setattr(omap, "_begin_op", short_begin)
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(AssertionError, match=message):
         omap.insert(_key(2 * spine["R" * 4] + 1), b"v")
 
 

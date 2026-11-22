@@ -116,8 +116,7 @@ class GroupOmap(BaseOmap):
         lower_blocks: list[Data] = []
         for bucket_id in range(self._num_data):
             items = data_map[bucket_id]
-            if len(items) > self._upper_bound:
-                raise MemoryError(f"Bucket {bucket_id} has {len(items)} items, exceeds upper bound {self._upper_bound}")
+            assert len(items) <= self._upper_bound
             seed = os.urandom(self.SEED_SIZE)
             upper_data[bucket_id] = self._metadata.encode((seed, len(items)))
             lower_blocks.extend(
@@ -137,8 +136,7 @@ class GroupOmap(BaseOmap):
             lower._read_paths(self._padded_leaves([self._slot_leaf(seed, slot) for slot in range(1, count + 1)]))
             blocks = [data for data in lower._stash if self._hash_key_to_bucket(data.key) == bucket_id]
             kept, result = change(blocks)
-            if len(kept) > self._upper_bound:
-                raise MemoryError(f"Bucket {bucket_id} is full ({count} items), cannot insert")
+            assert len(kept) <= self._upper_bound
             old = {id(data) for data in blocks}
             dropped = old - {id(data) for data in kept}
             lower._stash = [data for data in lower._stash if id(data) not in dropped]
@@ -187,8 +185,7 @@ class GroupOmap(BaseOmap):
 
         def append(metadata: bytes) -> tuple[bytes, None]:
             seed, count = self._metadata.decode(metadata)
-            if count >= self._upper_bound:
-                raise MemoryError(f"Bucket {bucket_id} is full ({count} items), cannot insert")
+            assert count < self._upper_bound
             lower._read_paths([lower._get_new_leaf()])
             lower._stash.append(Data(key=key, leaf=self._slot_leaf(seed, count + 1), value=value))
             lower._check_stash()

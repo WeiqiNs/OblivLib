@@ -87,7 +87,6 @@ class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
     def __init__(self, config: ConfigT):
         if config.num_data <= config.on_chip:
             raise ValueError(f"num_data ({config.num_data}) must be greater than the on-chip size ({config.on_chip}).")
-
         super().__init__(config)
 
         self._prf = Blake2Prf(key=config.prf_key)

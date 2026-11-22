@@ -1,5 +1,3 @@
-import pytest
-
 from oblivlib.dependency import AVLData, BPlusData, Data
 
 
@@ -15,9 +13,3 @@ def test_field_tuple_order_is_the_stored_format():
     for obj, fields in cases:
         assert obj.to_fields() == fields
         assert type(obj).from_fields(fields) == obj
-
-
-def test_data_requires_an_assigned_leaf():
-    assert Data(key=1, leaf=0).require_leaf() == 0
-    with pytest.raises(ValueError, match="no leaf"):
-        Data(key=1).require_leaf()

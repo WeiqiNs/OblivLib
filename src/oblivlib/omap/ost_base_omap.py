@@ -95,8 +95,6 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         self._owed: int = 0
         self._op_owed: int = 0
         self._size: int = 0
-        if self._batch_size > self._leaf_range:
-            raise ValueError(f"{self._identity}: batch_size {self._batch_size} exceeds the {self._leaf_range} leaves.")
 
     @abstractmethod
     def _new_local(self) -> LocalT:
@@ -188,8 +186,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         return sorted(paths)
 
     def _start_round(self, leaves: Iterable[int]) -> None:
-        if self._op_rounds >= self._budget:
-            raise ValueError(f"{self._identity}: the op needs more than its {self._budget} rounds.")
+        assert self._op_rounds < self._budget, "an op needed more rounds than its proven budget"
         self._read_paths(self._round_leaves(leaves, self._round_width(self._op_rounds)))
         self._op_rounds += 1
 
@@ -239,12 +236,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         padding = range(self._op_rounds, self._budget)
         capacity = sum(self._round_width(index) for index in padding)
         self._op_fetches, self._op_owed = self._op_rounds, self._owed
-        if self._owed - capacity > self._carry_limit:
-            raise ValueError(
-                f"{self._identity}: {self._owed} blocks returned to the stash still need an eviction of "
-                + f"their own, but the {len(padding)} rounds left of {self._budget} evict only {capacity} "
-                + f"and {self._carry_limit} may carry over."
-            )
+        assert self._owed - capacity <= self._carry_limit, "an op left more evictions owed than its budget allows"
         for _ in padding:
             self._start_round([])
             self._write_paths()

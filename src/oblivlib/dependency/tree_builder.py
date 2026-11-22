@@ -81,8 +81,7 @@ class _MemoryBuckets(_Buckets):
 
 class _FileBuckets(_Buckets):
     def __init__(self, level: int, cipher: PathCipher, path: Path):
-        if cipher.row_bytes is None:
-            raise ValueError("build_tree: a build file needs fixed-size (encrypted) rows.")
+        assert cipher.row_bytes is not None
         self._level = level
         self._cipher = cipher
         self._row_bytes = cipher.row_bytes

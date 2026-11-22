@@ -210,8 +210,7 @@ class Client:
         """Stage rows for whole root-to-leaf paths: ``data`` must hold exactly the nodes of the paths to
         the leaves among its indices."""
         level = self.level_of(label)
-        if set(data) != set(path_indices(path_leaves(data, level), level)):
-            raise ValueError(f"Client: a write to {label!r} must cover exactly the paths to its leaves.")
+        assert set(data) == set(path_indices(path_leaves(data, level), level))
         self._write_paths.setdefault(label, {}).update(data)
 
     def execute(self) -> ExecuteResult:

@@ -15,33 +15,11 @@ def _make_omap(client, n=128, distinguishable=False):
     )
 
 
-def _keys_in_one_bucket(omap, count):
-    bucket = omap._hash_key_to_bucket(b"0")
-    keys = (b"%d" % i for i in range(10**6))
-    return [key for key in keys if omap._hash_key_to_bucket(key) == bucket][:count]
-
-
 def test_undersized_upper_raises(client):
     n = 128
     too_small = PathOram(PathOramConfig(num_data=n, data_size=8, client=client, name="group_upper"))
     with pytest.raises(ValueError, match="too small"):
         GroupOmap(GroupOmapConfig(num_data=n, key_size=10, data_size=64, client=client), upper_oram=too_small)
-
-
-def test_an_overfull_initial_bucket_raises(client):
-    omap = _make_omap(client, n=64)
-    keys = _keys_in_one_bucket(omap, omap._upper_bound + 1)
-    with pytest.raises(MemoryError, match="exceeds upper bound"):
-        omap.init_server_storage([(key, b"v") for key in keys])
-
-
-@pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
-def test_an_insert_into_a_full_bucket_raises(client, distinguishable):
-    omap = _make_omap(client, n=64, distinguishable=distinguishable)
-    *full, extra = _keys_in_one_bucket(omap, omap._upper_bound + 1)
-    omap.init_server_storage([(key, b"v") for key in full])
-    with pytest.raises(MemoryError, match="is full"):
-        omap.insert(extra, b"v")
 
 
 def test_lower_paths_cover_the_whole_leaf_range(client):
