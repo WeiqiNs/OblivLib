@@ -2,13 +2,14 @@
 
 [![codecov](https://codecov.io/gh/WeiqiNs/OblivLib/graph/badge.svg)](https://codecov.io/gh/WeiqiNs/OblivLib)
 
-OblivLib (`oblivlib`) implements classic oblivious algorithms (oblivious RAM and oblivious maps) for
+OblivLib (`oblivlib`) implements oblivious algorithms (oblivious RAM, oblivious maps and oblivious graphs) for
 client/server deployments where the client is trusted and may compute non-obliviously, and the server only
 stores encrypted data.
 
 Related publications by the maintainers:
 
 - [Towards Practical Oblivious Map](https://dl.acm.org/doi/10.14778/3712221.3712235)
+- [Enabling Index-free Adjacency in Oblivious Graph Processing with Delayed Duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf)
 
 ## ORAM
 
@@ -51,7 +52,7 @@ same number of rounds as one key, each round reading up to `k` paths.
 
 - [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf), over a batched AVL OMAP and a keyed value tree:
   [`graphos.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/graphos.py)
-- Grove (index-free adjacency with delayed duplication), over an AVL OMAP index, a graph tree and two meta trees:
+- [Grove, index-free adjacency with delayed duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf), over an AVL OMAP index, a graph tree and two meta trees:
   [`grove.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/grove.py), [`meta.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/meta.py)
 
 ## Installation
@@ -66,7 +67,7 @@ and ruff.
 ## Usage
 
 ORAM keys are int addresses in `[0, num_data)` and OMAP keys are `bytes` of at most `key_size`; every
-value is `bytes` of at most `data_size`, so serialize your own data before storing it. A key or value
+value is `bytes` of at most `data_size`, so serialize your own data before storing it. Graph vertices are int ids in `[0, 2**64)`, at most `num_data` of them, each with at most `max_degree` neighbors. A key or value
 outside that contract raises `ContractError` before anything touches the server.
 
 ### Local and simulated runs
