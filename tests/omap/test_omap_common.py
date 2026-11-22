@@ -384,6 +384,21 @@ class TestOmapObliviousness:
         if omap_spec.ods:
             assert shapes["search hit"] == {tuple((width,) for width in _round_widths(omap_spec, omap, omap._budget))}
 
+    def test_rounds_never_read_more_paths_than_the_tree_has_leaves(self, omap_spec, recorded_client):
+        client, recorder = recorded_client()
+        omap = omap_spec.make(client=client, num_data=max(2, omap_spec.min_num_data))
+        omap.init_server_storage([(b"1", b"v")])
+        exact = omap_spec.exact_labels(omap)
+        before = len(recorder.batches)
+        assert omap.search(b"1") == b"v"
+        omap.insert(b"2", b"w")
+        widths = [
+            len(read.leaves) for batch in recorder.batches[before:] for read in batch.reads if read.label in exact
+        ]
+        leaves = {read.label: client.level_of(read.label) for batch in recorder.batches for read in batch.reads}
+        assert widths
+        assert all(width <= 1 << (min(leaves[label] for label in exact) - 1) for width in widths)
+
     @pytest.mark.parametrize("pattern", ["random", "sorted", "reverse", "churn"])
     @pytest.mark.parametrize("distinguishable", [False, True], ids=["hidden", "distinguishable"])
     def test_every_op_spends_exactly_its_budget(

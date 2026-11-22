@@ -90,6 +90,21 @@ class TestOramCommon:
         with pytest.raises(ContractError, match=f"{type(oram).__name__} '"):
             oram.update(3, lambda old: (new, None))
 
+    def test_an_access_begun_inside_another_is_refused_before_any_message(self, make_oram, recorded_client):
+        client, recorder = recorded_client()
+        oram = make_oram(num_data=64, data_size=10, client=client)
+        oram.init_server_storage()
+        sent: list[int] = []
+
+        def nested(old):
+            sent.append(len(recorder.messages))
+            oram.operate_on_key(2)
+            return old, None
+
+        with pytest.raises(ContractError, match="while another one was still running"):
+            oram.update(1, nested)
+        assert len(recorder.messages) == sent[0]
+
     def test_a_full_bucket_of_widest_blocks_seals_to_one_row(self, make_oram, client, encryptor):
         oram = make_oram(num_data=1000, data_size=33, client=client, encryptor=encryptor, bucket_size=5)
         widest = [Data(key=999, leaf=oram._leaf_range - 1, value=b"\xff" * 33) for _ in range(5)]

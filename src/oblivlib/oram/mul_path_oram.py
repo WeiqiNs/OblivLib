@@ -14,6 +14,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
             self._require_access(key, value)
         if not key_value_map:
             return {}
+        self._begin_access()
         old_leaves = [self._pos_map[key] for key in key_value_map]
         new_leaves = {key: self._get_new_leaf() for key in key_value_map}
         self._pos_map.update(new_leaves)
@@ -26,4 +27,5 @@ class MulPathOram(PathOram[MulPathOramConfig]):
                 data.value = value
             data.leaf = new_leaves[key]
         self._write_back()
+        self._accessing = False
         return read_values

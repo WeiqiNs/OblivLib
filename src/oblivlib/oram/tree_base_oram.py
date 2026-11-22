@@ -37,6 +37,7 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
     def __init__(self, config: ConfigT):
         super().__init__(config)
         self._levels: list[LevelT] = []
+        self._accessing: bool = False
 
     @property
     def max_stash(self) -> int:
@@ -78,18 +79,27 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
         if value is not UNSET:
             require_value(self._identity, value, self._data_size)
 
+    def _begin_access(self) -> None:
+        if self._accessing:
+            raise ContractError(f"{self._identity}: an access began while another one was still running.")
+        self._accessing = True
+
     def operate_on_key(self, key: int, value: Any = UNSET) -> bytes:
         self._require_access(key, value)
+        self._begin_access()
         read_value = self._operate_on_key_without_eviction(key, value)
         self._write_back()
+        self._accessing = False
         return read_value
 
     def update[T](self, key: int, change: Callable[[bytes], tuple[bytes, T]]) -> T:
         require_oram_key(self._identity, key, self._num_data)
+        self._begin_access()
         value, result = change(self._operate_on_key_without_eviction(key, UNSET))
         require_value(self._identity, value, self._data_size)
         self._require_in_stash(key).value = value
         self._write_back()
+        self._accessing = False
         return result
 
     @abstractmethod

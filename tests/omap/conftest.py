@@ -291,7 +291,7 @@ _SPECS: list[tuple[str, OmapSpec]] = [
         _bplus({"search": 8, "insert": 12, "delete": 13, "hidden": 13}, order=5, **_textbook(BPlusOmapConfig)),
     ),
     *(_ost(ods_kind, oram_kind) for ods_kind in ("avl", "bplus") for oram_kind in ("path", "da", "recursive")),
-    *(_group(oram_kind, distinguishable=flag) for oram_kind in ("path", "da") for flag in (False, True)),
+    *(_group(oram_kind, distinguishable=flag) for oram_kind in ("path", "da", "recursive") for flag in (False, True)),
 ]
 
 
@@ -309,7 +309,7 @@ def ods_spec(request):
     params=[
         pytest.param((spec, num_data), id=f"{spec_id}-{num_data}")
         for spec_id, spec in _SPECS
-        for num_data in (1, 2, 7)
+        for num_data in sorted({1, 2, 7, spec.min_num_data, spec.min_num_data + 1})
         if num_data >= spec.min_num_data
     ]
 )
