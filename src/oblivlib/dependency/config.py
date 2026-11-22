@@ -337,34 +337,25 @@ class GroupOmapConfig(OmapConfig):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GraphOsConfig:
-    """Construction parameters for GraphOS, an undirected graph over an AVL OMAP and a keyed value tree.
+class GraphOsConfig(OramConfig):
+    """``num_data``: the most vertices the graph may hold. ``max_degree``: the most neighbors a vertex may
+    have; every query pads to it. ``data_size``: the most bytes a vertex value may hold."""
 
-    ``num_vertices``: the most vertices the graph may hold. ``max_deg``: the most neighbors a vertex may
-    have; every query pads to it. ``data_size``: the most bytes a vertex value may hold. The remaining
-    fields configure both trees as in ``OramConfig``.
-    """
-
-    num_vertices: int
-    max_deg: int
-    data_size: int
-    client: Client
     name: str = field(default_factory=unique_name("graphos"))
-    bucket_size: int = 4
-    stash_scale: int = 7
-    encryptor: Encryptor | None = None
+    max_degree: int
 
     def __post_init__(self) -> None:
-        if self.num_vertices < 1:
-            raise ValueError(f"num_vertices must be >= 1, got {self.num_vertices}.")
-        if not 1 <= self.max_deg < self.num_vertices:
+        super().__post_init__()
+        if not 1 <= self.max_degree < self.num_data:
             raise ValueError(
-                f"max_deg must be >= 1 and below num_vertices ({self.num_vertices}), as in a simple graph, "
-                + f"got {self.max_deg}."
+                f"max_degree must be >= 1 and below num_data ({self.num_data}), as in a simple graph, "
+                + f"got {self.max_degree}."
             )
-        if self.data_size < 0:
-            raise ValueError(f"data_size must be >= 0, got {self.data_size}.")
+
+    @property
+    def batch_size(self) -> int:
+        return 2 * self.max_degree + 1
 
     @property
     def num_entries(self) -> int:
-        return self.num_vertices * (1 + 2 * self.max_deg)
+        return self.num_data * self.batch_size

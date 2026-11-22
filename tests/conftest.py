@@ -77,7 +77,7 @@ def _storages(scheme):
     if isinstance(scheme, OramOstOmap):
         return [*_storages(scheme._oram), *_storages(scheme._ost)]
     if isinstance(scheme, GraphOS):
-        return [*_storages(scheme._omap), scheme._store]
+        return [*_storages(scheme._omap), scheme._value_tree]
     if isinstance(scheme, GroupOmap):
         return [*_storages(scheme._upper_oram), scheme._lower_oram]
     if isinstance(scheme, TreeBaseOram):

@@ -13,9 +13,9 @@ from oblivlib.graph.graphos import _edge_key, _slot_key, _vertex_key
 MAX_DEG = 3
 
 
-def _make(client, num_vertices=24, max_deg=MAX_DEG, encryptor=None):
+def _make(client, num_vertices=24, max_degree=MAX_DEG, encryptor=None):
     return GraphOS(
-        GraphOsConfig(num_vertices=num_vertices, max_deg=max_deg, data_size=8, client=client, encryptor=encryptor)
+        GraphOsConfig(num_data=num_vertices, max_degree=max_degree, data_size=8, client=client, encryptor=encryptor)
     )
 
 
@@ -42,7 +42,7 @@ def _within(graph, start, hops):
 def _assert_matches_model(graphos, graph, values, read_all_blocks, duplicate_blocks):
     """Every stored entry is exactly the V/E/P encoding of the model, and its OMAP leaf points at it."""
     assert duplicate_blocks(graphos) == {}
-    store = graphos._store
+    store = graphos._value_tree
     stored = {block.key: block for block in read_all_blocks(store) + store._stash if block.key is not None}
     expected_keys = set()
     for vertex, neighbors in graph.items():
@@ -94,7 +94,7 @@ def stored_adjacency(read_all_blocks):
     """Each vertex's neighbors in the order the E entries hold them, which deletes reorder."""
 
     def read(graphos):
-        store = graphos._store
+        store = graphos._value_tree
         stored = {block.key: block for block in read_all_blocks(store) + store._stash if block.key is not None}
         adjacency = {}
         for key, block in stored.items():
@@ -117,7 +117,7 @@ def matches_model(read_all_blocks, duplicate_blocks):
 
 class TestGraphOS:
     @pytest.mark.parametrize("enc", [False, True])
-    def test_oracle(self, client, enc, matches_model, stored_adjacency):
+    def test_operations_match_a_graph_model(self, client, enc, matches_model, stored_adjacency):
         rng = random.Random(11 + enc)
         num_vertices = 24
         graph = _random_graph(rng, num_vertices - 6, MAX_DEG)
@@ -163,11 +163,11 @@ class TestGraphOS:
                 for neighbor in graph.pop(vertex):
                     graph[neighbor].remove(vertex)
                 del values[vertex]
-            assert graphos.num_vertices == len(graph)
+            assert graphos.size == len(graph)
 
         matches_model(graphos, graph, values)
 
-    def test_deep_hops_stay_bounded_by_the_graph(self, client):
+    def test_hop_layers_stop_growing_at_the_vertex_count(self, client):
         graph = {0: [1, 2], 1: [0, 3], 2: [0], 3: [1], 4: []}
         graphos = _make(client, 8)
         graphos.init_server_storage(graph, {v: bytes([v]) for v in graph})
@@ -175,7 +175,7 @@ class TestGraphOS:
         assert graphos.hop_neighborhood(0, 40) == {v: bytes([v]) for v in [0, 1, 2, 3]}
         assert client.metrics.rounds - rounds < 40 * 4 * (graphos._omap._max_height + 2)
 
-    def test_lookup_of_repeated_and_many_vertices(self, client):
+    def test_lookup_serves_repeats_and_more_vertices_than_one_batch(self, client):
         graph = {v: [] for v in range(10)}
         graphos = _make(client, 10)
         graphos.init_server_storage(graph, {v: bytes([v]) for v in graph})
@@ -222,7 +222,7 @@ class TestGraphOS:
             graphos.insert(1, b"x", [])
         with pytest.raises(ValueError, match="does not exist"):
             graphos.insert(4, b"x", [7])
-        with pytest.raises(ValueError, match="max_deg"):
+        with pytest.raises(ValueError, match="max_degree"):
             graphos.insert(4, b"x", [0])
         with pytest.raises(KeyError, match="vertex 7 does not exist"):
             graphos.delete(7)
@@ -239,15 +239,16 @@ class TestGraphOS:
             ({0: []}, {1: b""}),
             ({0: []}, {0: b"123456789"}),
             ({-1: []}, {}),
+            ({vertex: [] for vertex in range(9)}, {}),
         ],
     )
-    def test_init_rejects_bad_graph(self, client, graph, values):
+    def test_init_rejects_each_malformed_graph(self, client, graph, values):
         graphos = _make(client, 8)
         with pytest.raises(ContractError):
             graphos.init_server_storage(graph, values)
 
-    def test_updates_and_queries_reject_contract_violations_before_any_io(self, client):
-        graphos = _make(client, 2, max_deg=1)
+    def test_contract_violations_raise_before_any_round(self, client):
+        graphos = _make(client, 2, max_degree=1)
         graphos.init_server_storage({0: [], 1: []})
         with pytest.raises(ContractError):
             graphos.insert(2, b"x", [])
@@ -285,23 +286,23 @@ def _request_trace(client, run, *args):
     return trace
 
 
-def _value_leaves_read(client, graphos, run, *args):
-    requested = []
+def _value_tree_reads(client, graphos, run, *args):
+    reads = []
     original = client.add_read_path
 
     def record(label, leaves):
         leaves = list(leaves)
-        if label == graphos._store.name:
-            requested.extend(leaves)
+        if label == graphos._value_tree.name:
+            reads.append(leaves)
         original(label, leaves)
 
     client.add_read_path = record
     run(*args)
     client.add_read_path = original
-    return requested
+    return reads
 
 
-class TestGraphOsObliviousness:
+class TestGraphOSObliviousness:
     """A query's sequence of (tree, paths requested) depends only on its type, never on the degrees it meets."""
 
     GRAPH = {0: [1, 2, 3], 1: [0, 4], 2: [0], 3: [0], 4: [1], 5: []}
@@ -353,7 +354,7 @@ class TestGraphOsObliviousness:
         assert all(trace == traces[0] for trace in traces)
 
     @pytest.mark.parametrize(
-        "update",
+        "op",
         [
             lambda g: g.neighbor_values([7]),
             lambda g: g.insert(9, b"v", []),
@@ -361,11 +362,10 @@ class TestGraphOsObliviousness:
         ],
         ids=["fetch", "add", "remove"],
     )
-    def test_padding_slots_read_fresh_random_leaves(self, monkeypatch, update):
+    def test_an_all_padding_read_draws_fresh_leaves(self, monkeypatch, op):
         monkeypatch.setattr(secrets, "randbelow", random.Random(5).randrange)
-        reads = []
+        last_reads = []
         for _ in range(20):
             client, graphos = self._graphos(num_vertices=64)
-            reads.append(_value_leaves_read(client, graphos, update, graphos))
-        first_reads = [leaves[0] for leaves in reads]
-        assert len(set(first_reads)) > len(first_reads) // 2
+            last_reads.append(_value_tree_reads(client, graphos, op, graphos)[-1][0])
+        assert len(set(last_reads)) > len(last_reads) // 2

@@ -15,7 +15,7 @@ from oblivlib.dependency import (
 
 _ORAM: dict[str, Any] = {"num_data": 16, "data_size": 10}
 _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
-_GRAPH: dict[str, Any] = {"num_vertices": 4, "max_deg": 2, "data_size": 8}
+_GRAPH: dict[str, Any] = {"num_data": 4, "max_degree": 2, "data_size": 8}
 
 
 @pytest.mark.parametrize(
@@ -51,10 +51,8 @@ _GRAPH: dict[str, Any] = {"num_vertices": 4, "max_deg": 2, "data_size": 8}
         (AvlOmapConfig, _OMAP, {"paths_per_round": 2}, "paths_per_round"),
         (AvlOmapConfig, {**_OMAP, "cached": True}, {"delete_budget": AccessBudget(1, 9)}, r"a must be >= 3/2"),
         (AvlOmapConfig, _OMAP, {"batch_size": 0}, "batch_size must be >= 1"),
-        (GraphOsConfig, _GRAPH, {"num_vertices": 0}, "num_vertices"),
-        (GraphOsConfig, _GRAPH, {"max_deg": 0}, "max_deg"),
-        (GraphOsConfig, _GRAPH, {"max_deg": 4}, "max_deg must be >= 1 and below num_vertices"),
-        (GraphOsConfig, _GRAPH, {"data_size": -1}, "data_size"),
+        (GraphOsConfig, _GRAPH, {"max_degree": 0}, "max_degree"),
+        (GraphOsConfig, _GRAPH, {"max_degree": 4}, "max_degree must be >= 1 and below num_data"),
         (AvlOmapConfig, _OMAP, {"batch_size": 17}, "exceeds the 16 leaves"),
     ],
 )
