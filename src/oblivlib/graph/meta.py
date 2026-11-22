@@ -3,9 +3,9 @@ from collections.abc import Callable, Iterable
 from decimal import Decimal, localcontext
 from typing import override
 
-from oblivlib.dependency import Data, PathData
-from oblivlib.dependency.config import OramConfig
-from oblivlib.dependency.tree_storage_base import KeyedStore
+from oblivlib.dependency.config import GroveConfig
+from oblivlib.dependency.keyed_store import KeyedStore
+from oblivlib.dependency.types import KeyedBlock, PathData
 
 
 def overflow_probability(*, insertions: int, group: int, bucket_size: int, level: int, precision: int = 80) -> Decimal:
@@ -25,36 +25,38 @@ def overflow_probability(*, insertions: int, group: int, bucket_size: int, level
 
 
 def meta_bucket_size(*, insertions: int, group: int, level: int, security: int = 128) -> int:
+    bound = Decimal(2) ** (-security)
     bucket_size = group
-    while overflow_probability(insertions=insertions, group=group, bucket_size=bucket_size, level=level) > Decimal(
-        2
-    ) ** (-security):
+    while overflow_probability(insertions=insertions, group=group, bucket_size=bucket_size, level=level) > bound:
         bucket_size += 1
     return bucket_size
 
 
-class DupStore(KeyedStore):
-    def __init__(self, config: OramConfig, *, key_size: int):
+class DupStore(KeyedStore[GroveConfig]):
+    def __init__(self, config: GroveConfig, *, key_size: int):
         super().__init__(config, key_size=key_size)
-        self._counter = 0
+        self._counter: int = 0
 
     def rl_leaves(self, count: int) -> list[int]:
         bits = self._level - 1
-        leaves = []
+        leaves: list[int] = []
         for _ in range(count):
-            leaves.append(int(format(self._counter, f"0{bits}b")[::-1], 2) if bits else 0)
-            self._counter = (self._counter + 1) % self._leaf_range
+            leaves.append(int(format(self._counter, f"0{bits}b")[::-1], 2))
+            self._counter = (self._counter + 1) % self.leaf_range
         return leaves
 
-    def add(self, blocks: Iterable[Data]) -> None:
-        fresh: dict[bytes, Data] = {}
-        for block in blocks:
-            fresh.setdefault(block.key, block)
-        self._stash = [*fresh.values(), *(block for block in self._stash if block.key not in fresh)]
+    def read_rl(self, count: int) -> None:
+        self._read_paths(self.rl_leaves(count))
+
+    @override
+    def add(self, blocks: Iterable[KeyedBlock]) -> None:
+        fresh = list(blocks)
+        keys = {block.key for block in fresh}
+        self._stash[:] = [*fresh, *(block for block in self._stash if block.key not in keys)]
         self._check_stash()
 
     @override
-    def _absorb(self, path: PathData) -> None:
+    def _absorb(self, path: PathData[KeyedBlock]) -> None:
         held = {block.key for block in self._stash}
         for index in sorted(path):
             for block in path[index]:
@@ -63,9 +65,9 @@ class DupStore(KeyedStore):
                     self._stash.append(block)
         self._check_stash()
 
-    def take(self, wanted: Callable[[bytes], bool], leaf: int) -> list[Data]:
+    def take_at(self, leaf: int, wanted: Callable[[bytes], bool]) -> list[KeyedBlock]:
         taken = [block for block in self._stash if block.leaf == leaf and wanted(block.key)]
         if taken:
             gone = {id(block) for block in taken}
-            self._stash = [block for block in self._stash if id(block) not in gone]
+            self._stash[:] = [block for block in self._stash if id(block) not in gone]
         return taken

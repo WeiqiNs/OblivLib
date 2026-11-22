@@ -9,6 +9,7 @@ from oblivlib.dependency import (
     DaOramConfig,
     FreecursiveOramConfig,
     GraphOsConfig,
+    GroveConfig,
     PathOramConfig,
     RecursiveOramConfig,
 )
@@ -53,6 +54,10 @@ _GRAPH: dict[str, Any] = {"num_data": 4, "max_degree": 2, "data_size": 8}
         (AvlOmapConfig, _OMAP, {"batch_size": 0}, "batch_size must be >= 1"),
         (GraphOsConfig, _GRAPH, {"max_degree": 0}, "max_degree"),
         (GraphOsConfig, _GRAPH, {"max_degree": 4}, "max_degree must be >= 1 and below num_data"),
+        (GroveConfig, _GRAPH, {"max_degree": 0}, "max_degree"),
+        (GroveConfig, _GRAPH, {"paths_per_round": 2}, "paths_per_round"),
+        (GroveConfig, _GRAPH, {"num_rounds": 0}, "num_rounds"),
+        (GroveConfig, _GRAPH, {"meta_bucket_size": 0}, "meta_bucket_size"),
         (AvlOmapConfig, _OMAP, {"batch_size": 17}, "exceeds the 16 leaves"),
     ],
 )

@@ -331,11 +331,10 @@ class GroupOmapConfig(OmapConfig):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GraphOsConfig(OramConfig):
+class GraphConfig(OramConfig):
     """``num_data``: the most vertices the graph may hold. ``max_degree``: the most neighbors a vertex may
     have; every query pads to it. ``data_size``: the most bytes a vertex value may hold."""
 
-    name: str = field(default_factory=unique_name("graphos"))
     max_degree: int
 
     def __post_init__(self) -> None:
@@ -346,6 +345,11 @@ class GraphOsConfig(OramConfig):
                 + f"got {self.max_degree}."
             )
 
+
+@dataclass(frozen=True, kw_only=True)
+class GraphOsConfig(GraphConfig):
+    name: str = field(default_factory=unique_name("graphos"))
+
     @property
     def batch_size(self) -> int:
         return 2 * self.max_degree + 1
@@ -353,3 +357,30 @@ class GraphOsConfig(OramConfig):
     @property
     def num_entries(self) -> int:
         return self.num_data * self.batch_size
+
+
+@dataclass(frozen=True, kw_only=True)
+class GroveConfig(GraphConfig):
+    """``paths_per_round``: the most graph-tree paths one round reads, default ``max(K + 1, K * K)``.
+    ``num_rounds``: the rounds that write the graph meta tree over the structure's life (every graph-tree
+    round, plus the meta round after each insert and delete), which sizes the meta buckets by the overflow
+    bound; ``meta_bucket_size`` overrides that bound (a smaller value trades overflow probability for
+    bandwidth)."""
+
+    name: str = field(default_factory=unique_name("grove"))
+    paths_per_round: int = 0
+    num_rounds: int = 1 << 20
+    meta_bucket_size: int | None = None
+
+    @property
+    def round_width(self) -> int:
+        return self.paths_per_round or max(self.max_degree + 1, self.max_degree * self.max_degree)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.round_width < self.max_degree + 1:
+            raise ValueError(f"paths_per_round must be >= max_degree + 1, got {self.paths_per_round}.")
+        if self.num_rounds < 1:
+            raise ValueError(f"num_rounds must be >= 1, got {self.num_rounds}.")
+        if self.meta_bucket_size is not None and self.meta_bucket_size < 1:
+            raise ValueError(f"meta_bucket_size must be >= 1, got {self.meta_bucket_size}.")

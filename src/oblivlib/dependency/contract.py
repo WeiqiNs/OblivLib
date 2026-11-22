@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from oblivlib.dependency.errors import ContractError
 
@@ -33,6 +33,41 @@ def require_omap_pair(
 def require_room(owner: str, *, held: int, fresh: int, capacity: int) -> None:
     if held + fresh > capacity:
         raise ContractError(f"{owner}: {held} held and {fresh} more exceed num_data={capacity}.")
+
+
+def require_vertex(owner: str, vertex: object) -> None:
+    require_oram_key(owner, vertex, 1 << 64)
+
+
+def require_neighbors(owner: str, vertex: int, neighbors: Sequence[int], max_degree: int) -> None:
+    for neighbor in neighbors:
+        require_vertex(owner, neighbor)
+    if len(neighbors) > max_degree:
+        raise ContractError(f"{owner}: vertex {vertex} has {len(neighbors)} neighbors, max_degree is {max_degree}.")
+    if len(set(neighbors)) != len(neighbors):
+        raise ContractError(f"{owner}: vertex {vertex} lists a neighbor twice.")
+    if vertex in neighbors:
+        raise ContractError(f"{owner}: vertex {vertex} lists itself as a neighbor.")
+
+
+def require_graph(
+    owner: str,
+    graph: Mapping[int, Sequence[int]],
+    values: Mapping[int, bytes],
+    *,
+    capacity: int,
+    max_degree: int,
+    data_size: int,
+) -> None:
+    require_room(owner, held=0, fresh=len(graph), capacity=capacity)
+    for vertex, neighbors in graph.items():
+        require_vertex(owner, vertex)
+        require_neighbors(owner, vertex, neighbors, max_degree)
+        for neighbor in neighbors:
+            if vertex not in graph.get(neighbor, ()):
+                raise ContractError(f"{owner}: edge ({vertex}, {neighbor}) is not listed both ways.")
+    for value in values.values():
+        require_value(owner, value, data_size)
 
 
 def require_omap_init(owner: str, pairs: Iterable[tuple[object, object]], *, key_size: int, data_size: int) -> None:

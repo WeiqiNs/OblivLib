@@ -1,5 +1,3 @@
-"""Tests for GraphOS: an undirected graph whose entries live in a keyed value tree, located through an AVL OMAP."""
-
 import random
 import secrets
 from typing import Any
@@ -40,7 +38,6 @@ def _within(graph, start, hops):
 
 
 def _assert_matches_model(graphos, graph, values, read_all_blocks, duplicate_blocks):
-    """Every stored entry is exactly the V/E/P encoding of the model, and its OMAP leaf points at it."""
     assert duplicate_blocks(graphos) == {}
     store = graphos._value_tree
     stored = {block.key: block for block in read_all_blocks(store) + store._stash if block.key is not None}
@@ -91,7 +88,6 @@ def _dfs_order(adjacency, source):
 
 @pytest.fixture
 def stored_adjacency(read_all_blocks):
-    """Each vertex's neighbors in the order the E entries hold them, which deletes reorder."""
 
     def read(graphos):
         store = graphos._value_tree
@@ -295,8 +291,6 @@ def _value_tree_reads(client, graphos, run, *args):
 
 
 class TestGraphOSObliviousness:
-    """A query's sequence of (tree, paths requested) depends only on its type, never on the degrees it meets."""
-
     GRAPH = {0: [1, 2, 3], 1: [0, 4], 2: [0], 3: [0], 4: [1], 5: []}
 
     def _graphos(self, num_vertices=10):

@@ -1,5 +1,3 @@
-"""Shared helpers for the graph tests."""
-
 import pytest
 
 
@@ -33,5 +31,4 @@ def _dfs_order(adjacency, source):
 
 @pytest.fixture
 def reference_orders():
-    """Plain BFS and DFS (recursive preorder) over an adjacency dict, as ``(bfs_order, dfs_order)``."""
     return _bfs_order, _dfs_order

@@ -136,7 +136,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
 
     def drain(self) -> None:
         for _ in range(-(-self._carry_limit // self._widest_round)):
-            self._read_paths(self._padded_leaves([], self._widest_round))
+            self._read_paths(self.padded_leaves([], self._widest_round))
             self._write_paths()
 
     @property
@@ -175,7 +175,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
 
     def _start_round(self, leaves: Iterable[int]) -> None:
         assert self._op_rounds < self._budget, "an op needed more rounds than its proven budget"
-        self._read_paths(self._padded_leaves(leaves, self._round_width(self._op_rounds)))
+        self._read_paths(self.padded_leaves(leaves, self._round_width(self._op_rounds)))
         self._op_rounds += 1
 
     def _fetch_nodes(self, requests: Sequence[tuple[KeyT, int]]) -> None:

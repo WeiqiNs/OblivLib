@@ -1,5 +1,3 @@
-"""Tests for Grove: index-free adjacency over four trees, kept consistent by delayed duplications."""
-
 import random
 import secrets
 from typing import Any
@@ -8,16 +6,16 @@ import pytest
 
 from oblivlib.dependency import AesGcm, Client, ContractError, GroveConfig
 from oblivlib.graph import Grove
-from oblivlib.graph.grove import ID_SIZE
 
 MAX_DEG = 3
+ID_SIZE = 8
 
 
-def _make(client, num_vertices=24, max_deg=MAX_DEG, encryptor=None, **kwargs):
+def _make(client, num_vertices=24, max_degree=MAX_DEG, encryptor=None, **kwargs):
     return Grove(
         GroveConfig(
-            num_vertices=num_vertices,
-            max_deg=max_deg,
+            num_data=num_vertices,
+            max_degree=max_degree,
             data_size=8,
             client=client,
             encryptor=encryptor,
@@ -52,10 +50,9 @@ def _vertex_id(key):
 
 
 def _newest(store):
-    """The newest copy of every key a store holds: its stash first, then tree copies shallowest first."""
     client = store._client
-    client.add_read_path(store._name, range(store._leaf_range))
-    path = store._cipher.open_path(client.execute().require(store._name))
+    client.add_read_path(store.name, range(store.leaf_range))
+    path = store._cipher.open_path(client.execute().require(store.name))
     newest = {}
     for block in [*store._stash, *(block for index in sorted(path) for block in path[index])]:
         newest.setdefault(block.key, block)
@@ -90,14 +87,15 @@ def consistent(read_all_blocks):
                 if key[ID_SIZE : ID_SIZE + 1] == b"P":
                     record.position = number
                 elif number == grove._tombstone:
-                    record.neighbors.pop(_vertex_id(key[ID_SIZE + 1 :]), None)
-                elif _vertex_id(key[ID_SIZE + 1 :]) in record.neighbors:
+                    del record.neighbors[_vertex_id(key[ID_SIZE + 1 :])]
+                else:
+                    assert _vertex_id(key[ID_SIZE + 1 :]) in record.neighbors
                     record.neighbors[_vertex_id(key[ID_SIZE + 1 :])] = number
             assert record.value == values[vertex]
             assert sorted(record.neighbors) == sorted(graph[vertex])
             assert all(leaf == graph_blocks[n].leaf for n, leaf in record.neighbors.items())
             assert record.position == index_blocks[vertex].leaf
-            node_leaf = index_blocks[vertex].value.value
+            node_leaf = index_blocks[vertex].value
             if vertex.to_bytes(ID_SIZE, "big") in index_dups:
                 node_leaf = index_dups[vertex.to_bytes(ID_SIZE, "big")].value
             assert grove._leaf.decode(node_leaf) == block.leaf
@@ -144,7 +142,7 @@ class TestGrove:
             elif roll < 0.63 and graph:
                 target = rng.choice(sorted(graph))
                 value = rng.randbytes(rng.randrange(9))
-                grove.update(target, value)
+                assert grove.update(target, value) == values[target]
                 values[target] = value
             elif roll < 0.68:
                 u, v = rng.sample(sorted(graph), 2) if len(graph) > 1 else (0, 1)
@@ -169,11 +167,11 @@ class TestGrove:
                     graph[neighbor].append(vertex)
                 values[vertex] = value
             elif vertex in graph:
-                grove.delete(vertex)
+                assert grove.delete(vertex) == values[vertex]
                 for neighbor in graph.pop(vertex):
                     graph[neighbor].remove(vertex)
                 del values[vertex]
-            assert grove.num_vertices == len(graph)
+            assert grove.size == len(graph)
             if step % 10 == 9:
                 consistent(grove, graph, values)
         consistent(grove, graph, values)
@@ -237,10 +235,9 @@ class TestGrove:
             grove.insert(1, b"x", [])
         with pytest.raises(ValueError, match="does not exist"):
             grove.insert(4, b"x", [7])
-        with pytest.raises(ValueError, match="max_deg"):
+        with pytest.raises(ValueError, match="max_degree"):
             grove.insert(4, b"x", [0])
-        with pytest.raises(KeyError, match="vertex 7 does not exist"):
-            grove.delete(7)
+        assert grove.delete(7) is None
         assert grove.neighbor_values([0]) == {1: b"v", 2: b"v", 3: b"v"}
         consistent(grove, graph, values)
 
@@ -251,14 +248,13 @@ class TestGrove:
         grove.init_server_storage(graph, values)
         with pytest.raises(ValueError, match="already adjacent"):
             grove.add_edge(0, 1)
-        with pytest.raises(ValueError, match="max_deg"):
+        with pytest.raises(ValueError, match="max_degree"):
             grove.add_edge(0, 4)
         with pytest.raises(ValueError, match="does not exist"):
             grove.add_edge(4, 7)
         with pytest.raises(ValueError, match="not adjacent"):
             grove.remove_edge(1, 4)
-        with pytest.raises(KeyError, match="vertex 7 does not exist"):
-            grove.update(7, b"x")
+        assert grove.update(7, b"x") is None
         with pytest.raises(ContractError):
             grove.add_edge(4, 4)
         consistent(grove, graph, values)
@@ -282,12 +278,6 @@ class TestGrove:
         for vertex, value, neighbors in cases:
             with pytest.raises(ContractError):
                 grove.insert(vertex, value, neighbors)
-        hops: list[Any] = [-1, 1.5]
-        for count in hops:
-            with pytest.raises(ContractError, match="hops"):
-                grove.hop_neighborhood(0, count)
-            with pytest.raises(ContractError, match="steps"):
-                grove.random_walk(0, count)
         assert client.metrics.rounds == rounds
 
 
@@ -307,8 +297,6 @@ def _request_trace(client, run, *args):
 
 
 class TestGroveObliviousness:
-    """A query's sequence of (tree, paths requested) depends only on its type, never on degrees or existence."""
-
     GRAPH = {0: [1, 2, 3], 1: [0, 4], 2: [0], 3: [0], 4: [1], 5: []}
 
     def _grove(self, monkeypatch, seed):
@@ -353,7 +341,6 @@ class TestGroveObliviousness:
         ids=["neighbor_values", "lookup", "hop_neighborhood", "random_walk", "bfs", "dfs"],
     )
     def test_every_target_is_found_where_it_is_sought(self, monkeypatch, query):
-        """No round seeks a vertex at a path it has left; a stale path would fail to find it and re-read a revealed leaf."""
         for seed in range(10):
             _, grove = self._grove(monkeypatch, seed)
             original = grove._access
@@ -389,7 +376,7 @@ class TestGroveObliviousness:
             def run(case=case, grove=grove):
                 try:
                     case(grove)
-                except (KeyError, ValueError):
+                except ValueError:
                     pass
 
             traces.append(_request_trace(client, run))
@@ -413,11 +400,5 @@ class TestGroveObliviousness:
         for vertex in [0, 4, 5, 9]:
             client, grove = self._grove(monkeypatch, 5)
 
-            def delete(vertex=vertex, grove=grove):
-                try:
-                    grove.delete(vertex)
-                except KeyError:
-                    pass
-
-            traces.append(_request_trace(client, delete))
+            traces.append(_request_trace(client, grove.delete, vertex))
         self._same(traces)

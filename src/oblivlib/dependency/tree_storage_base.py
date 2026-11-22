@@ -1,10 +1,11 @@
 import secrets
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from functools import cached_property
 from pathlib import Path
+from typing import Protocol
 
-from oblivlib.dependency.client import Client
+from oblivlib.dependency.client import Client, ExecuteResult
 from oblivlib.dependency.config import OramConfig
 from oblivlib.dependency.crypto import Encryptor
 from oblivlib.dependency.errors import StashOverflowError
@@ -17,6 +18,20 @@ from oblivlib.dependency.types import Block, PathData
 
 def leaf_field(num_data: int) -> UInt:
     return UInt.covering(leaf_count(num_data) - 1)
+
+
+class PathReader(Protocol):
+    def stage_read(self, leaves: list[int]) -> None: ...
+
+    def finish_read(self, result: ExecuteResult) -> None: ...
+
+
+def read_together(client: Client, reads: Sequence[tuple[PathReader, list[int]]]) -> None:
+    for store, leaves in reads:
+        store.stage_read(leaves)
+    result = client.execute()
+    for store, _ in reads:
+        store.finish_read(result)
 
 
 class TreeStorageBase[ConfigT: OramConfig, BlockT: Block[object]](ABC):
@@ -94,7 +109,7 @@ class TreeStorageBase[ConfigT: OramConfig, BlockT: Block[object]](ABC):
         assert found, f"key {key!r} is not in the stash"
         return found[0]
 
-    def _padded_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
+    def padded_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
         paths = set(leaves)
         assert len(paths) <= width
         while len(paths) < width:
@@ -119,17 +134,22 @@ class TreeStorageBase[ConfigT: OramConfig, BlockT: Block[object]](ABC):
         self._stash = remaining
         self._unwritten_leaves = []
 
-    def _open_paths(self, leaves: list[int]) -> PathData[BlockT]:
+    def stage_read(self, leaves: list[int]) -> None:
         self._stage_write_back()
         self._client.add_read_path(label=self.name, leaves=leaves)
-        path = self._cipher.open_path(self._client.execute().require(self.name))
         self._unwritten_leaves = list(leaves)
-        return path
 
-    def _read_paths(self, leaves: list[int]) -> None:
-        for bucket in self._open_paths(leaves).values():
+    def finish_read(self, result: ExecuteResult) -> None:
+        self._absorb(self._cipher.open_path(result.require(self.name)))
+
+    def _absorb(self, path: PathData[BlockT]) -> None:
+        for bucket in path.values():
             self._stash.extend(bucket)
         self._check_stash()
+
+    def _read_paths(self, leaves: list[int]) -> None:
+        self.stage_read(leaves)
+        self.finish_read(self._client.execute())
 
     def _write_paths(self) -> None:
         self._stage_write_back()

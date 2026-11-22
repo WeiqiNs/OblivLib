@@ -49,6 +49,8 @@ same number of rounds as one key, each round reading up to `k` paths.
 
 - [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf), over a batched AVL OMAP and a keyed value tree:
   [`graphos.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/graphos.py)
+- Grove (index-free adjacency with delayed duplication), over an AVL OMAP index, a graph tree and two meta trees:
+  [`grove.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/grove.py), [`meta.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/meta.py)
 
 ## Installation
 
