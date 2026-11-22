@@ -3,34 +3,28 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cached_property
 from typing import override
 
-from oblivlib.dependency import ContractError, KVPair
-from oblivlib.dependency.balls_into_bins import max_bin_load
+from oblivlib.dependency import ContractError
 from oblivlib.dependency.config import ODS_OPS, OdsOp, TreeOmapConfig
 from oblivlib.dependency.contract import require_batch, require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.layout import Field, Optional, Pair
-from oblivlib.dependency.tree_storage_base import TreeStorageBase
+from oblivlib.dependency.tree_storage_base import TreeStorageBase, leaf_field
 from oblivlib.dependency.types import Block
 from oblivlib.omap.base_omap import BaseOmap, KvList
 
 type Root[K] = tuple[K, int]
 
 
-class _LocalNodes[KeyT, NodeT]:
+class LocalNodes[KeyT, NodeT]:
     def __init__(self) -> None:
         self.nodes: dict[KeyT, NodeT] = {}
-        self.parent_of: dict[KeyT, KeyT | None] = {}
-        self.root_key: KeyT | None = None
         self.path: list[KeyT] = []
 
     def __len__(self) -> int:
         return len(self.nodes)
 
-    def add(self, key: KeyT, node: NodeT, parent_key: KeyT | None = None) -> None:
+    def add(self, key: KeyT, node: NodeT) -> None:
         self.nodes[key] = node
-        self.parent_of[key] = parent_key
         self.path.append(key)
-        if parent_key is None:
-            self.root_key = key
 
     def keep(self, key: KeyT, node: NodeT) -> None:
         self.nodes[key] = node
@@ -44,26 +38,12 @@ class _LocalNodes[KeyT, NodeT]:
             raise KeyError(f"Node {key} is not loaded in local.")
         return node
 
-    def get_parent(self, key: KeyT) -> NodeT | None:
-        parent_key = self.parent_of.get(key)
-        return self.nodes.get(parent_key) if parent_key is not None else None
-
-    def get_parent_key(self, key: KeyT) -> KeyT | None:
-        return self.parent_of.get(key)
-
-    def get_root(self) -> NodeT | None:
-        return self.nodes.get(self.root_key) if self.root_key is not None else None
-
     def to_list(self) -> list[NodeT]:
         return list(self.nodes.values())
 
     def remove(self, key: KeyT) -> None:
-        if self.nodes.pop(key, None) is not None:
-            _ = self.parent_of.pop(key, None)
-            if key in self.path:
-                self.path.remove(key)
-            if self.root_key == key:
-                self.root_key = None
+        if self.nodes.pop(key, None) is not None and key in self.path:
+            self.path.remove(key)
 
     def pop(self, key: KeyT) -> NodeT:
         node = self.require(key)
@@ -72,20 +52,17 @@ class _LocalNodes[KeyT, NodeT]:
 
     def clear(self) -> None:
         self.nodes.clear()
-        self.parent_of.clear()
-        self.root_key = None
         self.path.clear()
 
 
 class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
     TreeStorageBase[OmapConfigT, NodeT], BaseOmap, ABC
 ):
-    def __init__(self, config: OmapConfigT, *, num_trees: int = 1):
+    def __init__(self, config: OmapConfigT, *, height_keys: int | None = None):
         super().__init__(config)
 
-        self.root: Root[KeyT] | None = None
-        self._local: _LocalNodes[KeyT, NodeT] = _LocalNodes()
-        self._max_height: int = self._height_bound(self._num_data if num_trees == 1 else max_bin_load(num_trees))
+        self._root: Root[KeyT] | None = None
+        self._max_height: int = self._height_bound(self.num_data if height_keys is None else height_keys)
         self._budget: int = 0
         self._op_rounds: int = 0
         self._op_fetches: int = 0
@@ -95,8 +72,26 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
 
     @property
     @abstractmethod
-    def _key_field(self) -> Field[KeyT]:
+    def _local(self) -> LocalNodes[KeyT, NodeT]:
         raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def _key_field(cls, config: OmapConfigT) -> Field[KeyT]:
+        raise NotImplementedError
+
+    @classmethod
+    def root_layout(cls, config: OmapConfigT) -> Optional[Root[KeyT]]:
+        return Optional(Pair(cls._key_field(config), leaf_field(config.num_data)))
+
+    @property
+    def root(self) -> Root[KeyT] | None:
+        return self._root
+
+    def on_root[T](self, root: Root[KeyT] | None, op: Callable[[], T]) -> tuple[Root[KeyT] | None, T]:
+        self._root = root
+        result = op()
+        return self._root, result
 
     @property
     @abstractmethod
@@ -104,12 +99,8 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
         raise NotImplementedError
 
     @property
-    def _key_size(self) -> int:
-        return self._config.key_size
-
-    @property
     def key_size(self) -> int:
-        return self._key_size
+        return self._config.key_size
 
     @property
     def _distinguishable(self) -> bool:
@@ -119,17 +110,13 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
     def _height_bound(self, num_nodes: int) -> int:
         raise NotImplementedError
 
-    @cached_property
-    def root_layout(self) -> Optional[Root[KeyT]]:
-        return Optional(Pair(self._key_field, self._leaf_field))
-
     @property
     def _batch_size(self) -> int:
         return self._config.batch_size
 
     @property
     def _widest_round(self) -> int:
-        return min(self._config.paths_per_round * self._batch_size, self._leaf_range)
+        return min(self._config.paths_per_round * self._batch_size, self.leaf_range)
 
     @property
     def _carry_limit(self) -> int:
@@ -182,7 +169,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
 
     def _round_width(self, index: int) -> int:
         keys = self._descent_keys[index] if index < self._max_height else self._batch_size
-        return min(self._config.paths_per_round * keys, self._leaf_range)
+        return min(self._config.paths_per_round * keys, self.leaf_range)
 
     def _round_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
         paths = set(leaves)
@@ -196,28 +183,28 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
         self._read_paths(self._round_leaves(leaves, self._round_width(self._op_rounds)))
         self._op_rounds += 1
 
-    def _fetch_nodes(self, requests: Sequence[tuple[KeyT, int, KeyT | None]]) -> None:
-        self._start_round([leaf for _, leaf, _ in requests])
-        for key, _, parent_key in requests:
+    def _fetch_nodes(self, requests: Sequence[tuple[KeyT, int]]) -> None:
+        self._start_round([leaf for _, leaf in requests])
+        for key, _ in requests:
             node = self._require_in_stash(key)
             self._stash.remove(node)
-            self._local.add(key, node, parent_key)
+            self._local.add(key, node)
 
-    def _fetch_node(self, key: KeyT, leaf: int, parent_key: KeyT | None = None) -> None:
-        self._fetch_nodes([(key, leaf, parent_key)])
+    def _fetch_node(self, key: KeyT, leaf: int) -> None:
+        self._fetch_nodes([(key, leaf)])
 
     def _fetch_root(self) -> NodeT:
-        assert self.root is not None
-        key, leaf = self.root
+        assert self._root is not None
+        key, leaf = self._root
         self._fetch_node(key=key, leaf=leaf)
         node = self._local.require(key)
         node.leaf = self._get_new_leaf()
-        self.root = (key, node.leaf)
+        self._root = (key, node.leaf)
         return node
 
-    def _fetch_rehomed(self, requests: Mapping[KeyT, tuple[int, KeyT | None, int]]) -> None:
-        self._fetch_nodes([(child_key, leaf, parent_key) for child_key, (leaf, parent_key, _) in requests.items()])
-        for child_key, (_, _, new_leaf) in requests.items():
+    def _fetch_rehomed(self, requests: Mapping[KeyT, tuple[int, int]]) -> None:
+        self._fetch_nodes([(child_key, leaf) for child_key, (leaf, _) in requests.items()])
+        for child_key, (_, new_leaf) in requests.items():
             self._local.require(child_key).leaf = new_leaf
 
     def _begin_op(self, op: OdsOp) -> None:
@@ -242,29 +229,25 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
             self._client.send_writes()
 
     @abstractmethod
-    def _build_ods_blocks(self, data: list[KVPair]) -> tuple[list[NodeT], Root[KeyT]]:
+    def _build_ods_blocks(self, data: KvList) -> tuple[list[NodeT], Root[KeyT]]:
         raise NotImplementedError
-
-    @staticmethod
-    def _normalize_pairs(data: KvList) -> list[KVPair]:
-        return [KVPair(key=pair[0], value=pair[1]) for pair in data]
 
     @override
     def init_server_storage(self, data: KvList | None = None) -> None:
-        self.root = self.init_mul_tree_server_storage([data or []])[0]
+        self._root = self.init_mul_tree_server_storage([data or []])[0]
 
     def init_mul_tree_server_storage(self, data_list: list[KvList] | None = None) -> list[Root[KeyT] | None]:
         blocks: list[NodeT] = []
         root_list: list[Root[KeyT] | None] = []
         every_pair = [pair for data in data_list or [] for pair in data]
-        require_omap_init(self._identity, every_pair, key_size=self._key_size, data_size=self._data_size)
+        require_omap_init(self._identity, every_pair, key_size=self.key_size, data_size=self.data_size)
         size = len(every_pair)
-        if size > self._num_data:
-            raise ContractError(f"{self._identity}: {size} initial keys exceed num_data={self._num_data}.")
+        if size > self.num_data:
+            raise ContractError(f"{self._identity}: {size} initial keys exceed num_data={self.num_data}.")
         for data in data_list or []:
             root: Root[KeyT] | None = None
             if data:
-                tree_blocks, root = self._build_ods_blocks(data=self._normalize_pairs(data))
+                tree_blocks, root = self._build_ods_blocks(data)
                 blocks.extend(tree_blocks)
             root_list.append(root)
         self._host_tree(self._build_tree(blocks))
@@ -273,9 +256,9 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
 
     def _require_pair(self, key: bytes | None, value: bytes | None, *, value_required: bool) -> None:
         if key is not None:
-            require_omap_key(self._identity, key, self._key_size)
+            require_omap_key(self._identity, key, self.key_size)
             if value_required or value is not None:
-                require_value(self._identity, value, self._data_size)
+                require_value(self._identity, value, self.data_size)
 
     @override
     def search(self, key: bytes | None, value: bytes | None = None) -> bytes | None:
@@ -303,7 +286,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
         self._begin_op("search")
         results: list[bytes | None] = [None] * len(pairs)
         lanes = [(lane, key, value) for lane, (key, value) in enumerate(pairs) if key is not None]
-        if not lanes or self.root is None:
+        if not lanes or self._root is None:
             self._finish_op()
             return results
 
@@ -326,14 +309,14 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
     def _swap_value(self, node: NodeT, key: bytes, value: bytes | None) -> bytes | None:
         raise NotImplementedError
 
-    def _require_room(self, fresh: int) -> None:
-        if self._size + fresh > self._num_data:
+    def require_room(self, fresh: int) -> None:
+        if self._size + fresh > self.num_data:
             raise ContractError(
-                f"{self._identity}: the map already holds {self._size} of num_data={self._num_data} keys."
+                f"{self._identity}: the map already holds {self._size} of num_data={self.num_data} keys."
             )
 
     def _insert_counted(self, pairs: Sequence[tuple[bytes, bytes]]) -> None:
-        self._require_room(len(pairs))
+        self.require_room(len(pairs))
         self._insert_many(pairs)
         self._size += len(pairs)
 
@@ -343,7 +326,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
 
     def delete(self, key: bytes | None) -> bytes | None:
         if key is not None:
-            require_omap_key(self._identity, key, self._key_size)
+            require_omap_key(self._identity, key, self.key_size)
         deleted = self._delete_key(key)
         if deleted is not None:
             self._size -= 1

@@ -120,11 +120,13 @@ class TestOmapBehavior:
         with pytest.raises(ContractError, match=f"{ods_spec.name} '.*given twice"):
             omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"1", b"b")]])
 
-        roots = omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"2", b"b")]])
-        omap.root = roots[1]
-        assert [omap.search(key=b"1"), omap.search(key=b"2")] == [None, b"b"]
-        omap.root = roots[0]
-        assert [omap.search(key=b"1"), omap.search(key=b"2")] == [b"a", None]
+        first, second = omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"2", b"b")]])
+
+        def search_both():
+            return [omap.search(key=b"1"), omap.search(key=b"2")]
+
+        assert omap.on_root(second, search_both)[1] == [None, b"b"]
+        assert omap.on_root(first, search_both)[1] == [b"a", None]
 
     def test_operations_match_a_dict_model(self, omap_spec, client, duplicate_blocks):
         rng = random.Random(2024)
@@ -366,9 +368,10 @@ def test_composed_map_slots_are_sized_from_their_declared_layouts(client):
     bplus = BPlusOmapConfig(order=3, client=client, **_ROW_LAYOUT_CONFIG)
     assert (OramOstOmap.oram_data_size(AVLOmap, avl), OramOstOmap.oram_data_size(BPlusOmap, bplus)) == (11, 10)
 
-    upper_size = GroupOmap.upper_oram_data_size(num_data=64)
+    config = GroupOmapConfig(client=client, **_ROW_LAYOUT_CONFIG)
+    upper_size = GroupOmap.upper_oram_data_size(config)
     upper = PathOram(PathOramConfig(num_data=64, data_size=upper_size, client=client, encryptor=AesGcm()))
-    group = GroupOmap(GroupOmapConfig(client=client, **_ROW_LAYOUT_CONFIG), upper_oram=upper)
+    group = GroupOmap(config, upper_oram=upper)
     assert (upper_size, upper._cipher.row_bytes, group._lower_oram._cipher.row_bytes) == (33, 173, 137)
     group.init_server_storage([(b"%08d" % i, b"\xff" * 16) for i in range(32)])
     assert group.search(b"%08d" % 3) == b"\xff" * 16

@@ -12,7 +12,6 @@ from oblivlib.dependency import (
     BPlusOmapConfig,
     DaOramConfig,
     GroupOmapConfig,
-    OramOstOmapConfig,
     PathOramConfig,
     RecursiveOramConfig,
 )
@@ -39,8 +38,8 @@ class ReadCounter:
 
 def _read_all_blocks(scheme):
     client = scheme._client
-    client.add_read_path(scheme._name, range(scheme._leaf_range))
-    path = scheme._cipher.open_path(client.execute().require(scheme._name))
+    client.add_read_path(scheme.name, range(scheme.leaf_range))
+    path = scheme._cipher.open_path(client.execute().require(scheme.name))
     return [data for bucket in path.values() for data in bucket]
 
 
@@ -150,10 +149,10 @@ class OmapSpec:
     @staticmethod
     def exact_labels(omap) -> set[str]:
         if isinstance(omap, OramOstOmap):
-            return {omap._ost._name}
+            return {omap._ost.name}
         if isinstance(omap, GroupOmap):
-            return {omap._lower_oram._name}
-        return {omap._name}
+            return {omap._lower_oram.name}
+        return {omap.name}
 
 
 def _ods_builder(cls, config_cls, extra):
@@ -179,21 +178,21 @@ def _ost_builder(ods_cls, ods_config_cls, extra, oram_kind):
             encryptor=encryptor,
             build_file=_upper_build_file(build_file),
         )
-        return OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=ods_cls, ost_config=ost, oram=oram)
+        return OramOstOmap(ost=ods_cls, ost_config=ost, oram=oram)
 
     return build
 
 
 def _group_builder(oram_kind):
     def build(*, client, num_data, encryptor=None, build_file=None, **kw):
+        config = GroupOmapConfig(num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **kw)
         upper = ORAM_MAKERS[oram_kind](
             num_data=num_data,
-            data_size=GroupOmap.upper_oram_data_size(num_data),
+            data_size=GroupOmap.upper_oram_data_size(config),
             client=client,
             encryptor=encryptor,
             build_file=_upper_build_file(build_file),
         )
-        config = GroupOmapConfig(num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **kw)
         return GroupOmap(config, upper_oram=upper)
 
     return build

@@ -1,13 +1,14 @@
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import override
 
-from oblivlib.dependency import InitData, PosMap
+from oblivlib.dependency import PosMap
 from oblivlib.dependency.config import RecursiveOramConfig
-from oblivlib.dependency.layout import Array, Field, Record, UInt
+from oblivlib.dependency.layout import Array, Col, Field, Record, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.dependency.types import Unset
-from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_keys, pos_map_level_count
+from oblivlib.oram.tree_base_oram import PosMapLevel, TreeBaseOram, pos_map_keys, pos_map_level_count
 
 
 @dataclass
@@ -26,10 +27,17 @@ class _RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig, _PosMapBlock]):
     @override
     def _block_layout(self) -> Field[_PosMapBlock]:
         leaves = Array(UInt.covering(self._child_leaf_range - 1), self._config.compression_ratio)
-        return Record(_PosMapBlock, (UInt.covering(self._num_data - 1), self._leaf_field, leaves))
+        return Record(
+            _PosMapBlock,
+            [
+                Col(lambda block: block.key, UInt.covering(self.num_data - 1)),
+                Col(lambda block: block.leaf, self._leaf_field),
+                Col(lambda block: block.leaves, leaves),
+            ],
+        )
 
     def build_and_host(self, child_leaves: list[int]) -> list[int]:
-        leaves = [self._get_new_leaf() for _ in range(self._num_data)]
+        leaves = [self._get_new_leaf() for _ in range(self.num_data)]
         ratio = self._config.compression_ratio
         tree = self._build_tree(
             [
@@ -37,7 +45,7 @@ class _RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig, _PosMapBlock]):
                     key=key,
                     leaf=leaf,
                     leaves=[
-                        child_leaves[i] if i < len(child_leaves) else secrets.randbelow(self._num_data)
+                        child_leaves[i] if i < len(child_leaves) else secrets.randbelow(self.num_data)
                         for i in range(key * ratio, (key + 1) * ratio)
                     ],
                 )
@@ -57,14 +65,18 @@ class _RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig, _PosMapBlock]):
         return next_leaf
 
 
-class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, _RecursivePosMapLevel]):
+class RecursivePathOram(TreeBaseOram[RecursiveOramConfig]):
     def __init__(self, config: RecursiveOramConfig):
         if config.num_data <= config.on_chip_mem:
             raise ValueError(f"num_data ({config.num_data}) must be greater than on_chip_mem ({config.on_chip_mem}).")
         super().__init__(config)
 
-        self._pos_map: PosMap = {i: self._get_new_leaf() for i in range(self._num_data)}
+        self._pos_map: PosMap = {i: self._get_new_leaf() for i in range(self.num_data)}
         self._levels: list[_RecursivePosMapLevel] = self._make_levels()
+
+    @override
+    def _pos_map_levels(self) -> Sequence[PosMapLevel]:
+        return self._levels
 
     @property
     def _on_chip_mem(self) -> int:
@@ -76,16 +88,16 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, _RecursivePosMapLevel]
 
     def _make_levels(self) -> list[_RecursivePosMapLevel]:
         levels: list[_RecursivePosMapLevel] = []
-        size, child_leaf_range = self._num_data, self._leaf_range
-        count = pos_map_level_count(num_data=self._num_data, on_chip=self._on_chip_mem, ratio=self._compression_ratio)
+        size, child_leaf_range = self.num_data, self.leaf_range
+        count = pos_map_level_count(num_data=self.num_data, on_chip=self._on_chip_mem, ratio=self._compression_ratio)
         for i in range(count):
             size = -(-size // self._compression_ratio)
             level = _RecursivePosMapLevel(
-                replace(self._config, num_data=size, name=f"{self._name}_pos_map_{count - i - 1}"),
+                replace(self._config, num_data=size, name=f"{self.name}_pos_map_{count - i - 1}"),
                 child_leaf_range=child_leaf_range,
             )
             levels.append(level)
-            child_leaf_range = level._leaf_range
+            child_leaf_range = level.leaf_range
         levels.reverse()
         return levels
 
@@ -94,8 +106,7 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, _RecursivePosMapLevel]
         return self._pos_map[key]
 
     @override
-    def init_server_storage(self, data: InitData | None = None) -> None:
-        self._host_tree(self._build_tree(self._initial_blocks(data)))
+    def _host_levels(self) -> None:
         leaves = list(self._pos_map.values())
         for level in reversed(self._levels):
             leaves = level.build_and_host(leaves)
@@ -104,12 +115,12 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, _RecursivePosMapLevel]
     def _get_leaf_from_pos_map(self, key: int) -> tuple[int, int]:
         keys = pos_map_keys(key, ratio=self._compression_ratio, count=len(self._levels))
         top_key = keys[0][0]
-        cur_leaf, new_cur_leaf = self._pos_map[top_key], self._levels[0]._get_new_leaf()
+        cur_leaf, new_cur_leaf = self._pos_map[top_key], secrets.randbelow(self._levels[0].leaf_range)
         self._pos_map[top_key] = new_cur_leaf
 
-        children: list[_RecursivePosMapLevel | RecursivePathOram] = [*self._levels[1:], self]
-        for level, child, (cur_key, cur_index) in zip(self._levels, children, keys, strict=True):
-            new_next_leaf = child._get_new_leaf()
+        child_leaf_ranges = [*(level.leaf_range for level in self._levels[1:]), self.leaf_range]
+        for level, child_leaf_range, (cur_key, cur_index) in zip(self._levels, child_leaf_ranges, keys, strict=True):
+            new_next_leaf = secrets.randbelow(child_leaf_range)
             cur_leaf = level.access(
                 cur_key=cur_key,
                 cur_index=cur_index,

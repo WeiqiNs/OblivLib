@@ -5,7 +5,7 @@ import shutil
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, override
+from typing import Any, Literal, override
 
 import pytest
 
@@ -67,8 +67,8 @@ def _coalesce(shapes: list[AccessShape]) -> list[AccessShape]:
 
 def _read_all_blocks(storage):
     client = storage._client
-    client.add_read_path(storage._name, range(storage._leaf_range))
-    path = storage._cipher.open_path(client.execute().require(storage._name))
+    client.add_read_path(storage.name, range(storage.leaf_range))
+    path = storage._cipher.open_path(client.execute().require(storage.name))
     return [data for bucket in path.values() for data in bucket]
 
 
@@ -78,7 +78,8 @@ def _storages(scheme):
     if isinstance(scheme, GroupOmap):
         return [*_storages(scheme._upper_oram), scheme._lower_oram]
     if isinstance(scheme, TreeBaseOram):
-        return [scheme, *scheme._levels]
+        levels: list[Any] = list(scheme._pos_map_levels())
+        return [scheme, *levels]
     return [scheme]
 
 
@@ -89,7 +90,7 @@ def _duplicate_blocks(scheme):
         if isinstance(storage, OstBaseOmap):
             held += storage._local.to_list()
         counts = Counter(data.key for data in held)
-        duplicates.update({(storage._name, key): count for key, count in counts.items() if count > 1})
+        duplicates.update({(storage.name, key): count for key, count in counts.items() if count > 1})
     return duplicates
 
 

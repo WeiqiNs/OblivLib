@@ -25,12 +25,6 @@ class OramBlock:
     value: bytes
 
 
-@dataclass
-class KVPair:
-    key: bytes
-    value: bytes
-
-
 type Bucket[B] = list[B]
 type PathData[B] = dict[int, list[B]]
 PathRows = dict[int, bytes]

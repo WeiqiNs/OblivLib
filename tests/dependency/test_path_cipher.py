@@ -1,11 +1,18 @@
 import pytest
 
 from oblivlib.dependency import AesGcm, CapacityError, OramBlock, Recorder
-from oblivlib.dependency.layout import Bytes, Record, UInt
+from oblivlib.dependency.layout import Bytes, Col, Record, UInt
 from oblivlib.dependency.path_cipher import SealedPathCipher, make_path_cipher
 
 _DATA_SIZE = 16
-_BLOCK = Record(OramBlock, (UInt(6), UInt(6), Bytes(_DATA_SIZE)))
+_BLOCK = Record(
+    OramBlock,
+    [
+        Col(lambda block: block.key, UInt(6)),
+        Col(lambda block: block.leaf, UInt(6)),
+        Col(lambda block: block.value, Bytes(_DATA_SIZE)),
+    ],
+)
 
 
 def _blocks(count: int, value_size: int = _DATA_SIZE) -> list[OramBlock]:

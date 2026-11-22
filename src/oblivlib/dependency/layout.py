@@ -1,12 +1,8 @@
-import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Never, Protocol, override
+from typing import Protocol, override
 
 from oblivlib.dependency.errors import CapacityError
-
-if TYPE_CHECKING:
-    from _typeshed import DataclassInstance
 
 Buffer = bytes | bytearray | memoryview
 
@@ -239,22 +235,41 @@ class Pair[A, B](Field[tuple[A, B]]):
         return f"Pair({self._first!r}, {self._second!r})"
 
 
-class ErasedField(Protocol):
+class Column[T](Protocol):
     @property
     def size(self) -> int: ...
 
-    def write(self, value: Never, out: bytearray) -> None: ...
+    def write(self, block: T, out: bytearray) -> None: ...
 
     def read(self, data: Buffer, offset: int) -> tuple[object, int]: ...
 
 
-class Record[T: DataclassInstance](Field[T]):
-    def __init__(self, cls: type[T], fields: Sequence[ErasedField]):
-        self._names: list[str] = [field.name for field in dataclasses.fields(cls)]
+class Col[T, V]:
+    def __init__(self, get: Callable[[T], V], field: Field[V]):
+        self._get: Callable[[T], V] = get
+        self._field: Field[V] = field
+
+    @property
+    def size(self) -> int:
+        return self._field.size
+
+    def write(self, block: T, out: bytearray) -> None:
+        self._field.write(self._get(block), out)
+
+    def read(self, data: Buffer, offset: int) -> tuple[object, int]:
+        return self._field.read(data, offset)
+
+    @override
+    def __repr__(self) -> str:
+        return repr(self._field)
+
+
+class Record[T](Field[T]):
+    def __init__(self, cls: type[T], columns: Sequence[Column[T]]):
         self._cls: type[T] = cls
         self._build: Callable[..., T] = cls
-        self._fields: tuple[ErasedField, ...] = tuple(fields)
-        self._size: int = sum(field.size for field in self._fields)
+        self._columns: tuple[Column[T], ...] = tuple(columns)
+        self._size: int = sum(column.size for column in self._columns)
 
     @property
     @override
@@ -263,20 +278,20 @@ class Record[T: DataclassInstance](Field[T]):
 
     @override
     def write(self, value: T, out: bytearray) -> None:
-        for name, field in zip(self._names, self._fields, strict=True):
-            field.write(getattr(value, name), out)  # pyright: ignore[reportAny]
+        for column in self._columns:
+            column.write(value, out)
 
     @override
     def read(self, data: Buffer, offset: int) -> tuple[T, int]:
         values: list[object] = []
-        for field in self._fields:
-            item, offset = field.read(data, offset)
+        for column in self._columns:
+            item, offset = column.read(data, offset)
             values.append(item)
         return self._build(*values), offset
 
     @override
     def __repr__(self) -> str:
-        return f"Record({self._cls.__name__}, {list(self._fields)!r})"
+        return f"Record({self._cls.__name__}, {list(self._columns)!r})"
 
 
 class BitFields:

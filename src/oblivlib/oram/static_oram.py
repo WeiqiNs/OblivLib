@@ -1,22 +1,18 @@
 from typing import override
 
-from oblivlib.dependency import Blake2Prf, PosMap, PseudoRandomFunction
+from oblivlib.dependency import Blake2Prf
 from oblivlib.dependency.config import StaticOramConfig
 from oblivlib.dependency.types import Unset
-from oblivlib.oram.path_oram import PathOram
+from oblivlib.oram.tree_base_oram import TreeBaseOram
 
 
-class StaticOram(PathOram[StaticOramConfig]):
-    def __init__(self, config: StaticOramConfig, prf: PseudoRandomFunction | None = None):
+class StaticOram(TreeBaseOram[StaticOramConfig]):
+    def __init__(self, config: StaticOramConfig):
         super().__init__(config)
-        self._prf: PseudoRandomFunction = prf if prf else Blake2Prf()
-
-    @override
-    def _new_pos_map(self) -> PosMap:
-        return {}
+        self._prf: Blake2Prf = Blake2Prf(key=config.prf_key)
 
     def _get_path_number(self, key: int) -> int:
-        return self._prf.digest_mod_n(str(key).encode(), self._leaf_range)
+        return self._prf.digest_mod_n(str(key).encode(), self.leaf_range)
 
     @override
     def _initial_leaf(self, key: int) -> int:

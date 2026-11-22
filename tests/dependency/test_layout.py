@@ -7,6 +7,7 @@ from oblivlib.dependency.layout import (
     Array,
     BitFields,
     Bytes,
+    Col,
     FixedBytes,
     Optional,
     Pair,
@@ -14,6 +15,13 @@ from oblivlib.dependency.layout import (
     Seq,
     UInt,
 )
+
+
+def _oram_block_record(key, leaf, value):
+    return Record(
+        OramBlock,
+        [Col(lambda block: block.key, key), Col(lambda block: block.leaf, leaf), Col(lambda block: block.value, value)],
+    )
 
 
 @pytest.mark.parametrize(
@@ -32,17 +40,17 @@ from oblivlib.dependency.layout import (
         pytest.param(
             Record(
                 AVLNode,
-                (
-                    Bytes(2),
-                    UInt(6),
-                    Bytes(4),
-                    Optional(Bytes(2)),
-                    Optional(UInt(6)),
-                    UInt(8),
-                    Optional(Bytes(2)),
-                    Optional(UInt(6)),
-                    UInt(8),
-                ),
+                [
+                    Col(lambda node: node.key, Bytes(2)),
+                    Col(lambda node: node.leaf, UInt(6)),
+                    Col(lambda node: node.value, Bytes(4)),
+                    Col(lambda node: node.r_key, Optional(Bytes(2))),
+                    Col(lambda node: node.r_leaf, Optional(UInt(6))),
+                    Col(lambda node: node.r_height, UInt(8)),
+                    Col(lambda node: node.l_key, Optional(Bytes(2))),
+                    Col(lambda node: node.l_leaf, Optional(UInt(6))),
+                    Col(lambda node: node.l_height, UInt(8)),
+                ],
             ),
             AVLNode(
                 key=b"k", leaf=5, value=b"v", r_key=b"rk", r_leaf=3, r_height=2, l_key=None, l_leaf=None, l_height=0
@@ -58,7 +66,7 @@ def test_every_value_encodes_to_the_declared_size_and_round_trips(field, value):
 
 
 def test_a_record_writes_its_fields_in_declaration_order_and_rebuilds_the_block_without_touching_it():
-    layout = Record(OramBlock, (UInt(8), UInt(6), Bytes(4)))
+    layout = _oram_block_record(UInt(8), UInt(6), Bytes(4))
     block = OramBlock(key=200, leaf=63, value=b"abcd")
     assert layout.encode(block) == bytes([200, 63, 4]) + b"abcd"
     assert layout.decode(layout.encode(block)) == block
@@ -93,7 +101,7 @@ def test_a_value_that_does_not_fit_its_field_raises_capacity_error(field, value,
         pytest.param(Array(UInt(4), 2), "Array(UInt(4), 2)", id="array"),
         pytest.param(Seq(Bytes(2), 3), "Seq(Bytes(2), 3)", id="seq"),
         pytest.param(Pair(UInt(8), Bytes(1)), "Pair(UInt(8), Bytes(1))", id="pair"),
-        pytest.param(Record(OramBlock, (UInt(8), UInt(6), Bytes(4))), "Record(OramBlock, [", id="record-class"),
+        pytest.param(_oram_block_record(UInt(8), UInt(6), Bytes(4)), "Record(OramBlock, [", id="record-class"),
     ],
 )
 def test_a_row_of_the_wrong_length_names_its_layout(field, name):

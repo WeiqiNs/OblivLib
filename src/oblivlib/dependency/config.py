@@ -16,7 +16,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, get_args, override
 
-from oblivlib.dependency.heap_index import compute_level
+from oblivlib.dependency.heap_index import leaf_count
 
 if TYPE_CHECKING:
     from oblivlib.dependency.client import Client
@@ -82,36 +82,47 @@ class PathOramConfig(OramConfig):
 
 @dataclass(frozen=True, kw_only=True)
 class StaticOramConfig(OramConfig):
+    """``prf_key``: key of the PRF that fixes each key's leaf; random when ``None``."""
+
     name: str = field(default_factory=unique_name("so"))
+    prf_key: bytes | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class MulPathOramConfig(OramConfig):
-    """``stash_scale_multiplier`` multiplies ``stash_scale`` to absorb a batch of paths per access."""
-
     name: str = field(default_factory=unique_name("mul_path_oram"))
-    stash_scale_multiplier: int = 1
 
 
 @dataclass(frozen=True, kw_only=True)
-class RecursiveOramConfig(OramConfig):
-    """``on_chip_mem``: target size of the position map kept on the client; ``num_data`` must exceed it.
-    ``compression_ratio``: child leaves stored per position-map block."""
+class PosMapOramConfig(OramConfig):
+    """Shared structure for the schemes with a recursive position map.
 
-    name: str = field(default_factory=unique_name("rc"))
+    ``on_chip_mem``: target size of the position map kept on the client; ``num_data`` must exceed it.
+    """
+
     on_chip_mem: int = 10
-    compression_ratio: int = 4
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.on_chip_mem < 1:
             raise ValueError(f"on_chip_mem must be >= 1, got {self.on_chip_mem}.")
+
+
+@dataclass(frozen=True, kw_only=True)
+class RecursiveOramConfig(PosMapOramConfig):
+    """``compression_ratio``: child leaves stored per position-map block."""
+
+    name: str = field(default_factory=unique_name("rc"))
+    compression_ratio: int = 4
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
         if self.compression_ratio < 2:
             raise ValueError(f"compression_ratio must be >= 2, got {self.compression_ratio}.")
 
 
 @dataclass(frozen=True, kw_only=True)
-class CounterOramConfig(OramConfig):
+class CounterOramConfig(PosMapOramConfig):
     """Shared structure for the counter-based recursive schemes (DA, Freecursive).
 
     ``num_ic``: children per position-map block. ``ic_length`` / ``gc_length``: bit widths of the
@@ -122,10 +133,6 @@ class CounterOramConfig(OramConfig):
     ic_length: int = 6
     gc_length: int = 64
     prf_key: bytes | None = None
-
-    @property
-    def on_chip(self) -> int:
-        raise NotImplementedError
 
     @property
     def counter_widths(self) -> tuple[int, ...]:
@@ -147,15 +154,7 @@ class CounterOramConfig(OramConfig):
 
 @dataclass(frozen=True, kw_only=True)
 class DaOramConfig(CounterOramConfig):
-    """``on_chip_mem``: target size of the position map kept on the client; ``num_data`` must exceed it."""
-
     name: str = field(default_factory=unique_name("da"))
-    on_chip_mem: int = 10
-
-    @property
-    @override
-    def on_chip(self) -> int:
-        return self.on_chip_mem
 
     @property
     @override
@@ -164,8 +163,6 @@ class DaOramConfig(CounterOramConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.on_chip_mem < 1:
-            raise ValueError(f"on_chip_mem must be >= 1, got {self.on_chip_mem}.")
         if self.num_ic > 2**self.ic_length:
             raise ValueError(
                 f"num_ic ({self.num_ic}) must be at most 2**ic_length ({2**self.ic_length}) so every pending reset "
@@ -175,22 +172,15 @@ class DaOramConfig(CounterOramConfig):
 
 @dataclass(frozen=True, kw_only=True)
 class FreecursiveOramConfig(CounterOramConfig):
-    """``on_chip_size``: target size of the position map kept on the client; ``num_data`` must exceed it.
-    ``reset_method``: ``"prob"`` (secure) resets a block with probability ``reset_prob`` (default
+    """``reset_method``: ``"prob"`` (secure) resets a block with probability ``reset_prob`` (default
     ``1 / num_ic``) and treats a counter overflow as an error; ``"hard"`` (the insecure original scheme)
     resets only on overflow."""
 
     name: str = field(default_factory=unique_name("fc"))
     num_ic: int = 48
     ic_length: int = 10
-    on_chip_size: int = 10
     reset_method: ResetMethod = "prob"
     reset_prob: float | None = None
-
-    @property
-    @override
-    def on_chip(self) -> int:
-        return self.on_chip_size
 
     @property
     @override
@@ -199,8 +189,6 @@ class FreecursiveOramConfig(CounterOramConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.on_chip_size < 1:
-            raise ValueError(f"on_chip_size must be >= 1, got {self.on_chip_size}.")
         if self.reset_method not in get_args(ResetMethod):
             raise ValueError(f"reset_method must be one of {get_args(ResetMethod)}, got {self.reset_method!r}.")
         if self.reset_prob is not None and not 0.0 < self.reset_prob <= 1.0:
@@ -252,7 +240,14 @@ class TreeOmapConfig(OmapConfig):
         return self.MIN_CACHED_BUDGETS if cached else self.MIN_BUDGETS
 
     def budget(self, op: OdsOp) -> AccessBudget:
-        return getattr(self, f"{op}_budget") or self.minimums(cached=self.cached)[op]
+        match op:
+            case "search":
+                given = self.search_budget
+            case "insert":
+                given = self.insert_budget
+            case "delete":
+                given = self.delete_budget
+        return given or self.minimums(cached=self.cached)[op]
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -261,7 +256,7 @@ class TreeOmapConfig(OmapConfig):
             raise ValueError(f"paths_per_round must be {allowed}, got {self.paths_per_round}.")
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}.")
-        leaf_range = 1 << (compute_level(self.num_data) - 1)
+        leaf_range = leaf_count(self.num_data)
         if self.batch_size > leaf_range:
             raise ValueError(f"batch_size {self.batch_size} exceeds the {leaf_range} leaves of the tree.")
         for op in ODS_OPS:
@@ -339,16 +334,3 @@ class BPlusOmapConfig(TreeOmapConfig):
 @dataclass(frozen=True, kw_only=True)
 class GroupOmapConfig(OmapConfig):
     name: str = field(default_factory=unique_name("group_omap"))
-
-
-@dataclass(frozen=True, kw_only=True)
-class OramOstOmapConfig:
-    """Construction parameters for OramOstOmap (the ODS-over-ORAM framework). The two sub-schemes (the
-    ODS and the ORAM, each with its own config) are objects passed to the constructor; only the data
-    count lives here -- hence this is a standalone config rather than an OmapConfig subclass."""
-
-    num_data: int
-
-    def __post_init__(self) -> None:
-        if self.num_data < 1:
-            raise ValueError(f"num_data must be >= 1, got {self.num_data}.")

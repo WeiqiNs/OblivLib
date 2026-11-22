@@ -8,7 +8,7 @@ from oblivlib.oram import MulPathOram
 
 
 def _mul_path(client, num_data=64):
-    return MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale_multiplier=10))
+    return MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale=70))
 
 
 def test_operate_on_keys_matches_a_dict_model(client, duplicate_blocks):

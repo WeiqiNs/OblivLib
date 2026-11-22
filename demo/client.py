@@ -1,6 +1,6 @@
 import argparse
 
-from oblivlib.dependency import AesGcm, AvlOmapConfig, Client, DaOramConfig, Measurement, OramOstOmapConfig
+from oblivlib.dependency import AesGcm, AvlOmapConfig, Client, DaOramConfig, Measurement
 from oblivlib.omap import AVLOmap, OramOstOmap
 from oblivlib.oram import DAOram
 
@@ -55,7 +55,7 @@ def run_omap(client: Client, num_data: int) -> Measurement:
             num_data=num_data, data_size=OramOstOmap.oram_data_size(AVLOmap, ost), client=client, encryptor=encryptor
         )
     )
-    omap = OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=AVLOmap, ost_config=ost, oram=oram)
+    omap = OramOstOmap(ost=AVLOmap, ost_config=ost, oram=oram)
     omap.init_server_storage()
 
     with client.measure() as measurement:

@@ -6,11 +6,18 @@ import pytest
 
 from oblivlib.dependency import AesGcm, DuplicateLabelError, OramBlock, Recorder
 from oblivlib.dependency.heap_index import tree_size
-from oblivlib.dependency.layout import Bytes, Record, UInt
+from oblivlib.dependency.layout import Bytes, Col, Record, UInt
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
 from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage, build_tree
 
-_BLOCK = Record(OramBlock, (UInt(16), UInt(16), Bytes(32)))
+_BLOCK = Record(
+    OramBlock,
+    [
+        Col(lambda block: block.key, UInt(16)),
+        Col(lambda block: block.leaf, UInt(16)),
+        Col(lambda block: block.value, Bytes(32)),
+    ],
+)
 
 
 def _rows(image: TreeImage) -> list[bytes]:

@@ -30,14 +30,13 @@ def test_stash_overflow_raises(client):
 
 
 def test_every_tree_of_a_composed_scheme_feeds_the_client_recorder(client, encryptor):
+    config = GroupOmapConfig(num_data=64, key_size=8, data_size=8, client=client, encryptor=encryptor)
     upper = RecursivePathOram(
         RecursiveOramConfig(
-            num_data=64, data_size=GroupOmap.upper_oram_data_size(64), client=client, encryptor=encryptor
+            num_data=64, data_size=GroupOmap.upper_oram_data_size(config), client=client, encryptor=encryptor
         )
     )
-    omap = GroupOmap(
-        GroupOmapConfig(num_data=64, key_size=8, data_size=8, client=client, encryptor=encryptor), upper_oram=upper
-    )
+    omap = GroupOmap(config, upper_oram=upper)
     omap.init_server_storage([(b"k%d" % i, b"v") for i in range(8)])
     assert upper._levels
 

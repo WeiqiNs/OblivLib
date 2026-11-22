@@ -1,11 +1,13 @@
+import itertools
 from bisect import bisect_right
 from collections.abc import Callable, Sequence
 from typing import override
 
-from oblivlib.dependency import BPlusInternal, BPlusLeaf, BPlusNode, BPlusTree, BPlusTreeNode, KVPair
+from oblivlib.dependency import BPlusInternal, BPlusLeaf, BPlusNode
 from oblivlib.dependency.config import BPlusOmapConfig
 from oblivlib.dependency.layout import Buffer, Bytes, Field, Pair, Seq, UInt
-from oblivlib.omap.ost_base_omap import OstBaseOmap, Root
+from oblivlib.omap.base_omap import KvList
+from oblivlib.omap.ost_base_omap import LocalNodes, OstBaseOmap, Root
 
 _BLOCK_ID_BITS = 64
 _LEAF_TAG = 0
@@ -20,6 +22,12 @@ def bplus_max_levels(num_keys: int, order: int) -> int:
         split_keys += (order - 1) * subtree_keys
         subtree_keys *= fanout
     return levels
+
+
+def _even_chunks(count: int, capacity: int) -> list[tuple[int, int]]:
+    chunks = -(-count // capacity)
+    bounds = [count * index // chunks for index in range(chunks + 1)]
+    return list(itertools.pairwise(bounds))
 
 
 class _BPlusNodeLayout(Field[BPlusNode]):
@@ -70,11 +78,17 @@ class _BPlusNodeLayout(Field[BPlusNode]):
 
 
 class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
-    def __init__(self, config: BPlusOmapConfig, *, num_trees: int = 1):
-        super().__init__(config, num_trees=num_trees)
+    def __init__(self, config: BPlusOmapConfig, *, height_keys: int | None = None):
+        super().__init__(config, height_keys=height_keys)
 
+        self._local_nodes: LocalNodes[int, BPlusNode] = LocalNodes()
         self._mid: int = config.order // 2
         self._block_id: int = 0
+
+    @property
+    @override
+    def _local(self) -> LocalNodes[int, BPlusNode]:
+        return self._local_nodes
 
     @property
     @override
@@ -93,20 +107,20 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
     def _min_keys(self) -> int:
         return (self._order - 1) // 2
 
-    @property
+    @classmethod
     @override
-    def _key_field(self) -> Field[int]:
+    def _key_field(cls, config: BPlusOmapConfig) -> Field[int]:
         return UInt(_BLOCK_ID_BITS)
 
     @property
     @override
     def _block_layout(self) -> Field[BPlusNode]:
         return _BPlusNodeLayout(
-            key=self._key_field,
+            key=self._key_field(self._config),
             leaf=self._leaf_field,
             order=self._order,
-            key_size=self._key_size,
-            data_size=self._data_size,
+            key_size=self.key_size,
+            data_size=self.data_size,
         )
 
     def _next_block(self) -> tuple[int, int]:
@@ -123,16 +137,26 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
         return BPlusInternal(key=key, leaf=leaf, keys=keys, children=children)
 
     @override
-    def _build_ods_blocks(self, data: list[KVPair]) -> tuple[list[BPlusNode], Root[int]]:
-        root = BPlusTreeNode()
-        bplus_tree = BPlusTree(order=self._order, leaf_range=self._leaf_range)
-        for kv_pair in data:
-            root = bplus_tree.insert(root=root, kv_pair=kv_pair)
-
-        blocks = bplus_tree.get_data_list(root=root, block_id=self._block_id)
-        self._block_id += len(blocks)
-        assert root.id is not None and root.leaf is not None
-        return blocks, (root.id, root.leaf)
+    def _build_ods_blocks(self, data: KvList) -> tuple[list[BPlusNode], Root[int]]:
+        pairs = sorted(data, key=lambda pair: pair[0])
+        level: list[tuple[bytes, BPlusNode]] = []
+        for start, end in _even_chunks(len(pairs), self._order - 1):
+            chunk = pairs[start:end]
+            leaf = self._new_leaf_node(keys=[key for key, _ in chunk], values=[value for _, value in chunk])
+            level.append((chunk[0][0], leaf))
+        blocks = [node for _, node in level]
+        while len(level) > 1:
+            parents: list[tuple[bytes, BPlusNode]] = []
+            for start, end in _even_chunks(len(level), self._order):
+                group = level[start:end]
+                parent = self._new_internal_node(
+                    keys=[low for low, _ in group[1:]], children=[(node.key, node.leaf) for _, node in group]
+                )
+                blocks.append(parent)
+                parents.append((group[0][0], parent))
+            level = parents
+        root = level[0][1]
+        return blocks, (root.key, root.leaf)
 
     def _require_internal(self, key: int) -> BPlusInternal:
         node = self._local.require(key)
@@ -152,7 +176,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
         at = [root_key] * len(keys)
         level = [root_key]
         while isinstance(self._local.require(at[0]), BPlusInternal):
-            requests: dict[int, tuple[int, int, int]] = {}
+            requests: dict[int, tuple[int, int]] = {}
             for lane, node_key in enumerate(at):
                 node = self._require_internal(node_key)
                 child_index = bisect_right(node.keys, keys[lane])
@@ -160,7 +184,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
                 if child_key not in requests:
                     new_leaf = self._get_new_leaf()
                     node.children[child_index] = (child_key, new_leaf)
-                    requests[child_key] = (child_leaf, node.key, new_leaf)
+                    requests[child_key] = (child_leaf, new_leaf)
                 at[lane] = child_key
             if not hold:
                 self._return_local(level)
@@ -171,9 +195,9 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
                 on_stop(lane, self._local.require(node_key))
 
     def _path_to(self, key: bytes) -> None:
-        assert self.root is not None
+        assert self._root is not None
         path: list[int] = []
-        node_key = self.root[0]
+        node_key = self._root[0]
         while True:
             path.append(node_key)
             node = self._local.require(node_key)
@@ -209,7 +233,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
             if index == 0:
                 parent = self._new_internal_node(keys=[insert_key], children=[(node.key, node.leaf), right_node])
                 self._local.keep(parent.key, parent)
-                self.root: Root[int] | None = (parent.key, parent.leaf)
+                self._root: Root[int] | None = (parent.key, parent.leaf)
             else:
                 parent_node = self._require_internal(path[index - 1])
                 position = bisect_right(parent_node.keys, insert_key)
@@ -248,12 +272,12 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
         return path_nodes, child_indices, siblings, sibling_indices
 
     def _fetch_children(self, parent: BPlusInternal, indices: list[int]) -> list[BPlusNode]:
-        requests = [(*parent.children[index], None) for index in indices]
+        requests = [parent.children[index] for index in indices]
         paired = self._round_width(self._op_rounds) >= len(requests)
         for group in [requests] if paired else [[request] for request in requests]:
             self._fetch_nodes(group)
         children: list[BPlusNode] = []
-        for index, (child_key, _, _) in zip(indices, requests, strict=True):
+        for index, (child_key, _) in zip(indices, requests, strict=True):
             child = self._local.pop(child_key)
             child.leaf = self._get_new_leaf()
             parent.children[index] = (child_key, child.leaf)
@@ -315,7 +339,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
 
         if not child_indices:
             if not leaf.keys:
-                self.root = None
+                self._root = None
                 del path_nodes[leaf_level]
             return deleted_value
 
@@ -349,7 +373,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
 
         root_node = path_nodes.get(0)
         if isinstance(root_node, BPlusInternal) and not root_node.keys:
-            self.root = root_node.children[0]
+            self._root = root_node.children[0]
             del path_nodes[0]
         return deleted_value
 
@@ -371,11 +395,11 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
             self._finish_op()
             return
 
-        if self.root is None:
+        if self._root is None:
             (key, value), *pairs = pairs
             first = self._new_leaf_node(keys=[key], values=[value])
             self._local.add(first.key, first)
-            self.root = (first.key, first.leaf)
+            self._root = (first.key, first.leaf)
         else:
             self._descend([key for key, _ in pairs], hold=True)
 
@@ -393,7 +417,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
     @override
     def _delete_key(self, key: bytes | None) -> bytes | None:
         self._begin_op("delete")
-        if key is None or self.root is None:
+        if key is None or self._root is None:
             self._finish_op()
             return None
 

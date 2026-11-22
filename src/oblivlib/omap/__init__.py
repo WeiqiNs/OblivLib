@@ -3,7 +3,6 @@ from oblivlib.dependency.config import (
     BPlusOmapConfig,
     GroupOmapConfig,
     OmapConfig,
-    OramOstOmapConfig,
 )
 
 from .avl_omap import AVLOmap
@@ -20,5 +19,4 @@ __all__ = [
     "BPlusOmapConfig",
     "GroupOmapConfig",
     "OmapConfig",
-    "OramOstOmapConfig",
 ]

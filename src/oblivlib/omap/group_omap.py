@@ -1,13 +1,13 @@
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, override
 
 from oblivlib.dependency import Blake2Prf, ContractError, hash_data_to_map
 from oblivlib.dependency.balls_into_bins import max_bin_load
-from oblivlib.dependency.config import GroupOmapConfig, OramConfig
+from oblivlib.dependency.config import GroupOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
-from oblivlib.dependency.layout import Bytes, Field, FixedBytes, Pair, Record, UInt
+from oblivlib.dependency.layout import Bytes, Col, Field, FixedBytes, Pair, Record, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.omap.base_omap import BaseOmap, KvList
 from oblivlib.oram.tree_base_oram import Oram
@@ -22,15 +22,18 @@ class _GroupBlock:
     value: bytes
 
 
-class _BucketStore(TreeStorageBase[OramConfig, _GroupBlock]):
-    def __init__(self, config: OramConfig, *, key_size: int):
-        self._block_key_size: int = key_size
-        super().__init__(config)
-
+class _BucketStore(TreeStorageBase[GroupOmapConfig, _GroupBlock]):
     @property
     @override
     def _block_layout(self) -> Field[_GroupBlock]:
-        return Record(_GroupBlock, (Bytes(self._block_key_size), self._leaf_field, Bytes(self._data_size)))
+        return Record(
+            _GroupBlock,
+            [
+                Col(lambda block: block.key, Bytes(self._config.key_size)),
+                Col(lambda block: block.leaf, self._leaf_field),
+                Col(lambda block: block.value, Bytes(self.data_size)),
+            ],
+        )
 
     def host(self, blocks: list[_GroupBlock]) -> None:
         self._host_tree(self._build_tree(blocks))
@@ -45,8 +48,8 @@ class _BucketStore(TreeStorageBase[OramConfig, _GroupBlock]):
     def close_bucket(self, blocks: list[_GroupBlock], kept: list[_GroupBlock]) -> None:
         old = {id(data) for data in blocks}
         dropped = old - {id(data) for data in kept}
-        self._stash: list[_GroupBlock] = [data for data in self._stash if id(data) not in dropped]
-        self._stash += [data for data in kept if id(data) not in old]
+        self._stash[:] = [data for data in self._stash if id(data) not in dropped]
+        self._stash.extend(data for data in kept if id(data) not in old)
         self._check_stash()
         self._write_paths()
 
@@ -61,6 +64,18 @@ class GroupOmap(BaseOmap):
     SEED_SIZE: Final = 32
 
     def __init__(self, config: GroupOmapConfig, upper_oram: Oram):
+        if upper_oram.num_data != config.num_data:
+            raise ValueError(
+                f"GroupOmap upper ORAM num_data={upper_oram.num_data} differs from num_data={config.num_data}; the "
+                + "upper ORAM needs one slot per bucket."
+            )
+        required = self.upper_oram_data_size(config)
+        if upper_oram.data_size < required:
+            raise ValueError(
+                f"GroupOmap upper ORAM data_size={upper_oram.data_size} is too small for bucket "
+                + f"metadata; it must be at least {required}. Size it with GroupOmap.upper_oram_data_size(config)."
+            )
+
         self._config: GroupOmapConfig = config
 
         self._upper_oram: Oram = upper_oram
@@ -72,25 +87,8 @@ class GroupOmap(BaseOmap):
         self._metadata: Pair[bytes, int] = self._metadata_layout(config.num_data)
         self._size: int = 0
 
-        required = self.upper_oram_data_size(config.num_data)
-        if self._upper_oram.data_size < required:
-            raise ValueError(
-                f"GroupOmap upper ORAM data_size={self._upper_oram.data_size} is too small for bucket "
-                + f"metadata; it must be at least {required}. Size it with GroupOmap.upper_oram_data_size(num_data)."
-            )
-
         self._lower_oram: _BucketStore = _BucketStore(
-            OramConfig(
-                num_data=config.num_data,
-                data_size=config.data_size,
-                client=config.client,
-                name=f"{config.name}_lower",
-                bucket_size=config.bucket_size,
-                stash_scale=config.stash_scale * self._upper_bound,
-                encryptor=config.encryptor,
-                build_file=config.build_file,
-            ),
-            key_size=config.key_size,
+            replace(config, name=f"{config.name}_lower", stash_scale=config.stash_scale * self._upper_bound)
         )
 
     @staticmethod
@@ -98,8 +96,8 @@ class GroupOmap(BaseOmap):
         return Pair(FixedBytes(GroupOmap.SEED_SIZE), UInt.covering(max_bin_load(num_data)))
 
     @staticmethod
-    def upper_oram_data_size(num_data: int) -> int:
-        return GroupOmap._metadata_layout(num_data).size
+    def upper_oram_data_size(config: GroupOmapConfig) -> int:
+        return GroupOmap._metadata_layout(config.num_data).size
 
     @property
     def _name(self) -> str:

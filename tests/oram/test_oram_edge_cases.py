@@ -139,7 +139,7 @@ _ROW_LAYOUT_CONFIG: dict[str, Any] = {"num_data": 64, "data_size": 16, "encrypto
 )
 def test_row_size_is_the_declared_block_layout_of_every_tree(make, expected_rows, client):
     oram = make(client=client, **_ROW_LAYOUT_CONFIG)
-    assert [oram._cipher.row_bytes] + [level._cipher.row_bytes for level in oram._levels] == expected_rows
+    assert [oram._cipher.row_bytes] + [level._cipher.row_bytes for level in oram._pos_map_levels()] == expected_rows
     oram.init_server_storage({key: b"\xff" * 16 for key in range(64)})
     for key in (0, 63, 0):
         assert oram.operate_on_key(key=key) == b"\xff" * 16
@@ -152,8 +152,8 @@ def test_position_map_leaves_are_independent_of_data_leaves(cls, config_cls, num
     level = oram._levels[-1]
     leaf_range = 2 ** (level._level - 1)
     matches = sum(
-        level._prf_leaf(key=key, gc=0, ic=0, level=level._level, num_data=level._num_data)
-        == oram._prf_leaf(key=key, gc=0, ic=0, level=oram._level, num_data=oram._num_data) % leaf_range
-        for key in range(level._num_data)
+        level._counters.prf_leaf(key=key, gc=0, ic=0, level=level._level, num_data=level.num_data)
+        == oram._counters.prf_leaf(key=key, gc=0, ic=0, level=oram._level, num_data=oram.num_data) % leaf_range
+        for key in range(level.num_data)
     )
-    assert matches <= max(3, 3 * level._num_data // leaf_range)
+    assert matches <= max(3, 3 * level.num_data // leaf_range)

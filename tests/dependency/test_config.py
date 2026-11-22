@@ -8,7 +8,6 @@ from oblivlib.dependency import (
     BPlusOmapConfig,
     DaOramConfig,
     FreecursiveOramConfig,
-    OramOstOmapConfig,
     PathOramConfig,
     RecursiveOramConfig,
 )
@@ -31,9 +30,7 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (DaOramConfig, _ORAM, {"ic_length": 0}, "ic_length"),
         (DaOramConfig, _ORAM, {"gc_length": 63}, "gc_length must be >= 64"),
         (FreecursiveOramConfig, _ORAM, {"gc_length": 63}, "gc_length must be >= 64"),
-        (DaOramConfig, _ORAM, {"on_chip_mem": 0}, "on_chip_mem"),
         (DaOramConfig, _ORAM, {"num_ic": 8, "ic_length": 2}, r"2\*\*ic_length"),
-        (FreecursiveOramConfig, _ORAM, {"on_chip_size": 0}, "on_chip_size"),
         (FreecursiveOramConfig, _ORAM, {"reset_prob": 0.0}, "reset_prob"),
         (FreecursiveOramConfig, _ORAM, {"reset_prob": 1.5}, "reset_prob"),
         (FreecursiveOramConfig, _ORAM, {"reset_method": "soft"}, "reset_method"),
@@ -53,12 +50,10 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (AvlOmapConfig, {**_OMAP, "cached": True}, {"delete_budget": AccessBudget(1, 9)}, r"a must be >= 3/2"),
         (AvlOmapConfig, _OMAP, {"batch_size": 0}, "batch_size must be >= 1"),
         (AvlOmapConfig, _OMAP, {"batch_size": 17}, "exceeds the 16 leaves"),
-        (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
     ],
 )
 def test_config_rejects_each_invalid_field(client, config_cls, valid, invalid, message):
-    if config_cls is not OramOstOmapConfig:
-        valid = {**valid, "client": client}
+    valid = {**valid, "client": client}
     config_cls(**valid)
     with pytest.raises(ValueError, match=message):
         config_cls(**{**valid, **invalid})

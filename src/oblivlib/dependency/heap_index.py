@@ -7,6 +7,10 @@ def compute_level(num_data: int) -> int:
     return (num_data - 1).bit_length() + 1
 
 
+def leaf_count(num_data: int) -> int:
+    return 1 << (compute_level(num_data) - 1)
+
+
 def tree_size(level: int) -> int:
     return (1 << level) - 1
 

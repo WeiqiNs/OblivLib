@@ -5,8 +5,8 @@ public surface is type-checker-visible, free of incidental stdlib/typing leakage
 and stated in one place — ``__all__``.
 """
 
-from .avl_tree import AVLNode, AVLTree, AVLTreeNode
-from .bplus_tree import BPlusInternal, BPlusLeaf, BPlusNode, BPlusTree, BPlusTreeNode
+from .avl_tree import AVLNode
+from .bplus_tree import BPlusInternal, BPlusLeaf, BPlusNode
 from .client import Backend, Client, ExecuteResult, LocalBackend, TransportBackend
 from .config import (
     AccessBudget,
@@ -19,8 +19,8 @@ from .config import (
     MulPathOramConfig,
     OmapConfig,
     OramConfig,
-    OramOstOmapConfig,
     PathOramConfig,
+    PosMapOramConfig,
     RecursiveOramConfig,
     StaticOramConfig,
     TreeOmapConfig,
@@ -56,7 +56,6 @@ from .types import (
     Block,
     DataMap,
     InitData,
-    KVPair,
     OramBlock,
     PathData,
     PathRows,
@@ -67,13 +66,9 @@ from .types import (
 __all__ = [
     "AccessBudget",
     "AVLNode",
-    "AVLTree",
-    "AVLTreeNode",
     "BPlusInternal",
     "BPlusLeaf",
     "BPlusNode",
-    "BPlusTree",
-    "BPlusTreeNode",
     "Backend",
     "Client",
     "ExecuteResult",
@@ -118,7 +113,6 @@ __all__ = [
     "Unset",
     "DataMap",
     "InitData",
-    "KVPair",
     "PathData",
     "PathRows",
     "PosMap",
@@ -131,8 +125,8 @@ __all__ = [
     "MulPathOramConfig",
     "OmapConfig",
     "OramConfig",
-    "OramOstOmapConfig",
     "PathOramConfig",
+    "PosMapOramConfig",
     "RecursiveOramConfig",
     "StaticOramConfig",
     "TreeOmapConfig",
