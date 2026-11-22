@@ -1,4 +1,5 @@
 import random
+from typing import Any
 
 import pytest
 
@@ -7,7 +8,7 @@ from oblivlib.oram import MulPathOram
 
 
 def _mul_path(client, num_data=64):
-    return MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale_multiplier=10))
+    return MulPathOram(MulPathOramConfig(num_data=num_data, data_size=10, client=client, stash_scale=70))
 
 
 def test_operate_on_keys_matches_a_dict_model(client, duplicate_blocks):
@@ -44,7 +45,8 @@ def test_batch_contract_violations_raise_before_any_message(recorded_client):
     oram.init_server_storage(data={1: b"one"})
     sent = len(recorder.messages)
 
-    for batch in ({64: UNSET}, {1: "one"}, {1: b"x" * 11}, {1: b"uno", 64: UNSET}):
+    batches: list[dict[int, Any]] = [{64: UNSET}, {1: "one"}, {1: b"x" * 11}, {1: b"uno", 64: UNSET}]
+    for batch in batches:
         with pytest.raises(ContractError, match="MulPathOram '"):
             oram.operate_on_keys(batch)
     assert oram.operate_on_keys({}) == {}

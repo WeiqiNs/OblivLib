@@ -1,9 +1,8 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Any, override
+from typing import Protocol, override
 
 from oblivlib.dependency.errors import CapacityError
-from oblivlib.dependency.types import Data, FieldTuple
 
 Buffer = bytes | bytearray | memoryview
 
@@ -34,9 +33,9 @@ class UInt(Field[int]):
     def __init__(self, bits: int):
         if bits < 1:
             raise ValueError(f"UInt needs at least 1 bit, got {bits}.")
-        self._bits = bits
-        self._size = (bits + 7) // 8
-        self._limit = 1 << bits
+        self._bits: int = bits
+        self._size: int = (bits + 7) // 8
+        self._limit: int = 1 << bits
 
     @classmethod
     def covering(cls, max_value: int) -> "UInt":
@@ -65,8 +64,8 @@ class UInt(Field[int]):
 
 class Bytes(Field[bytes]):
     def __init__(self, max_size: int):
-        self._max_size = max_size
-        self._length = UInt.covering(max_size)
+        self._max_size: int = max_size
+        self._length: UInt = UInt.covering(max_size)
 
     @property
     @override
@@ -93,7 +92,7 @@ class Bytes(Field[bytes]):
 
 class FixedBytes(Field[bytes]):
     def __init__(self, size: int):
-        self._size = size
+        self._size: int = size
 
     @property
     @override
@@ -118,7 +117,7 @@ class FixedBytes(Field[bytes]):
 
 class Optional[T](Field[T | None]):
     def __init__(self, field: Field[T]):
-        self._field = field
+        self._field: Field[T] = field
 
     @property
     @override
@@ -146,8 +145,8 @@ class Optional[T](Field[T | None]):
 
 class Array[T](Field[list[T]]):
     def __init__(self, field: Field[T], count: int):
-        self._field = field
-        self._count = count
+        self._field: Field[T] = field
+        self._count: int = count
 
     @property
     @override
@@ -163,7 +162,7 @@ class Array[T](Field[list[T]]):
 
     @override
     def read(self, data: Buffer, offset: int) -> tuple[list[T], int]:
-        items = []
+        items: list[T] = []
         for _ in range(self._count):
             item, offset = self._field.read(data, offset)
             items.append(item)
@@ -176,9 +175,9 @@ class Array[T](Field[list[T]]):
 
 class Seq[T](Field[list[T]]):
     def __init__(self, field: Field[T], max_count: int):
-        self._field = field
-        self._max_count = max_count
-        self._count = UInt.covering(max_count)
+        self._field: Field[T] = field
+        self._max_count: int = max_count
+        self._count: UInt = UInt.covering(max_count)
 
     @property
     @override
@@ -198,7 +197,7 @@ class Seq[T](Field[list[T]]):
     def read(self, data: Buffer, offset: int) -> tuple[list[T], int]:
         count, offset = self._count.read(data, offset)
         end = offset + self._max_count * self._field.size
-        items = []
+        items: list[T] = []
         for _ in range(count):
             item, offset = self._field.read(data, offset)
             items.append(item)
@@ -209,11 +208,78 @@ class Seq[T](Field[list[T]]):
         return f"Seq({self._field!r}, {self._max_count})"
 
 
-class Record(Field[Any]):
-    def __init__(self, fields: Sequence[Field[Any]], cls: type[FieldTuple] | None = None):
-        self._fields = tuple(fields)
-        self._cls = cls
-        self._size = sum(field.size for field in self._fields)
+class Pair[A, B](Field[tuple[A, B]]):
+    def __init__(self, first: Field[A], second: Field[B]):
+        self._first: Field[A] = first
+        self._second: Field[B] = second
+
+    @property
+    @override
+    def size(self) -> int:
+        return self._first.size + self._second.size
+
+    @override
+    def write(self, value: tuple[A, B], out: bytearray) -> None:
+        first, second = value
+        self._first.write(first, out)
+        self._second.write(second, out)
+
+    @override
+    def read(self, data: Buffer, offset: int) -> tuple[tuple[A, B], int]:
+        first, offset = self._first.read(data, offset)
+        second, offset = self._second.read(data, offset)
+        return (first, second), offset
+
+    @override
+    def __repr__(self) -> str:
+        return f"Pair({self._first!r}, {self._second!r})"
+
+
+class Column[T](Protocol):
+    @property
+    def size(self) -> int: ...
+
+    def get(self, block: T) -> object: ...
+
+    def write(self, block: T, out: bytearray) -> None: ...
+
+    def read(self, data: Buffer, offset: int) -> tuple[object, int]: ...
+
+
+class Col[T, V]:
+    def __init__(self, get: Callable[[T], V], field: Field[V]):
+        self._get: Callable[[T], V] = get
+        self._field: Field[V] = field
+
+    @property
+    def size(self) -> int:
+        return self._field.size
+
+    def get(self, block: T) -> V:
+        return self._get(block)
+
+    def write(self, block: T, out: bytearray) -> None:
+        self._field.write(self._get(block), out)
+
+    def read(self, data: Buffer, offset: int) -> tuple[object, int]:
+        return self._field.read(data, offset)
+
+    @override
+    def __repr__(self) -> str:
+        return repr(self._field)
+
+
+class Record[T](Field[T]):
+    def __init__(self, cls: type[T], columns: Sequence[Column[T]]):
+        self._cls: type[T] = cls
+        self._build: Callable[..., T] = cls
+        self._columns: tuple[Column[T], ...] = tuple(columns)
+        self._size: int = sum(column.size for column in self._columns)
+        markers = [object() for _ in self._columns]
+        probe = self._build(*markers)
+        assert all(column.get(probe) is marker for column, marker in zip(self._columns, markers, strict=True)), (
+            f"{cls.__name__} columns must follow its constructor's field order"
+        )
 
     @property
     @override
@@ -221,70 +287,35 @@ class Record(Field[Any]):
         return self._size
 
     @override
-    def write(self, value: Any, out: bytearray) -> None:
-        values = value.to_fields() if self._cls is not None else value
-        if len(values) != len(self._fields):
-            raise CapacityError(f"{len(values)} values do not fit a record of {len(self._fields)} fields.")
-        for field, item in zip(self._fields, values, strict=True):
-            field.write(item, out)
+    def write(self, value: T, out: bytearray) -> None:
+        for column in self._columns:
+            column.write(value, out)
 
     @override
-    def read(self, data: Buffer, offset: int) -> tuple[Any, int]:
-        values = []
-        for field in self._fields:
-            item, offset = field.read(data, offset)
+    def read(self, data: Buffer, offset: int) -> tuple[T, int]:
+        values: list[object] = []
+        for column in self._columns:
+            item, offset = column.read(data, offset)
             values.append(item)
-        if self._cls is None:
-            return tuple(values), offset
-        return self._cls.from_fields(values), offset
+        return self._build(*values), offset
 
     @override
     def __repr__(self) -> str:
-        name = "tuple" if self._cls is None else self._cls.__name__
-        return f"Record({name}, {list(self._fields)!r})"
-
-
-class Variant(Field[Any]):
-    def __init__(self, fields: Sequence[Field[Any]], select: Callable[[Any], int]):
-        self._fields = tuple(fields)
-        self._select = select
-        self._width = max(field.size for field in self._fields)
-
-    @property
-    @override
-    def size(self) -> int:
-        return 1 + self._width
-
-    @override
-    def write(self, value: Any, out: bytearray) -> None:
-        tag = self._select(value)
-        out.append(tag)
-        start = len(out)
-        self._fields[tag].write(value, out)
-        out += bytes(self._width - (len(out) - start))
-
-    @override
-    def read(self, data: Buffer, offset: int) -> tuple[Any, int]:
-        value, _ = self._fields[data[offset]].read(data, offset + 1)
-        return value, offset + self.size
-
-    @override
-    def __repr__(self) -> str:
-        return f"Variant({list(self._fields)!r})"
+        return f"Record({self._cls.__name__}, {list(self._columns)!r})"
 
 
 class BitFields:
     def __init__(self, widths: Sequence[int]):
         if any(width < 1 for width in widths):
             raise ValueError(f"every bit field needs at least 1 bit, got {list(widths)}.")
-        self._widths = tuple(widths)
-        self._bits = sum(self._widths)
-        shifts = []
+        self._widths: tuple[int, ...] = tuple(widths)
+        self._bits: int = sum(self._widths)
+        shifts: list[int] = []
         remaining = self._bits
         for width in self._widths:
             remaining -= width
             shifts.append(remaining)
-        self._shifts = tuple(shifts)
+        self._shifts: tuple[int, ...] = tuple(shifts)
 
     def get(self, word: int, index: int) -> int:
         return (word >> self._shifts[index]) & ((1 << self._widths[index]) - 1)
@@ -295,7 +326,3 @@ class BitFields:
             raise CapacityError(f"{value} does not fit bit field {index}, which is {width} bits wide.")
         shift = self._shifts[index]
         return word & ~(((1 << width) - 1) << shift) | value << shift
-
-
-def block_layout(key: Field[Any], leaf: Field[int], value: Field[Any]) -> Record:
-    return Record((key, leaf, value), Data)

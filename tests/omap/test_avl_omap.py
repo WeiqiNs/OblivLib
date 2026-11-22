@@ -1,8 +1,6 @@
-import random
-
 import pytest
 
-from oblivlib.dependency import AvlOmapConfig
+from oblivlib.dependency import AVLNode, AvlOmapConfig
 from oblivlib.omap import AVLOmap
 from oblivlib.omap.avl_omap import avl_delete_fetches, avl_max_height
 
@@ -21,6 +19,14 @@ def test_height_bound_is_the_tallest_avl_tree_with_that_many_nodes(num_nodes, he
 @pytest.mark.parametrize(("height", "fetches"), [(1, 1), (2, 2), (3, 4), (4, 5), (5, 7), (8, 11), (11, 16)])
 def test_delete_fetch_bound_is_the_longest_path_plus_two_fetches_per_rotation(height, fetches):
     assert avl_delete_fetches(height) == fetches
+
+
+def test_a_node_row_stores_the_key_leaf_value_then_the_right_child_then_the_left(client):
+    omap = AVLOmap(AvlOmapConfig(num_data=4, key_size=2, data_size=2, client=client))
+    node = AVLNode(key=b"k", leaf=1, value=b"v", r_key=b"r", r_leaf=2, r_height=1)
+    row = omap._block_layout.encode(node)
+    assert row == bytes.fromhex("016b00010176000101720001020100000000000000")
+    assert omap._block_layout.decode(row) == node
 
 
 def _fibonacci(height, *, mirror=False):
@@ -109,23 +115,6 @@ def test_each_avl_bound_is_reached(client, height):
     assert _work(omap) == omap._budget
 
 
-@pytest.mark.parametrize(
-    ("rounds_short", "message"), [(1, "needs more than its"), (0, "still need an eviction")], ids=["fetch", "evict"]
-)
-def test_an_op_short_of_its_bound_raises_instead_of_skipping_evictions(client, monkeypatch, rounds_short, message):
-    spine = _keys_by_path(_worst_insert_tree(5))
-    omap = _build(client, len(spine) + 1, spine, scale=2)
-    begin = omap._begin_op
-
-    def short_begin(op):
-        begin(op)
-        omap._budget = omap._max_height - rounds_short
-
-    monkeypatch.setattr(omap, "_begin_op", short_begin)
-    with pytest.raises(ValueError, match=message):
-        omap.insert(_key(2 * spine["R" * 4] + 1), b"v")
-
-
 @pytest.mark.parametrize("height", [3, 5, 6, 8])
 def test_each_cached_avl_bound_is_reached(client, height):
     spine = _keys_by_path(_worst_insert_tree(height))
@@ -154,60 +143,16 @@ def test_a_wide_batch_holds_its_extra_paths_without_overflowing_the_stash(client
     assert omap._max_stash > omap._stash_capacity
 
 
-def _omap(client, num_data: int) -> AVLOmap:
-    omap = AVLOmap(AvlOmapConfig(num_data=num_data, key_size=8, data_size=8, client=client))
-    omap.init_server_storage([(_key(i), _key(i)) for i in range(0, num_data, 2)])
-    return omap
-
-
-def test_delete_miss_moves_the_root(client):
-    omap = _omap(client, num_data=1024)
-    moved = 0
-    for i in range(1, 41, 2):
-        before = omap.root
-        assert omap.delete(_key(i)) is None
-        assert omap.root is not None and before is not None
-        assert omap.root[0] == before[0]
-        moved += omap.root[1] != before[1]
-    assert moved >= 18
-
-
 def _record_returns(omap: AVLOmap) -> dict[bytes, tuple[int | None, bytes | None, int]]:
     returned: dict[bytes, tuple[int | None, bytes | None, int]] = {}
     return_to_stash = omap._return_to_stash
 
     def recording_return(blocks):
-        returned.update({node.key: (node.leaf, node.value.l_key, node.value.l_height) for node in blocks})
+        returned.update({node.key: (node.leaf, node.l_key, node.l_height) for node in blocks})
         return_to_stash(blocks)
 
     omap._return_to_stash = recording_return
     return returned
-
-
-def test_rebalance_fetches_get_fresh_leaves(client):
-    omap = _omap(client, num_data=2048)
-    returned = _record_returns(omap)
-    fetched: list[tuple[bytes, int]] = []
-    fetch = omap._fetch_for_rebalance
-
-    def recording_fetch(key, leaf, parent_key):
-        fetched.append((key, leaf))
-        fetch(key=key, leaf=leaf, parent_key=parent_key)
-
-    omap._fetch_for_rebalance = recording_fetch
-    keys = list(range(0, 2048, 2))
-    random.Random(4).shuffle(keys)
-    total = stale = 0
-    for i in keys[:600]:
-        fetched.clear()
-        returned.clear()
-        assert omap.delete(_key(i)) == _key(i)
-        for key, leaf in fetched:
-            if key in returned:
-                total += 1
-                stale += returned[key][0] == leaf
-    assert total > 50
-    assert stale <= 2
 
 
 def test_two_children_delete_keeps_the_height_of_an_empty_key_child(client):

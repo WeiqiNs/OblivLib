@@ -40,7 +40,7 @@ classifiers = [
 ]
 dependencies = [
     "cryptography>=45.0.0",
-    "msgpack>=1.1.0",
+    "msgspec>=0.22.0",
     "pyzmq>=26.0.0",
 ]
 
@@ -57,8 +57,6 @@ Repository = "https://github.com/WeiqiNs/OblivLib"
 Issues = "https://github.com/WeiqiNs/OblivLib/issues"
 
 [tool.pytest.ini_options]
-# importlib mode lets same-named test modules coexist without __init__.py packages.
-addopts = "--import-mode=importlib"
 testpaths = ["tests"]
 
 [tool.coverage.report]

@@ -6,11 +6,12 @@ from typing import Any
 import pytest
 
 from oblivlib.dependency import (
+    AccessBudget,
     AvlOmapConfig,
+    BPlusLeaf,
     BPlusOmapConfig,
     DaOramConfig,
     GroupOmapConfig,
-    OramOstOmapConfig,
     PathOramConfig,
     RecursiveOramConfig,
 )
@@ -23,11 +24,8 @@ class ReadCounter:
     def __init__(self, recorder):
         self._recorder = recorder
 
-    def _leaves_read(self) -> int:
-        return sum(len(op.leaves) for batch in self._recorder.batches for op in batch.reads if isinstance(op, ReadPath))
-
     def paths_read(self) -> int:
-        return self._leaves_read()
+        return sum(len(op.leaves) for batch in self._recorder.batches for op in batch.reads if isinstance(op, ReadPath))
 
     def _read_rounds(self) -> int:
         return sum(any(isinstance(op, ReadPath) for op in batch.reads) for batch in self._recorder.batches)
@@ -37,16 +35,11 @@ class ReadCounter:
         result = fn(*args, **kwargs)
         return self._read_rounds() - before, result
 
-    def rounds(self, fn, *args, **kwargs):
-        before = self._leaves_read()
-        result = fn(*args, **kwargs)
-        return self._leaves_read() - before, result
-
 
 def _read_all_blocks(scheme):
     client = scheme._client
-    client.add_read_path(scheme._name, range(scheme._leaf_range))
-    path = scheme._cipher.open_path(client.execute().require(scheme._name))
+    client.add_read_path(scheme.name, range(scheme.leaf_range))
+    path = scheme._cipher.open_path(client.execute().require(scheme.name))
     return [data for bucket in path.values() for data in bucket]
 
 
@@ -71,11 +64,10 @@ def verify_avl_invariants(omap, model):
         assert (low is None or low < key) and (high is None or key < high), (
             f"BST order violated at {key} (bounds {low}, {high})"
         )
-        value = data.value
-        l_height = walk(value.l_key, value.l_leaf, low, key) if value.l_key is not None else 0
-        r_height = walk(value.r_key, value.r_leaf, key, high) if value.r_key is not None else 0
-        assert value.l_height == l_height, f"node {key}: stored l_height {value.l_height} != {l_height}"
-        assert value.r_height == r_height, f"node {key}: stored r_height {value.r_height} != {r_height}"
+        l_height = walk(data.l_key, data.l_leaf, low, key) if data.l_key is not None else 0
+        r_height = walk(data.r_key, data.r_leaf, key, high) if data.r_key is not None else 0
+        assert data.l_height == l_height, f"node {key}: stored l_height {data.l_height} != {l_height}"
+        assert data.r_height == r_height, f"node {key}: stored r_height {data.r_height} != {r_height}"
         assert abs(l_height - r_height) <= 1, f"node {key} unbalanced (l={l_height}, r={r_height})"
         return 1 + max(l_height, r_height)
 
@@ -92,14 +84,11 @@ def verify_bplus_invariants(omap, model):
     leaf_depths = set()
     min_keys = (omap._order - 1) // 2
 
-    def is_leaf(value):
-        return len(value.keys) == len(value.values)
-
     def walk(block_id, leaf, low, high, depth):
         assert block_id in blocks, f"block {block_id} referenced by a pointer but not present"
         data = blocks[block_id]
         assert data.leaf == leaf, f"block {block_id}: stored leaf {data.leaf} != pointer {leaf}"
-        value = data.value
+        value = data
         assert list(value.keys) == sorted(value.keys), f"keys unsorted in block {block_id}: {value.keys}"
         assert len(value.keys) < omap._order, f"block {block_id} overfull: {len(value.keys)} keys"
         if depth > 0:
@@ -108,15 +97,15 @@ def verify_bplus_invariants(omap, model):
             assert (low is None or low <= k) and (high is None or k < high), (
                 f"key {k} outside routing bounds ({low}, {high}) in block {block_id}"
             )
-        if is_leaf(value):
+        if isinstance(value, BPlusLeaf):
             leaf_depths.add(depth)
             for k, v in zip(value.keys, value.values, strict=True):
                 assert k not in collected, f"duplicate key {k} across leaves"
                 collected[k] = v
         else:
-            assert len(value.values) == len(value.keys) + 1, f"internal arity off in block {block_id}"
+            assert len(value.children) == len(value.keys) + 1, f"internal arity off in block {block_id}"
             low_i = low
-            for i, (child_id, child_leaf) in enumerate(value.values):
+            for i, (child_id, child_leaf) in enumerate(value.children):
                 high_i = value.keys[i] if i < len(value.keys) else high
                 walk(child_id, child_leaf, low_i, high_i, depth + 1)
                 low_i = value.keys[i] if i < len(value.keys) else low_i
@@ -127,10 +116,6 @@ def verify_bplus_invariants(omap, model):
     assert collected == model, (
         f"leaves != model (missing {set(model) - set(collected)}, extra {set(collected) - set(model)})"
     )
-
-
-def _textbook(config_cls):
-    return config_cls.textbook_fields()
 
 
 ORAM_MAKERS = {
@@ -164,10 +149,10 @@ class OmapSpec:
     @staticmethod
     def exact_labels(omap) -> set[str]:
         if isinstance(omap, OramOstOmap):
-            return {omap._ost._name}
+            return {omap._ost.name}
         if isinstance(omap, GroupOmap):
-            return {omap._lower_oram._name}
-        return {omap._name}
+            return {omap._lower_oram.name}
+        return {omap.name}
 
 
 def _ods_builder(cls, config_cls, extra):
@@ -183,31 +168,31 @@ def _upper_build_file(build_file):
 
 def _ost_builder(ods_cls, ods_config_cls, extra, oram_kind):
     def build(*, client, num_data, encryptor=None, build_file=None, **kw):
-        ost = ods_cls(
-            ods_config_cls(num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **extra, **kw)
+        ost = ods_config_cls(
+            num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **extra, **kw
         )
         oram = ORAM_MAKERS[oram_kind](
             num_data=num_data,
-            data_size=OramOstOmap.oram_data_size(ost),
+            data_size=OramOstOmap.oram_data_size(ods_cls, ost),
             client=client,
             encryptor=encryptor,
             build_file=_upper_build_file(build_file),
         )
-        return OramOstOmap(OramOstOmapConfig(num_data=num_data), ost=ost, oram=oram)
+        return OramOstOmap(ost=ods_cls, ost_config=ost, oram=oram)
 
     return build
 
 
 def _group_builder(oram_kind):
     def build(*, client, num_data, encryptor=None, build_file=None, **kw):
+        config = GroupOmapConfig(num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **kw)
         upper = ORAM_MAKERS[oram_kind](
             num_data=num_data,
-            data_size=GroupOmap.upper_oram_data_size(num_data),
+            data_size=GroupOmap.upper_oram_data_size(config),
             client=client,
             encryptor=encryptor,
             build_file=_upper_build_file(build_file),
         )
-        config = GroupOmapConfig(num_data=num_data, client=client, encryptor=encryptor, build_file=build_file, **kw)
         return GroupOmap(config, upper_oram=upper)
 
     return build
@@ -263,7 +248,15 @@ _SPECS: list[tuple[str, OmapSpec]] = [
     ("avl_cached", _avl({"search": 8, "insert": 9, "delete": 11, "hidden": 11}, cached=True)),
     ("avl_batched", _avl({"search": 8, "insert": 16, "delete": 16, "hidden": 16}, batch_size=4)),
     ("avl_batched_cached", _avl({"search": 8, "insert": 9, "delete": 11, "hidden": 11}, batch_size=4, cached=True)),
-    ("avl_textbook", _avl({"search": 25, "insert": 24, "delete": 26, "hidden": 26}, **_textbook(AvlOmapConfig))),
+    (
+        "avl_raised_budgets",
+        _avl(
+            {"search": 25, "insert": 24, "delete": 26, "hidden": 26},
+            search_budget=AccessBudget(3, 1),
+            insert_budget=AccessBudget(3, 0),
+            delete_budget=AccessBudget(3, 2),
+        ),
+    ),
     ("bplus", _bplus({"search": 4, "insert": 7, "delete": 7, "hidden": 7}, order=5)),
     ("bplus_one_path", _bplus({"search": 4, "insert": 10, "delete": 13, "hidden": 13}, order=5, paths_per_round=1)),
     ("bplus_cached", _bplus({"search": 4, "insert": 4, "delete": 4, "hidden": 4}, order=5, cached=True)),
@@ -287,8 +280,14 @@ _SPECS: list[tuple[str, OmapSpec]] = [
         ),
     ),
     (
-        "bplus_textbook",
-        _bplus({"search": 8, "insert": 12, "delete": 13, "hidden": 13}, order=5, **_textbook(BPlusOmapConfig)),
+        "bplus_one_path_raised_budgets",
+        _bplus(
+            {"search": 8, "insert": 12, "delete": 13, "hidden": 13},
+            order=5,
+            paths_per_round=1,
+            search_budget=AccessBudget(2, 0),
+            insert_budget=AccessBudget(3, 0),
+        ),
     ),
     *(_ost(ods_kind, oram_kind) for ods_kind in ("avl", "bplus") for oram_kind in ("path", "da", "recursive")),
     *(_group(oram_kind, distinguishable=flag) for oram_kind in ("path", "da", "recursive") for flag in (False, True)),

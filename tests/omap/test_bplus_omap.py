@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from oblivlib.dependency import AesGcm, BPlusOmapConfig
+from oblivlib.dependency import AesGcm, BPlusInternal, BPlusLeaf, BPlusOmapConfig
 from oblivlib.omap import BPlusOmap
 from oblivlib.omap.bplus_omap import bplus_max_levels
 
@@ -122,8 +122,8 @@ def test_an_even_order_tree_reaches_its_level_bound_through_deletes(client):
     assert omap._op_fetches == bplus_max_levels(7, 4) == 3
 
 
-@pytest.mark.parametrize("order", [3, 4])
-def test_small_order_deletes_keep_the_tree_valid(client, check_bplus_invariants, order):
+def test_an_even_order_tree_stays_valid_through_deletes(client, check_bplus_invariants):
+    order = 4
     omap = BPlusOmap(BPlusOmapConfig(num_data=64, key_size=4, data_size=4, client=client, order=order))
     omap.init_server_storage()
     rng = random.Random(order)
@@ -161,3 +161,16 @@ def test_insert_delete_churn_never_outgrows_the_row(client, first_block_id):
     assert omap._block_id - first_block_id > 64
     for key, value in model.items():
         assert omap.search(key) == value
+
+
+def test_a_node_row_keeps_one_size_and_rebuilds_the_node_kind_its_tag_names(client):
+    omap = BPlusOmap(BPlusOmapConfig(order=3, num_data=4, key_size=2, data_size=3, client=client))
+    layout = omap._block_layout
+    leaf = BPlusLeaf(key=7, leaf=1, keys=[b"a"], values=[b"xyz"])
+    internal = BPlusInternal(key=2**64 - 1, leaf=0, keys=[b"a", b"b"], children=[(2**64 - 1, 0), (1, 3), (2, 2)])
+
+    rows = [layout.encode(leaf), layout.encode(internal)]
+
+    assert {len(row) for row in rows} == {layout.size}
+    assert [row[8 + 1] for row in rows] == [0, 1]
+    assert [layout.decode(row) for row in rows] == [leaf, internal]

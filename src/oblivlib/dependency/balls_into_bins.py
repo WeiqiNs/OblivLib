@@ -3,7 +3,7 @@ import math
 
 def max_bin_load(num_bins: int, security_bits: int = 128) -> int:
     x = (math.log2(num_bins) + security_bits - 1) / math.e
-    return math.ceil(math.e ** (lambert_w(x) + 1))
+    return math.ceil(math.exp(lambert_w(x) + 1))
 
 
 def lambert_w(x: float, tol: float = 1e-10, max_iter: int = 100) -> float:

@@ -20,7 +20,7 @@ class _Region(ABC):
 
 class _MemoryRegion(_Region):
     def __init__(self, length: int):
-        self._buffer = bytearray(length)
+        self._buffer: bytearray = bytearray(length)
 
     @override
     def read(self, offset: int, length: int) -> bytes:
@@ -37,7 +37,7 @@ class _MemoryRegion(_Region):
 
 class _FileRegion(_Region):
     def __init__(self, path: Path):
-        self._fd = os.open(path, os.O_RDWR)
+        self._fd: int = os.open(path, os.O_RDWR)
 
     @override
     def read(self, offset: int, length: int) -> bytes:
@@ -45,7 +45,7 @@ class _FileRegion(_Region):
 
     @override
     def write(self, offset: int, data: bytes) -> None:
-        os.pwrite(self._fd, data, offset)
+        _ = os.pwrite(self._fd, data, offset)
 
     @override
     def close(self) -> None:
@@ -56,7 +56,7 @@ class TreeStore(ABC):
     """A server-side tree: ``2**level - 1`` rows in heap order, where ``b""`` is an absent row."""
 
     def __init__(self, level: int):
-        self._level = level
+        self._level: int = level
 
     @property
     def level(self) -> int:
@@ -87,9 +87,9 @@ class FixedRowStore(TreeStore):
 
     def __init__(self, level: int, row_bytes: int, region: _Region):
         super().__init__(level)
-        self._row_bytes = row_bytes
-        self._zero_row = bytes(row_bytes)
-        self._region = region
+        self._row_bytes: int = row_bytes
+        self._zero_row: bytes = bytes(row_bytes)
+        self._region: _Region = region
 
     @classmethod
     def in_memory(cls, level: int, row_bytes: int) -> "FixedRowStore":

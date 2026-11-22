@@ -5,13 +5,12 @@ import shutil
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, override
+from typing import Any, Literal, override
 
 import pytest
 
 from oblivlib.dependency import (
     AesGcm,
-    Backend,
     Client,
     LocalBackend,
     LoopbackTransport,
@@ -28,29 +27,15 @@ DEFAULT_NUM_DATA = 2**12
 AccessShape = tuple[dict[str, frozenset[int]], dict[str, tuple[int, ...]]]
 
 
-class RecordingBackend(Backend):
-    def __init__(self, inner: Backend):
-        self._inner = inner
+class RecordingBackend(LocalBackend):
+    def __init__(self, server: StorageServer):
+        super().__init__(server)
         self.messages: list[Request] = []
 
     @override
     def call(self, message: Request) -> Reply:
         self.messages.append(message)
-        return self._inner.call(message)
-
-    @property
-    @override
-    def wire_bytes(self) -> int:
-        return self._inner.wire_bytes
-
-    @property
-    @override
-    def storage_dir(self) -> Path | None:
-        return self._inner.storage_dir
-
-    @override
-    def close(self) -> None:
-        self._inner.close()
+        return super().call(message)
 
     @property
     def batches(self) -> list[Batch]:
@@ -82,8 +67,8 @@ def _coalesce(shapes: list[AccessShape]) -> list[AccessShape]:
 
 def _read_all_blocks(storage):
     client = storage._client
-    client.add_read_path(storage._name, range(storage._leaf_range))
-    path = storage._cipher.open_path(client.execute().require(storage._name))
+    client.add_read_path(storage.name, range(storage.leaf_range))
+    path = storage._cipher.open_path(client.execute().require(storage.name))
     return [data for bucket in path.values() for data in bucket]
 
 
@@ -93,7 +78,8 @@ def _storages(scheme):
     if isinstance(scheme, GroupOmap):
         return [*_storages(scheme._upper_oram), scheme._lower_oram]
     if isinstance(scheme, TreeBaseOram):
-        return [scheme, *scheme._levels]
+        levels: list[Any] = list(scheme._pos_map_levels())
+        return [scheme, *levels]
     return [scheme]
 
 
@@ -104,7 +90,7 @@ def _duplicate_blocks(scheme):
         if isinstance(storage, OstBaseOmap):
             held += storage._local.to_list()
         counts = Counter(data.key for data in held)
-        duplicates.update({(storage._name, key): count for key, count in counts.items() if count > 1})
+        duplicates.update({(storage.name, key): count for key, count in counts.items() if count > 1})
     return duplicates
 
 
@@ -121,25 +107,15 @@ def num_data() -> int:
 
 
 @pytest.fixture
-def test_file(tmp_path):
-    return tmp_path / "test.bin"
-
-
-@pytest.fixture
 def client():
     return Client.local()
-
-
-@pytest.fixture
-def remote_client():
-    return Client(TransportBackend(LoopbackTransport(StorageServer())))
 
 
 @pytest.fixture
 def recorded_client():
 
     def make(*, defer_writes: bool = True, server: StorageServer | None = None) -> tuple[Client, RecordingBackend]:
-        recorder = RecordingBackend(LocalBackend(server or StorageServer()))
+        recorder = RecordingBackend(server or StorageServer())
         return Client(recorder, defer_writes=defer_writes), recorder
 
     return make

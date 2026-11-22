@@ -1,4 +1,4 @@
-from oblivlib.dependency import Data
+from oblivlib.dependency import OramBlock
 from oblivlib.dependency.heap_index import (
     compute_level,
     empty_path,
@@ -43,20 +43,20 @@ def test_leaf_lca_matches_parent_walk():
 def test_fill_data_to_path_places_at_deepest_legal_bucket():
     path = empty_path(level=11, leaves=[0, 2])
     for data in (
-        Data(key=0, leaf=0, value="Path0"),
-        Data(key=0, leaf=0, value="Up"),
-        Data(key=1, leaf=2, value="Path2"),
-        Data(key=2, leaf=10, value="Common"),
+        OramBlock(key=0, leaf=0, value=b"Path0"),
+        OramBlock(key=0, leaf=0, value=b"Up"),
+        OramBlock(key=1, leaf=2, value=b"Path2"),
+        OramBlock(key=2, leaf=10, value=b"Common"),
     ):
         assert fill_data_to_path(data, path, leaves=[0, 2], level=11, bucket_size=1)
-    assert path[1023][0].value == "Path0"
-    assert path[1025][0].value == "Path2"
-    assert path[511][0].value == "Up"
-    assert path[63][0].value == "Common"
+    assert path[1023][0].value == b"Path0"
+    assert path[1025][0].value == b"Path2"
+    assert path[511][0].value == b"Up"
+    assert path[63][0].value == b"Common"
 
 
 def test_fill_data_to_path_returns_false_when_full():
     path = empty_path(level=4, leaves=[0])
     for i in range(4):
-        assert fill_data_to_path(Data(key=i, leaf=0, value=i), path, leaves=[0], level=4, bucket_size=1)
-    assert not fill_data_to_path(Data(key=99, leaf=0, value=99), path, leaves=[0], level=4, bucket_size=1)
+        assert fill_data_to_path(OramBlock(key=i, leaf=0, value=bytes([i])), path, leaves=[0], level=4, bucket_size=1)
+    assert not fill_data_to_path(OramBlock(key=99, leaf=0, value=b"c"), path, leaves=[0], level=4, bucket_size=1)

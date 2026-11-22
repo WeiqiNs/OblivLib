@@ -1,84 +1,86 @@
 from collections.abc import Callable
-from typing import Any, override
+from typing import override
 
-from oblivlib.dependency import Blake2Prf, ContractError, hash_data_to_leaf, hash_data_to_map
-from oblivlib.dependency.config import OramOstOmapConfig
+from oblivlib.dependency import Blake2Prf, hash_data_to_leaf, hash_data_to_map
+from oblivlib.dependency.balls_into_bins import max_bin_load
+from oblivlib.dependency.config import TreeOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
-from oblivlib.omap.base_omap import BaseOmap
-from oblivlib.omap.ost_base_omap import ROOT, OstBaseOmap
-from oblivlib.oram.tree_base_oram import TreeBaseOram
+from oblivlib.dependency.layout import Optional
+from oblivlib.dependency.types import Block
+from oblivlib.omap.base_omap import BaseOmap, KvList
+from oblivlib.omap.ost_base_omap import OstBaseOmap, Root
+from oblivlib.oram.tree_base_oram import Oram
 
 
-class OramOstOmap(BaseOmap):
-    def __init__(self, config: OramOstOmapConfig, ost: OstBaseOmap[Any, Any], oram: TreeBaseOram[Any, Any]):
-        required = self.oram_data_size(ost)
-        if oram._data_size < required:
+class OramOstOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](BaseOmap):
+    def __init__(self, *, ost: type[OstBaseOmap[OmapConfigT, KeyT, NodeT]], ost_config: OmapConfigT, oram: Oram):
+        num_data = ost_config.num_data
+        if oram.num_data != num_data:
             raise ValueError(
-                f"OramOstOmap ORAM data_size={oram._data_size} is too small for an ODS root pointer; it must be at "
-                + f"least {required}. Size it with OramOstOmap.oram_data_size(ost)."
+                f"OramOstOmap ORAM num_data={oram.num_data} differs from its tree map's num_data={num_data}; the "
+                + "ORAM needs one slot per tree."
+            )
+        self._root_layout: Optional[Root[KeyT]] = ost.root_layout(ost_config)
+        required = self._root_layout.size
+        if oram.data_size < required:
+            raise ValueError(
+                f"OramOstOmap ORAM data_size={oram.data_size} is too small for an ODS root pointer; it must be at "
+                + f"least {required}. Size it with OramOstOmap.oram_data_size(ost, ost_config)."
             )
 
-        self._config: OramOstOmapConfig = config
-        self._ost: OstBaseOmap[Any, Any] = ost
-        self._oram: TreeBaseOram[Any, Any] = oram
-
-        self._ost.update_mul_tree_height(num_tree=self._num_data)
-
+        self._ost: OstBaseOmap[OmapConfigT, KeyT, NodeT] = ost(
+            ost_config, height_keys=min(num_data, max_bin_load(num_data))
+        )
+        self._oram: Oram = oram
         self._prf: Blake2Prf = Blake2Prf()
 
     @staticmethod
-    def oram_data_size(ost: OstBaseOmap[Any, Any]) -> int:
-        return ost.root_layout.size
+    def oram_data_size[C: TreeOmapConfig, K, N: Block[object]](ost: type[OstBaseOmap[C, K, N]], ost_config: C) -> int:
+        return ost.root_layout(ost_config).size
 
-    def _encode_root(self, root: ROOT | None) -> bytes:
-        return self._ost.root_layout.encode(root)
+    def _encode_root(self, root: Root[KeyT] | None) -> bytes:
+        return self._root_layout.encode(root)
 
-    def _decode_root(self, value: bytes) -> ROOT | None:
-        return None if value == b"" else self._ost.root_layout.decode(value)
+    def _decode_root(self, value: bytes) -> Root[KeyT] | None:
+        return None if value == b"" else self._root_layout.decode(value)
 
     @property
     def _num_data(self) -> int:
-        return self._config.num_data
+        return self._ost.num_data
 
     @property
     def _identity(self) -> str:
-        return f"{type(self).__name__} {self._ost._name!r}"
+        return f"{type(self).__name__} {self._ost.name!r}"
 
     @override
-    def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
-        require_omap_init(self._identity, data or [], key_size=self._ost._key_size, data_size=self._ost._data_size)
-        if len(data or []) > self._num_data:
-            raise ContractError(f"{self._identity}: {len(data or [])} initial keys exceed num_data={self._num_data}.")
-        data_map = hash_data_to_map(prf=self._prf, data=data or [], map_size=self._num_data)
-        data_list = [data_map[key] for key in range(self._num_data)]
-
-        roots = self._ost.init_mul_tree_server_storage(data_list=data_list)
+    def init_server_storage(self, data: KvList | None = None) -> None:
+        data = data or []
+        require_omap_init(self._identity, data, key_size=self._ost.key_size, data_size=self._ost.data_size)
+        data_map = hash_data_to_map(prf=self._prf, data=data, map_size=self._num_data)
+        roots = self._ost.init_mul_tree_server_storage([data_map[key] for key in range(self._num_data)])
         self._oram.init_server_storage((key, self._encode_root(root)) for key, root in enumerate(roots))
 
     def _on_slot[T](self, key: bytes, op: Callable[[], T]) -> T:
         def run(slot: bytes) -> tuple[bytes, T]:
-            self._ost.root = self._decode_root(slot)
-            result = op()
-            return self._encode_root(self._ost.root), result
+            root, result = self._ost.on_root(self._decode_root(slot), op)
+            return self._encode_root(root), result
 
         return self._oram.update(hash_data_to_leaf(prf=self._prf, data=key, map_size=self._num_data), run)
 
     @override
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
-        require_omap_key(self._identity, key, self._ost._key_size)
+        require_omap_key(self._identity, key, self._ost.key_size)
         if value is not None:
-            require_value(self._identity, value, self._ost._data_size)
-        return self._on_slot(key, lambda: self._ost._search(key, value))
+            require_value(self._identity, value, self._ost.data_size)
+        return self._on_slot(key, lambda: self._ost.search(key, value))
 
     @override
     def insert(self, key: bytes, value: bytes) -> None:
-        require_omap_key(self._identity, key, self._ost._key_size)
-        require_value(self._identity, value, self._ost._data_size)
-        if self._ost._size >= self._num_data:
-            raise ContractError(f"{self._identity}: the map already holds num_data={self._num_data} keys.")
-        self._ost._require_room(1)
-        self._on_slot(key, lambda: self._ost._insert(key, value))
+        require_omap_key(self._identity, key, self._ost.key_size)
+        require_value(self._identity, value, self._ost.data_size)
+        self._ost.require_room(1)
+        self._on_slot(key, lambda: self._ost.insert(key, value))
 
     def delete(self, key: bytes) -> bytes | None:
-        require_omap_key(self._identity, key, self._ost._key_size)
-        return self._on_slot(key, lambda: self._ost._delete(key))
+        require_omap_key(self._identity, key, self._ost.key_size)
+        return self._on_slot(key, lambda: self._ost.delete(key))

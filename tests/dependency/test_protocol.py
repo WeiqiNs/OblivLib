@@ -19,20 +19,15 @@ from oblivlib.dependency.protocol import (
     Ok,
     ReadPath,
     Shutdown,
+    Timed,
     WritePath,
     WriteRange,
-    _tag_table,
-    decode_reply,
     decode_request,
+    decode_timed,
     encode,
     error_reply,
     expect_reply,
 )
-
-
-def test_tag_tables_reject_duplicate_tags():
-    with pytest.raises(ValueError, match="duplicate tag 'Ok'"):
-        _tag_table((Ok, Ok))
 
 
 def test_every_message_round_trips():
@@ -65,7 +60,7 @@ def test_every_message_round_trips():
     for request in requests:
         assert decode_request(encode(request)) == request
     for reply in replies:
-        assert decode_reply(encode(reply)) == reply
+        assert decode_timed(encode(Timed(server_ns=7, reply=reply))) == Timed(server_ns=7, reply=reply)
 
 
 def test_error_replies_map_to_error_classes():
@@ -75,7 +70,7 @@ def test_error_replies_map_to_error_classes():
         (FileNotFoundError("gone"), StorageError),
         (RuntimeError("boom"), ServerError),
     ]:
-        reply = decode_reply(encode(error_reply(exc)))
+        reply = error_reply(exc)
         with pytest.raises(kind, match=str(exc)):
             expect_reply(reply, Ok)
 

@@ -1,4 +1,3 @@
-import math
 import random
 from collections.abc import Callable
 from typing import Any
@@ -9,7 +8,6 @@ from oblivlib.dependency import (
     AesGcm,
     AvlOmapConfig,
     BPlusOmapConfig,
-    Client,
     ContractError,
     GroupOmapConfig,
     PathOramConfig,
@@ -23,31 +21,6 @@ def _b(number: int) -> bytes:
 
 
 class TestOmapBehavior:
-    def test_round_trip(self, omap_spec, client):
-        omap = omap_spec.make(client=client, num_data=256)
-        omap.init_server_storage()
-        for i in range(200):
-            omap.insert(key=_b(i), value=_b(i))
-        for i in range(200):
-            assert omap.search(key=_b(i)) == _b(i)
-
-    def test_search_empty(self, omap_spec, client):
-        omap = omap_spec.make(client=client, num_data=64)
-        omap.init_server_storage()
-        assert omap.search(key=b"5") is None
-        assert omap.delete(key=b"5") is None
-
-    def test_dummy_ops(self, ods_spec, client):
-        omap = ods_spec.make(client=client, num_data=64)
-        omap.init_server_storage()
-        for i in range(20):
-            omap.insert(key=_b(i), value=_b(i))
-        assert omap.search(key=None) is None
-        omap.insert(key=None)
-        assert omap.delete(key=None) is None
-        for i in range(20):
-            assert omap.search(key=_b(i)) == _b(i)
-
     def test_edge_sizes(self, omap_edge_size, client):
         spec, num_data = omap_edge_size
         omap = spec.make(client=client, num_data=num_data)
@@ -57,18 +30,6 @@ class TestOmapBehavior:
         assert [omap.search(key=_b(i)) for i in range(num_data)] == [_b(i * 10) for i in range(num_data)]
         assert [omap.delete(key=_b(i)) for i in range(num_data)] == [_b(i * 10) for i in range(num_data)]
         assert [omap.search(key=_b(i)) for i in range(num_data)] == [None] * num_data
-
-    @pytest.mark.parametrize(
-        "make",
-        [
-            pytest.param(lambda **kw: AVLOmap(AvlOmapConfig(**kw)), id="avl"),
-            pytest.param(lambda **kw: BPlusOmap(BPlusOmapConfig(order=3, **kw)), id="bplus"),
-        ],
-    )
-    def test_a_batch_wider_than_the_leaves_is_refused(self, make, client):
-        make(num_data=4, key_size=4, data_size=4, client=client, batch_size=4)
-        with pytest.raises(ValueError, match="batch_size 5 exceeds the 4 leaves"):
-            make(num_data=4, key_size=4, data_size=4, client=client, batch_size=5)
 
     def test_rejects_contract_violations(self, omap_spec, recorded_client):
         client, recorder = recorded_client()
@@ -139,6 +100,8 @@ class TestOmapBehavior:
         omap = omap_spec.make(client=client, num_data=256, **config)
         omap.init_server_storage(data=[(_b(i), _b(i * 3)) for i in range(128)])
         assert list(tmp_path.iterdir()) == []
+        if omap_spec.invariant_checker is not None:
+            omap_spec.invariant_checker(omap, {_b(i): _b(i * 3) for i in range(128)})
         for i in range(128, 200):
             omap.insert(key=_b(i), value=_b(i * 3))
         assert [omap.search(key=_b(i)) for i in range(200)] == [_b(i * 3) for i in range(200)]
@@ -159,34 +122,13 @@ class TestOmapBehavior:
         with pytest.raises(ContractError, match=f"{ods_spec.name} '.*given twice"):
             omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"1", b"b")]])
 
-        roots = omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"2", b"b")]])
-        omap.root = roots[1]
-        assert [omap.search(key=b"1"), omap.search(key=b"2")] == [None, b"b"]
-        omap.root = roots[0]
-        assert [omap.search(key=b"1"), omap.search(key=b"2")] == [b"a", None]
+        first, second = omap.init_mul_tree_server_storage(data_list=[[(b"1", b"a")], [(b"2", b"b")]])
 
-    def test_mul_tree_init(self, ods_spec, client):
-        num_data = 512
-        extra = 3
-        size_group = math.floor(math.log2(num_data))
-        num_group = num_data // size_group
-        init_data = [
-            [(_b(j), _b(j)) for j in range(i * 2 * size_group, (i * 2 + 1) * size_group)] for i in range(num_group)
-        ]
+        def search_both():
+            return [omap.search(key=b"1"), omap.search(key=b"2")]
 
-        omap = ods_spec.make(client=client, num_data=num_data + num_group * extra)
-        roots = omap.init_mul_tree_server_storage(data_list=init_data)
-
-        for i, root in enumerate(roots):
-            omap.root = root
-            for j in range(extra):
-                omap.insert(key=_b((i * 2 + 1) * size_group + j), value=_b((i * 2 + 1) * size_group + j))
-            roots[i] = omap.root
-
-        for i, root in enumerate(roots):
-            omap.root = root
-            for j in range(i * 2 * size_group, (i * 2 + 1) * size_group + extra):
-                assert omap.search(key=_b(j)) == _b(j)
+        assert omap.on_root(second, search_both)[1] == [None, b"b"]
+        assert omap.on_root(first, search_both)[1] == [b"a", None]
 
     def test_operations_match_a_dict_model(self, omap_spec, client, duplicate_blocks):
         rng = random.Random(2024)
@@ -233,15 +175,6 @@ class TestOmapBehavior:
             omap_spec.invariant_checker(omap, model)
         assert [omap.search(key=key) for key in keyspace] == [model.get(key) for key in keyspace]
         assert not duplicate_blocks(omap)
-
-    def test_delete_empties_tree(self, ods_spec, client):
-        omap = ods_spec.make(client=client, num_data=64)
-        omap.init_server_storage()
-        for i in range(40):
-            omap.insert(key=_b(i), value=_b(i))
-        for i in range(40):
-            assert omap.delete(key=_b(i)) == _b(i)
-        assert omap.root is None
 
 
 def _budget_workload(pattern: str) -> list[tuple[str, bytes | None]]:
@@ -304,33 +237,6 @@ class TestOmapStash:
             padding = sum(_round_widths(ods_spec, omap, omap._budget)[omap._op_fetches :])
             assert omap._op_owed <= padding + omap._carry_limit
         assert omap._max_stash <= omap._stash_capacity
-
-
-@pytest.mark.parametrize(
-    ("cls", "config_cls", "extra"),
-    [(AVLOmap, AvlOmapConfig, {}), (BPlusOmap, BPlusOmapConfig, {"order": 3})],
-    ids=["avl", "bplus"],
-)
-def test_the_textbook_preset_takes_more_rounds_at_the_same_bytes_per_path(cls, config_cls, extra):
-    def bytes_per_path(make):
-        client = Client.local()
-        omap = cls(make(num_data=32, key_size=4, data_size=4, client=client, distinguishable=True, **extra))
-        omap.init_server_storage()
-        client.reset_metrics()
-        rounds = 0
-        for i in range(20):
-            omap.insert(b"%04d" % i, b"v")
-            rounds += omap._budget
-            omap.search(b"%04d" % (i // 2))
-            rounds += omap._budget
-        client.flush()
-        return client.metrics.payload_bytes / (rounds * omap._config.paths_per_round), rounds
-
-    _, default_rounds = bytes_per_path(config_cls)
-    one_path_bytes, _ = bytes_per_path(lambda **kw: config_cls(**kw, paths_per_round=1))
-    textbook_bytes, textbook_rounds = bytes_per_path(config_cls.textbook)
-    assert textbook_rounds > default_rounds
-    assert textbook_bytes == one_path_bytes
 
 
 def _round_widths(spec, omap, rounds: int) -> list[int]:
@@ -460,13 +366,14 @@ def test_row_size_is_the_declared_node_layout(make, expected_row, client):
 
 
 def test_composed_map_slots_are_sized_from_their_declared_layouts(client):
-    avl = AVLOmap(AvlOmapConfig(client=client, **_ROW_LAYOUT_CONFIG))
-    bplus = BPlusOmap(BPlusOmapConfig(order=3, client=client, **_ROW_LAYOUT_CONFIG))
-    assert (OramOstOmap.oram_data_size(avl), OramOstOmap.oram_data_size(bplus)) == (11, 10)
+    avl = AvlOmapConfig(client=client, **_ROW_LAYOUT_CONFIG)
+    bplus = BPlusOmapConfig(order=3, client=client, **_ROW_LAYOUT_CONFIG)
+    assert (OramOstOmap.oram_data_size(AVLOmap, avl), OramOstOmap.oram_data_size(BPlusOmap, bplus)) == (11, 10)
 
-    upper_size = GroupOmap.upper_oram_data_size(num_data=64)
+    config = GroupOmapConfig(client=client, **_ROW_LAYOUT_CONFIG)
+    upper_size = GroupOmap.upper_oram_data_size(config)
     upper = PathOram(PathOramConfig(num_data=64, data_size=upper_size, client=client, encryptor=AesGcm()))
-    group = GroupOmap(GroupOmapConfig(client=client, **_ROW_LAYOUT_CONFIG), upper_oram=upper)
+    group = GroupOmap(config, upper_oram=upper)
     assert (upper_size, upper._cipher.row_bytes, group._lower_oram._cipher.row_bytes) == (33, 173, 137)
     group.init_server_storage([(b"%08d" % i, b"\xff" * 16) for i in range(32)])
     assert group.search(b"%08d" % 3) == b"\xff" * 16

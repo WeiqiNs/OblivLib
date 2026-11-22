@@ -1,144 +1,143 @@
 import secrets
-from typing import Any, NamedTuple, Protocol, override
+from typing import NamedTuple, override
 
-from oblivlib.dependency.config import FreecursiveOramConfig, ResetMethod
-from oblivlib.dependency.tree_storage_base import TreeStorageBase
-from oblivlib.oram.counter_oram import GC, CounterMixin, CounterOram, CounterPosMapLevel
+from oblivlib.dependency import Blake2Prf
+from oblivlib.dependency.config import FreecursiveOramConfig
+from oblivlib.dependency.types import Unset
+from oblivlib.oram.counter_oram import GC, CounterOram, CounterPosMapLevel, Counters
 from oblivlib.oram.tree_base_oram import pos_map_keys
 
 _CSPRNG = secrets.SystemRandom()
 
 
-class ResetEntry(NamedTuple):
-    key: int | None
+class _Move(NamedTuple):
+    key: int
+    leaf: int
+
+
+class _ResetEntry(NamedTuple):
     cur_leaf: int
-    new_leaf: int | None
+    move: _Move | None
 
 
-ResetChunk = list[ResetEntry]
+ResetChunk = list[_ResetEntry]
 ResetLeaves = list[ResetChunk]
 
 
-def _split_at_key(chunks: ResetLeaves, key: int) -> tuple[ResetLeaves, ResetEntry, ResetChunk, ResetLeaves]:
+def _split_at_key(chunks: ResetLeaves, key: int) -> tuple[ResetLeaves, _Move, ResetChunk, ResetLeaves]:
     for index, chunk in enumerate(chunks):
         for entry in chunk:
-            if entry.key == key:
-                return chunks[:index], entry, chunk, chunks[index + 1 :]
+            if entry.move is not None and entry.move.key == key:
+                return chunks[:index], entry.move, chunk, chunks[index + 1 :]
     raise KeyError(f"Key {key} is in no reset chunk.")
 
 
-def _remap_others(storage: TreeStorageBase[FreecursiveOramConfig], chunk: ResetChunk, key: int | None) -> None:
-    for entry in chunk:
-        if entry.key != key:
-            storage._update_stash_leaf(key=entry.key, new_leaf=entry.new_leaf)
+def _leaves(chunk: ResetChunk) -> list[int]:
+    return [entry.cur_leaf for entry in chunk]
 
 
-def _pass_reset_chunk(storage: TreeStorageBase[FreecursiveOramConfig], chunk: ResetChunk) -> None:
-    leaves = [entry.cur_leaf for entry in chunk]
-    storage._read_paths(leaves)
-    _remap_others(storage, chunk, key=None)
-    storage._write_paths()
+def _moves(chunk: ResetChunk, *, skip: int | None = None) -> list[_Move]:
+    return [entry.move for entry in chunk if entry.move is not None and entry.move.key != skip]
 
 
-class FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
-    @property
-    def _reset_method(self) -> ResetMethod:
-        return self._config.reset_method
+class _FreecursiveCounters(Counters):
+    def __init__(self, config: FreecursiveOramConfig, prf: Blake2Prf, *, num_data: int, leaf_range: int):
+        super().__init__(config, prf, num_data=num_data, leaf_range=leaf_range)
+        self._hard_reset: bool = config.reset_method == "hard"
+        self._reset_prob: float = 1 / config.num_ic if config.reset_prob is None else config.reset_prob
 
-    @property
-    def _reset_prob(self) -> float:
-        return 1 / self._num_ic if self._config.reset_prob is None else self._config.reset_prob
-
-    def _advance(self, key: int, word: int, offset: int) -> tuple[int, ResetLeaves]:
-        counters = self._counters
-        gc = counters.get(word, GC)
-        ic = counters.get(word, self._ic(offset))
-        if self._reset_method == "prob":
-            reset = _CSPRNG.random() <= self._reset_prob
+    def advance(self, key: int, word: int, offset: int) -> tuple[int, ResetLeaves]:
+        fields = self.fields
+        gc = fields.get(word, GC)
+        ic = fields.get(word, self.ic(offset))
+        if self._hard_reset:
+            reset = ic + 1 >= 1 << self.ic_length
         else:
-            reset = ic + 1 >= 1 << self._ic_length
+            reset = _CSPRNG.random() <= self._reset_prob
         if reset:
-            return counters.set(0, GC, gc + 1), self._get_reset_leaves(key, word)
-        return counters.set(word, self._ic(offset), ic + 1), self._single_entry(key, offset, gc, ic)
+            return fields.set(0, GC, gc + 1), self._reset_leaves(key, word)
+        return fields.set(word, self.ic(offset), ic + 1), self._single_entry(key, offset, gc, ic)
 
-    def _get_reset_leaves(self, key: int, word: int) -> ResetLeaves:
-        num_ic, counters = self._num_ic, self._counters
-        gc = counters.get(word, GC)
-        ic = [counters.get(word, self._ic(i)) for i in range(num_ic)]
+    def _reset_leaves(self, key: int, word: int) -> ResetLeaves:
+        num_ic, fields = self.num_ic, self.fields
+        gc = fields.get(word, GC)
+        ic = [fields.get(word, self.ic(i)) for i in range(num_ic)]
 
         reset_leaves = [
-            ResetEntry(
-                key * num_ic + i,
-                self._get_previous_leaf_from_prf(key=key * num_ic + i, gc=gc, ic=ic[i]),
-                self._get_previous_leaf_from_prf(key=key * num_ic + i, gc=gc + 1, ic=0),
+            _ResetEntry(
+                self.leaf(key * num_ic + i, gc=gc, ic=ic[i]),
+                _Move(key * num_ic + i, self.leaf(key * num_ic + i, gc=gc + 1, ic=0)),
             )
-            if key * num_ic + i < self._last_oram_data
-            else ResetEntry(None, secrets.randbelow(pow(2, self._last_oram_level - 1)), None)
+            if self.contains(key * num_ic + i)
+            else _ResetEntry(self.random_leaf(), None)
             for i in range(num_ic)
         ]
         return [reset_leaves[i : i + 2] for i in range(0, len(reset_leaves), 2)]
 
     def _single_entry(self, key: int, offset: int, gc: int, ic: int) -> ResetLeaves:
-        child = key * self._num_ic + offset
+        child = key * self.num_ic + offset
         return [
             [
-                ResetEntry(
-                    child,
-                    self._get_previous_leaf_from_prf(key=child, gc=gc, ic=ic),
-                    self._get_previous_leaf_from_prf(key=child, gc=gc, ic=ic + 1),
+                _ResetEntry(
+                    self.leaf(child, gc=gc, ic=ic),
+                    _Move(child, self.leaf(child, gc=gc, ic=ic + 1)),
                 )
             ]
         ]
 
 
-class FreecursivePosMapLevel(CounterPosMapLevel[FreecursiveOramConfig], FreecursiveCounterMixin):
-    def _access_pos_map_level(self, cur_key: int, cur_index: int, chunks: ResetLeaves) -> ResetLeaves:
-        before, entry, chunk, after = _split_at_key(chunks, cur_key)
+class _FreecursivePosMapLevel(CounterPosMapLevel[_FreecursiveCounters]):
+    def access(self, cur_key: int, cur_index: int, chunks: ResetLeaves) -> ResetLeaves:
+        before, move, chunk, after = _split_at_key(chunks, cur_key)
         for other in before:
-            _pass_reset_chunk(self, other)
+            self._pass_paths(_leaves(other), _moves(other))
 
-        assert entry.new_leaf is not None
-        leaves = [each.cur_leaf for each in chunk]
-        self._read_paths(leaves)
+        self._read_paths(_leaves(chunk))
         data = self._require_in_stash(key=cur_key)
-        data.value, next_chunks = self._advance(cur_key, data.value, cur_index)
-        data.leaf = entry.new_leaf
-        _remap_others(self, chunk, key=cur_key)
+        data.word, next_chunks = self._counters.advance(cur_key, data.word, cur_index)
+        data.leaf = move.leaf
+        self._remap(_moves(chunk, skip=cur_key))
         self._write_paths()
 
         for other in after:
-            _pass_reset_chunk(self, other)
+            self._pass_paths(_leaves(other), _moves(other))
         return next_chunks
 
 
-class FreecursiveOram(CounterOram[FreecursiveOramConfig, FreecursivePosMapLevel], FreecursiveCounterMixin):
+class FreecursiveOram(CounterOram[FreecursiveOramConfig, _FreecursiveCounters, _FreecursivePosMapLevel]):
     def __init__(self, config: FreecursiveOramConfig):
         super().__init__(config)
         self._pending_reset_chunks: ResetLeaves = []
 
     @override
+    def _new_counters(self, *, num_data: int, leaf_range: int) -> _FreecursiveCounters:
+        return _FreecursiveCounters(self._config, self._prf, num_data=num_data, leaf_range=leaf_range)
+
+    @override
     def _new_level(
-        self, config: FreecursiveOramConfig, *, last_oram_data: int, last_oram_level: int
-    ) -> FreecursivePosMapLevel:
-        return FreecursivePosMapLevel(config, last_oram_data=last_oram_data, last_oram_level=last_oram_level)
+        self, config: FreecursiveOramConfig, *, own: _FreecursiveCounters, child: _FreecursiveCounters
+    ) -> _FreecursivePosMapLevel:
+        return _FreecursivePosMapLevel(config, own=own, child=child)
 
     def _get_leaf_from_pos_map(self, key: int) -> ResetLeaves:
-        (chip_key, chip_offset), *level_keys = pos_map_keys(key, ratio=self._num_ic, count=len(self._levels) + 1)
+        counters = self._counters
+        (chip_key, chip_offset), *level_keys = pos_map_keys(key, ratio=counters.num_ic, count=len(self._levels) + 1)
 
-        self._on_chip_storage[chip_key], chunks = self._advance(chip_key, self._on_chip_storage[chip_key], chip_offset)
+        self._on_chip_storage[chip_key], chunks = counters.advance(
+            chip_key, self._on_chip_storage[chip_key], chip_offset
+        )
         for level, (cur_key, cur_index) in zip(self._levels, level_keys, strict=True):
-            chunks = level._access_pos_map_level(cur_key=cur_key, cur_index=cur_index, chunks=chunks)
+            chunks = level.access(cur_key=cur_key, cur_index=cur_index, chunks=chunks)
         return chunks
 
     @override
-    def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
-        before, entry, chunk, after = _split_at_key(self._get_leaf_from_pos_map(key=key), key)
+    def _operate_on_key_without_eviction(self, key: int, value: bytes | Unset) -> bytes:
+        before, move, chunk, after = _split_at_key(self._get_leaf_from_pos_map(key=key), key)
         for other in before:
-            _pass_reset_chunk(self, other)
+            self._pass_paths(_leaves(other), _moves(other))
 
-        assert entry.new_leaf is not None
-        read_value = self._read_block(key, value, leaves=[each.cur_leaf for each in chunk], new_leaf=entry.new_leaf)
-        _remap_others(self, chunk, key=key)
+        read_value = self._read_block(key, value, leaves=_leaves(chunk), new_leaf=move.leaf)
+        self._remap(_moves(chunk, skip=key))
         self._pending_reset_chunks = after
         return read_value
 
@@ -146,5 +145,5 @@ class FreecursiveOram(CounterOram[FreecursiveOramConfig, FreecursivePosMapLevel]
     def _write_back(self) -> None:
         super()._write_back()
         for chunk in self._pending_reset_chunks:
-            _pass_reset_chunk(self, chunk)
+            self._pass_paths(_leaves(chunk), _moves(chunk))
         self._pending_reset_chunks = []

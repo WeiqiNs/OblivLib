@@ -5,9 +5,9 @@ public surface is type-checker-visible, free of incidental stdlib/typing leakage
 and stated in one place — ``__all__``.
 """
 
-from .avl_tree import AVLData, AVLTree, AVLTreeNode
-from .bplus_tree import BPlusData, BPlusTree, BPlusTreeNode
-from .client import Backend, Client, ExecuteResult, LocalBackend, Metrics, TransportBackend
+from .avl_tree import AVLNode
+from .bplus_tree import BPlusInternal, BPlusLeaf, BPlusNode
+from .client import Backend, Client, ExecuteResult, LocalBackend, TransportBackend
 from .config import (
     AccessBudget,
     AvlOmapConfig,
@@ -19,8 +19,8 @@ from .config import (
     MulPathOramConfig,
     OmapConfig,
     OramConfig,
-    OramOstOmapConfig,
     PathOramConfig,
+    PosMapOramConfig,
     RecursiveOramConfig,
     StaticOramConfig,
     TreeOmapConfig,
@@ -47,33 +47,32 @@ from .errors import (
     TransportError,
     UnknownLabelError,
 )
+from .metrics import Measurement, Metrics, Recorder
 from .storage_server import StorageServer
 from .transport import LoopbackTransport, SimulatedNetwork, Transport, ZmqListener, ZmqTransport, serve
 from .tree_builder import BuildResult, FileImage, MemoryImage, TreeImage, build_tree
 from .types import (
     UNSET,
-    Data,
+    Block,
     DataMap,
     InitData,
-    KVPair,
+    OramBlock,
     PathData,
     PathRows,
     PosMap,
+    Unset,
 )
 
 __all__ = [
     "AccessBudget",
-    "AVLData",
-    "AVLTree",
-    "AVLTreeNode",
-    "BPlusData",
-    "BPlusTree",
-    "BPlusTreeNode",
+    "AVLNode",
+    "BPlusInternal",
+    "BPlusLeaf",
+    "BPlusNode",
     "Backend",
     "Client",
     "ExecuteResult",
     "LocalBackend",
-    "Metrics",
     "TransportBackend",
     "AesGcm",
     "Blake2Prf",
@@ -93,7 +92,11 @@ __all__ = [
     "StorageError",
     "TransportError",
     "UnknownLabelError",
-    "Data",
+    "Measurement",
+    "Metrics",
+    "Recorder",
+    "Block",
+    "OramBlock",
     "StorageServer",
     "LoopbackTransport",
     "SimulatedNetwork",
@@ -107,9 +110,9 @@ __all__ = [
     "TreeImage",
     "build_tree",
     "UNSET",
+    "Unset",
     "DataMap",
     "InitData",
-    "KVPair",
     "PathData",
     "PathRows",
     "PosMap",
@@ -122,8 +125,8 @@ __all__ = [
     "MulPathOramConfig",
     "OmapConfig",
     "OramConfig",
-    "OramOstOmapConfig",
     "PathOramConfig",
+    "PosMapOramConfig",
     "RecursiveOramConfig",
     "StaticOramConfig",
     "TreeOmapConfig",

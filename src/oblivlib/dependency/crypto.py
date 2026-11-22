@@ -3,7 +3,7 @@
 import hashlib
 import os
 from abc import ABC, abstractmethod
-from typing import Any, override
+from typing import Final, override
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -30,14 +30,14 @@ class AesGcm(Encryptor):
     exactly 28 bytes longer than the plaintext. The key is random unless given. Random nonces cap safe
     use at about 2**32 encryptions per key. Instances are not picklable, and storage never keeps one."""
 
-    NONCE_SIZE = 12
-    TAG_SIZE = 16
+    NONCE_SIZE: Final = 12
+    TAG_SIZE: Final = 16
 
     def __init__(self, key: bytes | None = None, key_byte_length: int = 16):
         if key_byte_length not in [16, 24, 32]:
             raise ValueError("The AES key length must be 16, 24, or 32 bytes.")
 
-        self._aes_gcm = AESGCM(os.urandom(key_byte_length) if key is None else key)
+        self._aes_gcm: AESGCM = AESGCM(os.urandom(key_byte_length) if key is None else key)
 
     @override
     def ciphertext_length(self, plaintext_length: int) -> int:
@@ -70,14 +70,14 @@ class Blake2Prf(PseudoRandomFunction):
     """Keyed BLAKE2b with a 64-byte digest. The 32-byte key is random unless given; schemes that must
     re-derive the same leaves (DA, Freecursive position maps) share one key."""
 
-    KEY_SIZE = 32
-    DIGEST_SIZE = 64
+    KEY_SIZE: Final = 32
+    DIGEST_SIZE: Final = 64
 
     def __init__(self, key: bytes | None = None):
         if key is not None and len(key) != self.KEY_SIZE:
             raise ValueError(f"The PRF key length must be {self.KEY_SIZE} bytes.")
 
-        self._key = os.urandom(self.KEY_SIZE) if key is None else key
+        self._key: bytes = os.urandom(self.KEY_SIZE) if key is None else key
 
     @property
     def key(self) -> bytes:
@@ -97,9 +97,9 @@ def hash_data_to_leaf(prf: PseudoRandomFunction, map_size: int, data: bytes) -> 
 
 
 def hash_data_to_map(
-    prf: PseudoRandomFunction, map_size: int, data: list[tuple[bytes, Any]]
-) -> dict[int, list[tuple[bytes, Any]]]:
-    data_map: dict[int, list[tuple[bytes, Any]]] = {i: [] for i in range(map_size)}
+    prf: PseudoRandomFunction, map_size: int, data: list[tuple[bytes, bytes]]
+) -> dict[int, list[tuple[bytes, bytes]]]:
+    data_map: dict[int, list[tuple[bytes, bytes]]] = {i: [] for i in range(map_size)}
     for pair in data:
         data_map[hash_data_to_leaf(prf=prf, map_size=map_size, data=pair[0])].append(pair)
     return data_map

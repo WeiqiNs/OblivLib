@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from oblivlib.dependency import (
@@ -37,30 +39,38 @@ def test_local_client_hosts_rows_and_reads_root_first():
             result.require("other")
 
 
-def test_metrics_count_rounds_and_payload_and_reset():
-    with Client.local(defer_writes=False) as client:
+def test_measurements_count_what_crossed_the_wire_during_them():
+    with Client.local() as client:
         _tree(client)
-        client.reset_metrics()
-        client.add_write_path("t", {0: _row(9), 1: _row(9), 3: _row(9)})
-        client.execute()
-        client.add_read_path("t", [0])
-        client.execute()
-        assert client.metrics == Metrics(rounds=2, payload_bytes=6 * ROW, wire_bytes=0)
+        with client.measure() as whole:
+            with client.measure() as staged:
+                client.add_write_path("t", {0: _row(9), 1: _row(9), 3: _row(9)})
+                client.execute()
+            with client.measure() as sent:
+                client.add_read_path("t", [0])
+                client.execute()
+            client.add_read_path("t", [1])
+            client.execute()
 
-        client.reset_metrics()
-        assert client.metrics == Metrics(rounds=0, payload_bytes=0, wire_bytes=0)
+        assert staged.result == Metrics()
+        assert replace(sent.result, server_ns=0) == Metrics(
+            rounds=1, requests=1, row_bytes_written=3 * ROW, row_bytes_read=3 * ROW
+        )
+        assert replace(whole.result, server_ns=0) == Metrics(
+            rounds=2, requests=2, row_bytes_written=3 * ROW, row_bytes_read=6 * ROW
+        )
+        assert 0 <= sent.result.server_ns <= whole.result.server_ns
+        assert 0 <= whole.client_ns <= whole.elapsed_ns
+        assert replace(client.metrics, server_ns=0) == Metrics(
+            rounds=2, requests=5, row_bytes_written=10 * ROW, row_bytes_read=6 * ROW
+        )
 
 
-def test_staging_checks_known_labels_and_whole_paths():
+def test_staging_checks_known_labels():
     with Client.local() as client:
         _tree(client)
         with pytest.raises(UnknownLabelError, match="'missing'"):
             client.add_read_path("missing", [0])
-        for partial in ({0: _row(1), 1: _row(1)}, {0: _row(1), 1: _row(1), 3: _row(1), 4: _row(1), 2: _row(1)}):
-            with pytest.raises(ValueError, match="'t'"):
-                client.add_write_path("t", partial)
-        client.add_read_path("t", [0])
-        assert client.execute().require("t")[3] == _row(4)
 
 
 def test_writes_apply_before_reads_and_later_write_wins():
@@ -74,17 +84,13 @@ def test_writes_apply_before_reads_and_later_write_wins():
 
 
 def test_deferred_writes_ride_next_execute(recorded_client):
-    for defer_writes, rounds_after_write in [(True, 0), (False, 1)]:
-        client, recorder = recorded_client(defer_writes=defer_writes)
-        _tree(client)
-        client.add_write_path("t", {0: _row(9), 1: _row(9), 3: _row(9)})
-        assert client.execute().results == {}
-        assert client.metrics.rounds == rounds_after_write
-
-        client.add_read_path("t", [0])
-        assert client.execute().require("t")[3] == _row(9)
-        assert client.metrics.rounds == rounds_after_write + 1
-        assert bool(recorder.batches[-1].writes) is defer_writes
+    client, recorder = recorded_client()
+    _tree(client)
+    client.add_write_path("t", {0: _row(9), 1: _row(9), 3: _row(9)})
+    assert client.execute().results == {}
+    client.add_read_path("t", [0])
+    assert client.execute().require("t")[3] == _row(9)
+    assert recorder.batches[-1].writes
 
 
 def test_empty_execute_is_a_round():

@@ -1,16 +1,17 @@
 from abc import ABC, abstractmethod
-from typing import Any
+
+KvList = list[tuple[bytes, bytes]]
 
 
 class BaseOmap(ABC):
     @abstractmethod
-    def init_server_storage(self, data: Any = None) -> None:
+    def init_server_storage(self, data: KvList | None = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def insert(self, key: Any, value: Any) -> None:
+    def insert(self, key: bytes, value: bytes) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, key: Any, value: Any = None) -> Any:
+    def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
         raise NotImplementedError
