@@ -239,6 +239,8 @@ class Column[T](Protocol):
     @property
     def size(self) -> int: ...
 
+    def get(self, block: T) -> object: ...
+
     def write(self, block: T, out: bytearray) -> None: ...
 
     def read(self, data: Buffer, offset: int) -> tuple[object, int]: ...
@@ -252,6 +254,9 @@ class Col[T, V]:
     @property
     def size(self) -> int:
         return self._field.size
+
+    def get(self, block: T) -> V:
+        return self._get(block)
 
     def write(self, block: T, out: bytearray) -> None:
         self._field.write(self._get(block), out)
@@ -270,6 +275,11 @@ class Record[T](Field[T]):
         self._build: Callable[..., T] = cls
         self._columns: tuple[Column[T], ...] = tuple(columns)
         self._size: int = sum(column.size for column in self._columns)
+        markers = [object() for _ in self._columns]
+        probe = self._build(*markers)
+        assert all(column.get(probe) is marker for column, marker in zip(self._columns, markers, strict=True)), (
+            f"{cls.__name__} columns must follow its constructor's field order"
+        )
 
     @property
     @override

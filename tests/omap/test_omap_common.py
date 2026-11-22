@@ -100,6 +100,8 @@ class TestOmapBehavior:
         omap = omap_spec.make(client=client, num_data=256, **config)
         omap.init_server_storage(data=[(_b(i), _b(i * 3)) for i in range(128)])
         assert list(tmp_path.iterdir()) == []
+        if omap_spec.invariant_checker is not None:
+            omap_spec.invariant_checker(omap, {_b(i): _b(i * 3) for i in range(128)})
         for i in range(128, 200):
             omap.insert(key=_b(i), value=_b(i * 3))
         assert [omap.search(key=_b(i)) for i in range(200)] == [_b(i * 3) for i in range(200)]

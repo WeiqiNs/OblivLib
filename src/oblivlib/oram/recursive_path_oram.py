@@ -79,17 +79,15 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig]):
         return self._levels
 
     @property
-    def _on_chip_mem(self) -> int:
-        return self._config.on_chip_mem
-
-    @property
     def _compression_ratio(self) -> int:
         return self._config.compression_ratio
 
     def _make_levels(self) -> list[_RecursivePosMapLevel]:
         levels: list[_RecursivePosMapLevel] = []
         size, child_leaf_range = self.num_data, self.leaf_range
-        count = pos_map_level_count(num_data=self.num_data, on_chip=self._on_chip_mem, ratio=self._compression_ratio)
+        count = pos_map_level_count(
+            num_data=self.num_data, on_chip=self._config.on_chip_mem, ratio=self._compression_ratio
+        )
         for i in range(count):
             size = -(-size // self._compression_ratio)
             level = _RecursivePosMapLevel(

@@ -65,7 +65,7 @@ def test_every_value_encodes_to_the_declared_size_and_round_trips(field, value):
     assert field.decode(encoded) == value
 
 
-def test_a_record_writes_its_fields_in_declaration_order_and_rebuilds_the_block_without_touching_it():
+def test_a_record_writes_its_columns_in_order_and_rebuilds_the_block_without_touching_it():
     layout = _oram_block_record(UInt(8), UInt(6), Bytes(4))
     block = OramBlock(key=200, leaf=63, value=b"abcd")
     assert layout.encode(block) == bytes([200, 63, 4]) + b"abcd"
