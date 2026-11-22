@@ -25,11 +25,13 @@ ResetLeaves = list[ResetChunk]
 
 
 def _split_at_key(chunks: ResetLeaves, key: int) -> tuple[ResetLeaves, _Move, ResetChunk, ResetLeaves]:
-    for index, chunk in enumerate(chunks):
-        for entry in chunk:
-            if entry.move is not None and entry.move.key == key:
-                return chunks[:index], entry.move, chunk, chunks[index + 1 :]
-    raise KeyError(f"Key {key} is in no reset chunk.")
+    index, move = next(
+        (index, entry.move)
+        for index, chunk in enumerate(chunks)
+        for entry in chunk
+        if entry.move is not None and entry.move.key == key
+    )
+    return chunks[:index], move, chunks[index], chunks[index + 1 :]
 
 
 def _leaves(chunk: ResetChunk) -> list[int]:

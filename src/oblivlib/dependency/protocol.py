@@ -93,7 +93,8 @@ class ErrorReply(_Message, frozen=True):
     message: str
 
 
-Request = Hello | CreateTree | AttachTree | WriteRange | Batch | Close | Shutdown
+SessionRequest = CreateTree | AttachTree | WriteRange | Batch | Close
+Request = Hello | SessionRequest | Shutdown
 Reply = HelloReply | Ok | BatchReply | ErrorReply
 
 

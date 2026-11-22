@@ -38,17 +38,14 @@ class LocalNodes[KeyT, NodeT]:
         return self.nodes.get(key)
 
     def require(self, key: KeyT) -> NodeT:
-        node = self.nodes.get(key)
-        if node is None:
-            raise KeyError(f"Node {key} is not loaded in local.")
-        return node
+        return self.nodes[key]
 
     def to_list(self) -> list[NodeT]:
         return list(self.nodes.values())
 
     def remove(self, key: KeyT) -> None:
-        if self.nodes.pop(key, None) is not None and key in self.path:
-            self.path.remove(key)
+        del self.nodes[key]
+        self.path.remove(key)
 
     def pop(self, key: KeyT) -> NodeT:
         node = self.require(key)

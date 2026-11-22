@@ -32,7 +32,7 @@ from oblivlib.dependency.protocol import (
 )
 from oblivlib.dependency.storage_server import StorageServer
 from oblivlib.dependency.transport import DEFAULT_TIMEOUT_MS, Transport, ZmqTransport
-from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage
+from oblivlib.dependency.tree_builder import FileImage, TreeImage
 from oblivlib.dependency.types import PathRows
 
 WRITE_RANGE_CHUNK_BYTES = 32 * 2**20
@@ -317,12 +317,11 @@ class Client:
         self._levels[label] = level
 
     def host_tree(self, label: str, image: TreeImage) -> None:
-        match image:
-            case MemoryImage(level=level, row_bytes=row_bytes, rows=rows):
-                self.create_tree(label, level=level, row_bytes=row_bytes)
-                self._stream_rows(label, rows)
-            case FileImage():
-                self._host_file(label, image)
+        if isinstance(image, FileImage):
+            self._host_file(label, image)
+            return
+        self.create_tree(label, level=image.level, row_bytes=image.row_bytes)
+        self._stream_rows(label, image.rows)
 
     def close(self) -> None:
         if self._closed:
@@ -393,8 +392,7 @@ class Client:
                 chunk, size = [], 0
             chunk.append(row)
             size += len(row)
-        if chunk:
-            self._write_range(label, start, chunk)
+        self._write_range(label, start, chunk)
 
     def _write_range(self, label: str, start: int, rows: list[bytes]) -> None:
         self._expect_ok(WriteRange(session=self._require_session(), label=label, start=start, rows=rows))

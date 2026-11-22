@@ -79,10 +79,6 @@ class Blake2Prf(PseudoRandomFunction):
 
         self._key: bytes = os.urandom(self.KEY_SIZE) if key is None else key
 
-    @property
-    def key(self) -> bytes:
-        return self._key
-
     @override
     def digest(self, message: bytes) -> bytes:
         return hashlib.blake2b(message, key=self._key, digest_size=self.DIGEST_SIZE).digest()

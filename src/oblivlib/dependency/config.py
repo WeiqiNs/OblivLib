@@ -240,13 +240,7 @@ class TreeOmapConfig(OmapConfig):
         return self.MIN_CACHED_BUDGETS if cached else self.MIN_BUDGETS
 
     def budget(self, op: OdsOp) -> AccessBudget:
-        match op:
-            case "search":
-                given = self.search_budget
-            case "insert":
-                given = self.insert_budget
-            case "delete":
-                given = self.delete_budget
+        given = {"search": self.search_budget, "insert": self.insert_budget, "delete": self.delete_budget}[op]
         return given or self.minimums(cached=self.cached)[op]
 
     def __post_init__(self) -> None:
