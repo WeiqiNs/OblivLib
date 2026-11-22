@@ -232,10 +232,6 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         else:
             self._budget = max(config.budget(each).rounds(height) for each in ODS_OPS)
         self._op_rounds = 0
-        if not self._carry_limit:
-            self._owed = 0
-        if self._local:
-            raise MemoryError("The local storage was not emptied before this operation.")
 
     def _finish_op(self) -> None:
         pending = bool(self._unwritten_leaves)
@@ -270,9 +266,9 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
     def init_mul_tree_server_storage(self, data_list: list[KV_LIST] | None = None) -> list[ROOT | None]:
         blocks: list[Data] = []
         root_list: list[ROOT | None] = []
-        for data in data_list or []:
-            require_omap_init(self._identity, data, key_size=self._key_size, data_size=self._data_size)
-        size = sum(len(data) for data in data_list or [])
+        every_pair = [pair for data in data_list or [] for pair in data]
+        require_omap_init(self._identity, every_pair, key_size=self._key_size, data_size=self._data_size)
+        size = len(every_pair)
         if size > self._num_data:
             raise ContractError(f"{self._identity}: {size} initial keys exceed num_data={self._num_data}.")
         for data in data_list or []:

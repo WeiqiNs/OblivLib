@@ -5,15 +5,16 @@ from typing import Any, override
 
 from oblivlib.dependency import Blake2Prf, ContractError, Data, hash_data_to_map
 from oblivlib.dependency.balls_into_bins import max_bin_load
-from oblivlib.dependency.config import GroupOmapConfig, MulPathOramConfig
+from oblivlib.dependency.config import GroupOmapConfig, OramConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
 from oblivlib.dependency.layout import Bytes, Field, FixedBytes, Record, UInt
+from oblivlib.dependency.tree_storage_base import TreeStorageBase
 from oblivlib.omap.base_omap import BaseOmap
-from oblivlib.oram import MulPathOram, TreeBaseOram
+from oblivlib.oram import TreeBaseOram
 
 
-class _KeyNamedMulPathOram(MulPathOram):
-    def __init__(self, config: MulPathOramConfig, *, key_size: int):
+class _BucketStore(TreeStorageBase[OramConfig]):
+    def __init__(self, config: OramConfig, *, key_size: int):
         self._block_key_size = key_size
         super().__init__(config)
 
@@ -45,16 +46,16 @@ class GroupOmap(BaseOmap):
                 + f"metadata; it must be at least {required}. Size it with GroupOmap.upper_oram_data_size(num_data)."
             )
 
-        self._lower_oram = _KeyNamedMulPathOram(
-            MulPathOramConfig(
+        self._lower_oram = _BucketStore(
+            OramConfig(
                 num_data=config.num_data,
                 data_size=config.data_size,
                 client=config.client,
                 name=f"{config.name}_lower",
                 bucket_size=config.bucket_size,
-                stash_scale=config.stash_scale,
+                stash_scale=config.stash_scale * self._upper_bound,
                 encryptor=config.encryptor,
-                stash_scale_multiplier=self._upper_bound,
+                build_file=config.build_file,
             ),
             key_size=config.key_size,
         )
@@ -129,28 +130,27 @@ class GroupOmap(BaseOmap):
         self._size = len(data)
 
     def _access_bucket[T](self, bucket_id: int, change: Callable[[list[Data]], tuple[list[Data], T]]) -> T:
-        metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
-        seed, count = self._metadata.decode(metadata)
         lower = self._lower_oram
-        try:
+
+        def rehome(metadata: bytes) -> tuple[bytes, T]:
+            seed, count = self._metadata.decode(metadata)
             lower._read_paths(self._padded_leaves([self._slot_leaf(seed, slot) for slot in range(1, count + 1)]))
             blocks = [data for data in lower._stash if self._hash_key_to_bucket(data.key) == bucket_id]
             kept, result = change(blocks)
             if len(kept) > self._upper_bound:
                 raise MemoryError(f"Bucket {bucket_id} is full ({count} items), cannot insert")
-            new_seed = os.urandom(self.SEED_SIZE)
-            for slot, data in enumerate(kept, start=1):
-                data.leaf = self._slot_leaf(new_seed, slot)
             old = {id(data) for data in blocks}
             dropped = old - {id(data) for data in kept}
             lower._stash = [data for data in lower._stash if id(data) not in dropped]
             lower._stash += [data for data in kept if id(data) not in old]
-            metadata = self._metadata.encode((new_seed, len(kept)))
             lower._check_stash()
+            new_seed = os.urandom(self.SEED_SIZE)
+            for slot, data in enumerate(kept, start=1):
+                data.leaf = self._slot_leaf(new_seed, slot)
             lower._write_paths()
-        finally:
-            self._upper_oram.eviction_with_update_stash(key=bucket_id, value=metadata)
-        return result
+            return self._metadata.encode((new_seed, len(kept))), result
+
+        return self._upper_oram.update(bucket_id, rehome)
 
     @override
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
@@ -183,19 +183,19 @@ class GroupOmap(BaseOmap):
         self._size += 1
 
     def _insert_into_next_slot(self, bucket_id: int, key: bytes, value: bytes) -> None:
-        metadata = self._upper_oram.operate_on_key_without_eviction(key=bucket_id)
-        seed, count = self._metadata.decode(metadata)
         lower = self._lower_oram
-        try:
+
+        def append(metadata: bytes) -> tuple[bytes, None]:
+            seed, count = self._metadata.decode(metadata)
             if count >= self._upper_bound:
                 raise MemoryError(f"Bucket {bucket_id} is full ({count} items), cannot insert")
             lower._read_paths([lower._get_new_leaf()])
             lower._stash.append(Data(key=key, leaf=self._slot_leaf(seed, count + 1), value=value))
-            metadata = self._metadata.encode((seed, count + 1))
             lower._check_stash()
             lower._write_paths()
-        finally:
-            self._upper_oram.eviction_with_update_stash(key=bucket_id, value=metadata)
+            return self._metadata.encode((seed, count + 1)), None
+
+        self._upper_oram.update(bucket_id, append)
 
     def delete(self, key: bytes) -> bytes | None:
         require_omap_key(self._identity, key, self._key_size)

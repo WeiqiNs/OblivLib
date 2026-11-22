@@ -43,10 +43,6 @@ class UInt(Field[int]):
         return cls(max(1, max_value.bit_length()))
 
     @property
-    def bits(self) -> int:
-        return self._bits
-
-    @property
     @override
     def size(self) -> int:
         return self._size
@@ -289,10 +285,6 @@ class BitFields:
             remaining -= width
             shifts.append(remaining)
         self._shifts = tuple(shifts)
-
-    @property
-    def bits(self) -> int:
-        return self._bits
 
     def get(self, word: int, index: int) -> int:
         return (word >> self._shifts[index]) & ((1 << self._widths[index]) - 1)

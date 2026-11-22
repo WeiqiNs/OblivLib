@@ -56,12 +56,12 @@ class OramOstOmap(BaseOmap):
         self._oram.init_server_storage((key, self._encode_root(root)) for key, root in enumerate(roots))
 
     def _on_slot[T](self, key: bytes, op: Callable[[], T]) -> T:
-        oram_key = hash_data_to_leaf(prf=self._prf, data=key, map_size=self._num_data)
-        self._ost.root = self._decode_root(self._oram.operate_on_key_without_eviction(key=oram_key))
-        try:
-            return op()
-        finally:
-            self._oram.eviction_with_update_stash(key=oram_key, value=self._encode_root(self._ost.root))
+        def run(slot: bytes) -> tuple[bytes, T]:
+            self._ost.root = self._decode_root(slot)
+            result = op()
+            return self._encode_root(self._ost.root), result
+
+        return self._oram.update(hash_data_to_leaf(prf=self._prf, data=key, map_size=self._num_data), run)
 
     @override
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:

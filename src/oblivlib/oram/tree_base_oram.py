@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any
 
 from oblivlib.dependency import UNSET, ContractError, Data, InitData, OramConfig
@@ -37,7 +37,6 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
     def __init__(self, config: ConfigT):
         super().__init__(config)
         self._levels: list[LevelT] = []
-        self._access_pending: bool = False
 
     @property
     def max_stash(self) -> int:
@@ -66,23 +65,13 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
         if value is not UNSET:
             data.value = value
         data.leaf = new_leaf
-        self._access_pending = True
         return read_value
 
     def _write_back(self) -> None:
         self._write_paths()
-        self._access_pending = False
 
     @abstractmethod
     def init_server_storage(self, data: InitData | None = None) -> None: ...
-
-    def _require_no_pending(self) -> None:
-        if self._access_pending:
-            raise ValueError(f"{self._identity}: an access is still waiting for its eviction.")
-
-    def _require_pending(self) -> None:
-        if not self._access_pending:
-            raise ValueError(f"{self._identity}: no access is waiting for its eviction.")
 
     def _require_access(self, key: Any, value: Any) -> None:
         require_oram_key(self._identity, key, self._num_data)
@@ -91,22 +80,17 @@ class TreeBaseOram[ConfigT: OramConfig, LevelT: TreeStorageBase[Any]](TreeStorag
 
     def operate_on_key(self, key: int, value: Any = UNSET) -> bytes:
         self._require_access(key, value)
-        self._require_no_pending()
         read_value = self._operate_on_key_without_eviction(key, value)
         self._write_back()
         return read_value
 
-    def operate_on_key_without_eviction(self, key: int, value: Any = UNSET) -> bytes:
-        self._require_access(key, value)
-        self._require_no_pending()
-        return self._operate_on_key_without_eviction(key, value)
-
-    def eviction_with_update_stash(self, key: int, value: bytes) -> None:
+    def update[T](self, key: int, change: Callable[[bytes], tuple[bytes, T]]) -> T:
         require_oram_key(self._identity, key, self._num_data)
+        value, result = change(self._operate_on_key_without_eviction(key, UNSET))
         require_value(self._identity, value, self._data_size)
-        self._require_pending()
         self._require_in_stash(key).value = value
         self._write_back()
+        return result
 
     @abstractmethod
     def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any: ...

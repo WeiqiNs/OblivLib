@@ -9,11 +9,6 @@ def require_oram_key(owner: str, key: Any, num_data: int) -> None:
         raise ContractError(f"{owner}: a key must be an int in [0, {num_data}), got {key!r}.")
 
 
-def require_leaf(owner: str, leaf: Any, leaf_range: int) -> None:
-    if type(leaf) is not int or not 0 <= leaf < leaf_range:
-        raise ContractError(f"{owner}: a leaf must be an int in [0, {leaf_range}), got {leaf!r}.")
-
-
 def require_omap_key(owner: str, key: Any, key_size: int) -> None:
     if type(key) is not bytes:
         raise ContractError(f"{owner}: a key must be bytes, got {type(key).__name__}.")
