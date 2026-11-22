@@ -56,18 +56,21 @@ Each scheme is built from its config in `oblivlib.dependency` (`PathOramConfig`,
 
 ## Installation
 
+OblivLib needs Python 3.12 or later and is not on PyPI yet; install it from GitHub:
+
 ```bash
-pip install oblivlib    # or: uv add oblivlib
+pip install git+https://github.com/WeiqiNs/OblivLib    # or: uv add git+https://github.com/WeiqiNs/OblivLib
 ```
 
-For development, clone the repository and run `pip install -e ".[dev]"`, which adds pytest, basedpyright,
-and ruff.
+For development, clone the repository and run `pip install -e ".[dev]"`, which adds pytest, pytest-cov,
+basedpyright and ruff. `pytest --cov` runs the suite and fails below 100% line and branch coverage.
 
 ## Usage
 
 ORAM keys are int addresses in `[0, num_data)` and OMAP keys are `bytes` of at most `key_size`; every
-value is `bytes` of at most `data_size`, so serialize your own data before storing it. Graph vertices are int ids in `[0, 2**64)`, at most `num_data` of them, each with at most `max_degree` neighbors. A key or value
-outside that contract raises `ContractError` before anything touches the server.
+value is `bytes` of at most `data_size`, so serialize your own data before storing it. Graph vertices are
+int ids in `[0, 2**64)`, at most `num_data` of them, each with at most `max_degree` neighbors. A key or
+value outside that contract raises `ContractError` before anything touches the server.
 
 ### Local and simulated runs
 
@@ -144,8 +147,26 @@ with Client.connect("tcp://server-host:5555") as client:
     assert omap.search(b"alice") == b"42"
 ```
 
+Graphs are used the same way:
+
+```python
+from oblivlib.dependency import AesGcm, Client, GroveConfig
+from oblivlib.graph import Grove
+
+with Client.local() as client:
+    grove = Grove(GroveConfig(num_data=64, max_degree=4, data_size=16, client=client, encryptor=AesGcm()))
+    grove.init_server_storage({0: [1], 1: [0, 2], 2: [1]}, {0: b"a", 1: b"b", 2: b"c"})
+    assert grove.neighbor_values([1]) == {0: b"a", 2: b"c"}
+    assert grove.hop_neighborhood(0, 2) == {0: b"a", 1: b"b", 2: b"c"}
+```
+
 Runnable versions live in [`demo/`](https://github.com/WeiqiNs/OblivLib/tree/main/demo): start `python demo/server.py`, then run `python demo/client.py`.
 Every scheme gets a unique storage label by default, so several can share one client; pass `name=` in a
 config only to address storage by a known label. The shared test suites
 ([`tests/oram/test_oram_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/oram/test_oram_common.py),
-[`tests/omap/test_omap_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/omap/test_omap_common.py)) show every scheme in use.
+[`tests/omap/test_omap_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/omap/test_omap_common.py)) and the graph tests
+([`tests/graph/`](https://github.com/WeiqiNs/OblivLib/tree/main/tests/graph)) show every scheme in use.
+
+## License
+
+Apache License 2.0; see [`LICENSE`](https://github.com/WeiqiNs/OblivLib/blob/main/LICENSE).
