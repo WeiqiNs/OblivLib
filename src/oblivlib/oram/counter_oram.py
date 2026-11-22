@@ -5,8 +5,8 @@ from dataclasses import dataclass, replace
 from functools import cache
 from typing import Final, override
 
-from oblivlib.dependency import Blake2Prf
 from oblivlib.dependency.config import CounterOramConfig
+from oblivlib.dependency.crypto import Blake2Prf
 from oblivlib.dependency.heap_index import compute_level
 from oblivlib.dependency.layout import BitFields, Col, Field, Record, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase

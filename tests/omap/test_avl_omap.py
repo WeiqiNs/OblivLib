@@ -1,6 +1,7 @@
 import pytest
 
-from oblivlib.dependency import AVLNode, AvlOmapConfig
+from oblivlib.dependency import AvlOmapConfig
+from oblivlib.dependency.avl_tree import AVLNode
 from oblivlib.omap import AVLOmap
 from oblivlib.omap.avl_omap import avl_delete_fetches, avl_max_height
 

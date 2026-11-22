@@ -1,9 +1,7 @@
 import random
 import secrets
 
-from oblivlib.dependency import (
-    DaOramConfig,
-)
+from oblivlib.dependency import DaOramConfig
 from oblivlib.oram import DAOram
 
 

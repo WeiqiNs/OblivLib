@@ -1,6 +1,6 @@
 import argparse
 
-from oblivlib.dependency import StorageServer, ZmqListener, serve
+from oblivlib import StorageServer, ZmqListener, serve
 
 
 def main():

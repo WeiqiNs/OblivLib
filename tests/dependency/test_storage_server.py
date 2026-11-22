@@ -2,13 +2,7 @@ import os
 
 import pytest
 
-from oblivlib.dependency import (
-    DuplicateLabelError,
-    ProtocolError,
-    RowSizeError,
-    StorageError,
-    UnknownLabelError,
-)
+from oblivlib.dependency import DuplicateLabelError, ProtocolError, RowSizeError, StorageError, UnknownLabelError
 from oblivlib.dependency.protocol import (
     PROTOCOL_VERSION,
     AttachTree,

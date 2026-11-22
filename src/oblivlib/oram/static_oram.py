@@ -1,7 +1,7 @@
 from typing import override
 
-from oblivlib.dependency import Blake2Prf
 from oblivlib.dependency.config import StaticOramConfig
+from oblivlib.dependency.crypto import Blake2Prf
 from oblivlib.dependency.types import Unset
 from oblivlib.oram.tree_base_oram import TreeBaseOram
 

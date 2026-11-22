@@ -2,7 +2,8 @@ import re
 
 import pytest
 
-from oblivlib.dependency import AVLNode, CapacityError, OramBlock
+from oblivlib.dependency import CapacityError
+from oblivlib.dependency.avl_tree import AVLNode
 from oblivlib.dependency.layout import (
     Array,
     BitFields,
@@ -15,6 +16,7 @@ from oblivlib.dependency.layout import (
     Seq,
     UInt,
 )
+from oblivlib.dependency.types import OramBlock
 
 
 def _oram_block_record(key, leaf, value):

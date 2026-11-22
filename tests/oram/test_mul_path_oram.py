@@ -3,7 +3,8 @@ from typing import Any
 
 import pytest
 
-from oblivlib.dependency import UNSET, ContractError, MulPathOramConfig
+from oblivlib.dependency import ContractError, MulPathOramConfig
+from oblivlib.dependency.types import UNSET
 from oblivlib.oram import MulPathOram
 
 

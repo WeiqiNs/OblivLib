@@ -10,18 +10,18 @@ client holds the keys and runs the algorithm, and the server only stores encrypt
 
 | Kind | Scheme | Class |
 |---|---|---|
-| ORAM | [Path ORAM](https://doi.org/10.1145/2508859.2516660) | `oblivlib.oram.PathOram` |
-| | [Recursive Path ORAM](https://doi.org/10.1007/978-3-642-25385-0_11) | `oblivlib.oram.RecursivePathOram` |
-| | [Freecursive ORAM](https://doi.org/10.1145/2694344.2694353), with [probabilistic resets](https://eprint.iacr.org/2016/1084) by default | `oblivlib.oram.FreecursiveOram` |
-| | [DAORAM](https://doi.org/10.14778/3712221.3712235) | `oblivlib.oram.DAOram` |
-| | Multi-path Path ORAM | `oblivlib.oram.MulPathOram` |
-| | Static Path ORAM (PRF-positioned; reveals repeated accesses, a building block) | `oblivlib.oram.StaticOram` |
-| OMAP | [AVL-tree OMAP](https://doi.org/10.1145/2660267.2660314) | `oblivlib.omap.AVLOmap` |
-| | [B+-tree OMAP](https://doi.org/10.14778/3364324.3364331) | `oblivlib.omap.BPlusOmap` |
-| | [ORAM + search tree](https://doi.org/10.14778/3712221.3712235) | `oblivlib.omap.OramOstOmap` |
-| | Group-by-hash OMAP | `oblivlib.omap.GroupOmap` |
-| Graph | [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf) | `oblivlib.graph.GraphOS` |
-| | [Grove](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf) | `oblivlib.graph.Grove` |
+| ORAM | [Path ORAM](https://doi.org/10.1145/2508859.2516660) | `PathOram` |
+| | [Recursive Path ORAM](https://doi.org/10.1007/978-3-642-25385-0_11) | `RecursivePathOram` |
+| | [Freecursive ORAM](https://doi.org/10.1145/2694344.2694353), with [probabilistic resets](https://eprint.iacr.org/2016/1084) by default | `FreecursiveOram` |
+| | [DAORAM](https://doi.org/10.14778/3712221.3712235) | `DAOram` |
+| | Multi-path Path ORAM | `MulPathOram` |
+| | Static Path ORAM (PRF-positioned; reveals repeated accesses, a building block) | `StaticOram` |
+| OMAP | [AVL-tree OMAP](https://doi.org/10.1145/2660267.2660314) | `AVLOmap` |
+| | [B+-tree OMAP](https://doi.org/10.14778/3364324.3364331) | `BPlusOmap` |
+| | [ORAM + search tree](https://doi.org/10.14778/3712221.3712235) | `OramOstOmap` |
+| | Group-by-hash OMAP | `GroupOmap` |
+| Graph | [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf) | `GraphOS` |
+| | [Grove](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf) | `Grove` |
 
 ## Installation
 
@@ -36,15 +36,13 @@ branch coverage).
 
 ## Usage
 
-Every scheme is built from a config in `oblivlib.dependency` (`PathOramConfig`, `AvlOmapConfig`,
-`GroveConfig`, ...). A config sets the size (`num_data`, `data_size`, and `key_size` for maps), the
+Everything is imported from `oblivlib`. Every scheme is built from its config (`PathOramConfig`,
+`AvlOmapConfig`, `GroveConfig`, ...). A config sets the size (`num_data`, `data_size`, and `key_size` for maps), the
 `client` that reaches the server, and optionally an `encryptor` and tuning options. Invalid settings raise
 when the config is created.
 
 ```python
-from oblivlib.dependency import AesGcm, AvlOmapConfig, Client, PathOramConfig
-from oblivlib.omap import AVLOmap
-from oblivlib.oram import PathOram
+from oblivlib import AesGcm, AVLOmap, AvlOmapConfig, Client, PathOram, PathOramConfig
 
 with Client.local() as client:
     oram = PathOram(PathOramConfig(num_data=1024, data_size=16, client=client, encryptor=AesGcm()))
@@ -65,7 +63,7 @@ a scheme's limits raises `ContractError` before the server is touched.
 The server has no authentication, so bind it to a trusted network or put it behind an authenticated tunnel:
 
 ```python
-from oblivlib.dependency import StorageServer, ZmqListener, serve
+from oblivlib import StorageServer, ZmqListener, serve
 
 serve(ZmqListener("tcp://*:5555"), StorageServer(storage_dir="/var/lib/oblivlib"))
 ```

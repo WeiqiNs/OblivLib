@@ -1,8 +1,8 @@
 import secrets
 from typing import NamedTuple, override
 
-from oblivlib.dependency import Blake2Prf
 from oblivlib.dependency.config import FreecursiveOramConfig
+from oblivlib.dependency.crypto import Blake2Prf
 from oblivlib.dependency.types import Unset
 from oblivlib.oram.counter_oram import GC, CounterOram, CounterPosMapLevel, Counters
 from oblivlib.oram.tree_base_oram import pos_map_keys

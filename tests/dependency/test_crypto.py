@@ -3,7 +3,8 @@ import os
 import pytest
 from cryptography.exceptions import InvalidTag
 
-from oblivlib.dependency import AesGcm, Blake2Prf
+from oblivlib.dependency import AesGcm
+from oblivlib.dependency.crypto import Blake2Prf
 
 
 class TestAesGcm:

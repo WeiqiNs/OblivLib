@@ -4,11 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from oblivlib.dependency import AesGcm, DuplicateLabelError, OramBlock, Recorder
+from oblivlib.dependency import AesGcm, DuplicateLabelError
 from oblivlib.dependency.heap_index import tree_size
 from oblivlib.dependency.layout import Bytes, Col, Record, UInt
+from oblivlib.dependency.metrics import Recorder
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
 from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage, build_tree
+from oblivlib.dependency.types import OramBlock
 
 _BLOCK = Record(
     OramBlock,

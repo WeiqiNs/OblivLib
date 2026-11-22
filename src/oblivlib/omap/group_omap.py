@@ -3,10 +3,10 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Final, override
 
-from oblivlib.dependency import Blake2Prf, hash_data_to_map
 from oblivlib.dependency.balls_into_bins import max_bin_load
 from oblivlib.dependency.config import GroupOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_omap_pair, require_room
+from oblivlib.dependency.crypto import Blake2Prf, hash_data_to_map
 from oblivlib.dependency.keyed_store import KeyedStore
 from oblivlib.dependency.layout import FixedBytes, Pair, UInt
 from oblivlib.dependency.types import KeyedBlock

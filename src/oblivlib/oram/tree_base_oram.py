@@ -2,11 +2,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Protocol, override
 
-from oblivlib.dependency import UNSET, ContractError, InitData, OramConfig
+from oblivlib.dependency import ContractError, InitData, OramConfig
 from oblivlib.dependency.contract import require_oram_key, require_value
 from oblivlib.dependency.layout import Bytes, Col, Field, Record, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
-from oblivlib.dependency.types import OramBlock, Unset
+from oblivlib.dependency.types import UNSET, OramBlock, Unset
 
 
 class Oram(Protocol):

@@ -9,19 +9,13 @@ from typing import Any, Literal, override
 
 import pytest
 
-from oblivlib.dependency import (
-    AesGcm,
-    Client,
-    LocalBackend,
-    LoopbackTransport,
-    StorageServer,
-    TransportBackend,
-)
+from oblivlib.dependency import AesGcm, Client, LocalBackend, LoopbackTransport, StorageServer, TransportBackend
 from oblivlib.dependency.protocol import Batch, Reply, Request
 from oblivlib.graph import GraphOS, Grove
 from oblivlib.omap import GroupOmap, OramOstOmap
 from oblivlib.omap.ost_base_omap import OstBaseOmap
-from oblivlib.oram import TreeBaseOram, freecursive_oram
+from oblivlib.oram import freecursive_oram
+from oblivlib.oram.tree_base_oram import TreeBaseOram
 
 DEFAULT_NUM_DATA = 2**12
 

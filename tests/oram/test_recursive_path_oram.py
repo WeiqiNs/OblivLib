@@ -1,6 +1,4 @@
-from oblivlib.dependency import (
-    RecursiveOramConfig,
-)
+from oblivlib.dependency import RecursiveOramConfig
 from oblivlib.oram import RecursivePathOram
 
 

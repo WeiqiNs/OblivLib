@@ -1,6 +1,4 @@
-from oblivlib.dependency import (
-    PathOramConfig,
-)
+from oblivlib.dependency import PathOramConfig
 from oblivlib.oram import PathOram
 
 

@@ -8,13 +8,13 @@ import pytest
 from oblivlib.dependency import (
     AccessBudget,
     AvlOmapConfig,
-    BPlusLeaf,
     BPlusOmapConfig,
     DaOramConfig,
     GroupOmapConfig,
     PathOramConfig,
     RecursiveOramConfig,
 )
+from oblivlib.dependency.bplus_tree import BPlusLeaf
 from oblivlib.dependency.protocol import ReadPath
 from oblivlib.omap import AVLOmap, BPlusOmap, GroupOmap, OramOstOmap
 from oblivlib.oram import DAOram, PathOram, RecursivePathOram

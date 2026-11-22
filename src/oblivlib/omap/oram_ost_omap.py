@@ -1,10 +1,10 @@
 from collections.abc import Callable
 from typing import override
 
-from oblivlib.dependency import Blake2Prf, hash_data_to_leaf, hash_data_to_map
 from oblivlib.dependency.balls_into_bins import max_bin_load
 from oblivlib.dependency.config import TreeOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_omap_pair
+from oblivlib.dependency.crypto import Blake2Prf, hash_data_to_leaf, hash_data_to_map
 from oblivlib.dependency.layout import Optional
 from oblivlib.dependency.types import Block
 from oblivlib.omap.base_omap import BaseOmap, KvList

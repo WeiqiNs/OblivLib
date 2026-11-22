@@ -3,7 +3,7 @@ from bisect import bisect_right
 from collections.abc import Callable, Sequence
 from typing import override
 
-from oblivlib.dependency import BPlusInternal, BPlusLeaf, BPlusNode
+from oblivlib.dependency.bplus_tree import BPlusInternal, BPlusLeaf, BPlusNode
 from oblivlib.dependency.config import BPlusOmapConfig
 from oblivlib.dependency.layout import Buffer, Bytes, Field, Pair, Seq, UInt
 from oblivlib.omap.base_omap import KvList

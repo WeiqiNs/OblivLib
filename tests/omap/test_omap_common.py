@@ -4,14 +4,7 @@ from typing import Any
 
 import pytest
 
-from oblivlib.dependency import (
-    AesGcm,
-    AvlOmapConfig,
-    BPlusOmapConfig,
-    ContractError,
-    GroupOmapConfig,
-    PathOramConfig,
-)
+from oblivlib.dependency import AesGcm, AvlOmapConfig, BPlusOmapConfig, ContractError, GroupOmapConfig, PathOramConfig
 from oblivlib.omap import AVLOmap, BPlusOmap, GroupOmap, OramOstOmap
 from oblivlib.oram import PathOram
 
