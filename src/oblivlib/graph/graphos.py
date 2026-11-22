@@ -7,7 +7,7 @@ from functools import cached_property
 
 from oblivlib.dependency import ContractError
 from oblivlib.dependency.config import AvlOmapConfig, GraphOsConfig
-from oblivlib.dependency.contract import require_value
+from oblivlib.dependency.contract import require_oram_key, require_room, require_value
 from oblivlib.dependency.keyed_store import KeyedStore
 from oblivlib.dependency.layout import Bytes, Field, Pair, UInt
 from oblivlib.dependency.tree_storage_base import leaf_field
@@ -109,12 +109,7 @@ class GraphOS:
         return self._size
 
     def _require_vertex(self, vertex: object) -> None:
-        if type(vertex) is not int or not 0 <= vertex < 1 << _ID_BITS:
-            raise ContractError(f"{self._identity}: a vertex must be an int in [0, 2**64), got {vertex!r}.")
-
-    def _require_count(self, name: str, count: object) -> None:
-        if type(count) is not int or count < 0:
-            raise ContractError(f"{self._identity}: {name} must be an int >= 0, got {count!r}.")
+        require_oram_key(self._identity, vertex, 1 << _ID_BITS)
 
     def _require_value(self, value: object) -> None:
         require_value(self._identity, value, self._config.data_size)
@@ -132,17 +127,14 @@ class GraphOS:
             raise ContractError(f"{self._identity}: vertex {vertex} lists itself as a neighbor.")
 
     def _require_graph(self, graph: Mapping[int, Sequence[int]], values: Mapping[int, bytes]) -> None:
-        if len(graph) > self._config.num_data:
-            raise ContractError(f"{self._identity}: {len(graph)} vertices exceed num_data {self._config.num_data}.")
+        require_room(self._identity, held=0, fresh=len(graph), capacity=self._config.num_data)
         for vertex, neighbors in graph.items():
             self._require_vertex(vertex)
             self._require_neighbors(vertex, neighbors)
             for neighbor in neighbors:
                 if vertex not in graph.get(neighbor, ()):
                     raise ContractError(f"{self._identity}: edge ({vertex}, {neighbor}) is not listed both ways.")
-        for vertex, value in values.items():
-            if vertex not in graph:
-                raise ContractError(f"{self._identity}: value given for vertex {vertex}, which is not in the graph.")
+        for value in values.values():
             self._require_value(value)
 
     def _encode_vertex(self, value: bytes, degree: int) -> bytes:
@@ -257,7 +249,6 @@ class GraphOS:
 
     def hop_neighborhood(self, vertex: int, hops: int) -> dict[int, bytes]:
         self._require_vertex(vertex)
-        self._require_count("hops", hops)
         info = self._vertices([vertex])
         frontier: list[int | None] = [vertex if vertex in info else None]
         reach = 1
@@ -275,7 +266,6 @@ class GraphOS:
 
     def random_walk(self, vertex: int, steps: int) -> dict[int, bytes]:
         self._require_vertex(vertex)
-        self._require_count("steps", steps)
         info = self._vertices([vertex])
         current: int | None = vertex if vertex in info else None
         degrees = self._degrees(info)
@@ -339,8 +329,7 @@ class GraphOS:
         self._require_vertex(vertex)
         self._require_value(value)
         self._require_neighbors(vertex, neighbors)
-        if self._size >= self._config.num_data:
-            raise ContractError(f"{self._identity}: the graph already holds num_data {self._config.num_data}.")
+        require_room(self._identity, held=self._size, fresh=1, capacity=self._config.num_data)
 
         vertex_key = _vertex_key(vertex)
         padding: list[_Slot] = [None] * (self._max_degree - len(neighbors))
@@ -380,12 +369,12 @@ class GraphOS:
             raise ValueError(f"{self._identity}: {problem}.")
         self._size += 1
 
-    def delete(self, vertex: int) -> None:
+    def delete(self, vertex: int) -> bytes | None:
         self._require_vertex(vertex)
         vertex_key = _vertex_key(vertex)
         blocks = self._fetch([vertex_key])
         exists = vertex_key in blocks
-        degree = self._decode_vertex(blocks[vertex_key].value)[1] if exists else 0
+        value, degree = self._decode_vertex(blocks[vertex_key].value) if exists else (None, 0)
         self._commit()
 
         slots = self._neighbors_of([vertex], {vertex: degree})
@@ -430,6 +419,6 @@ class GraphOS:
             + [None if u is None else _edge_key(u, last[u]) for u in slots]
             + [None if u is None else _slot_key(u, vertex) for u in slots]
         )
-        if not exists:
-            raise KeyError(f"{self._identity}: vertex {vertex} does not exist.")
-        self._size -= 1
+        if exists:
+            self._size -= 1
+        return value

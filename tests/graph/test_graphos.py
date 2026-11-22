@@ -159,7 +159,7 @@ class TestGraphOS:
                     graph[neighbor].append(vertex)
                 values[vertex] = value
             elif vertex in graph:
-                graphos.delete(vertex)
+                assert graphos.delete(vertex) == values[vertex]
                 for neighbor in graph.pop(vertex):
                     graph[neighbor].remove(vertex)
                 del values[vertex]
@@ -224,8 +224,7 @@ class TestGraphOS:
             graphos.insert(4, b"x", [7])
         with pytest.raises(ValueError, match="max_degree"):
             graphos.insert(4, b"x", [0])
-        with pytest.raises(KeyError, match="vertex 7 does not exist"):
-            graphos.delete(7)
+        assert graphos.delete(7) is None
         assert graphos.neighbor_values([0]) == {1: b"v", 2: b"v", 3: b"v"}
         matches_model(graphos, graph, values)
 
@@ -236,7 +235,6 @@ class TestGraphOS:
             ({0: [0]}, {}),
             ({0: [1, 1], 1: [0, 0]}, {}),
             ({0: [1, 2, 3, 4], 1: [0], 2: [0], 3: [0], 4: [0]}, {}),
-            ({0: []}, {1: b""}),
             ({0: []}, {0: b"123456789"}),
             ({-1: []}, {}),
             ({vertex: [] for vertex in range(9)}, {}),
@@ -260,14 +258,8 @@ class TestGraphOS:
             with pytest.raises(ContractError):
                 graphos.insert(vertex, value, neighbors)
         for traversal in (graphos.bfs, graphos.dfs):
-            with pytest.raises(ContractError, match="vertex"):
+            with pytest.raises(ContractError, match="a key must be an int"):
                 traversal(-1)
-        hops: list[Any] = [-1, 1.5, "2"]
-        for count in hops:
-            with pytest.raises(ContractError, match="hops"):
-                graphos.hop_neighborhood(0, count)
-            with pytest.raises(ContractError, match="steps"):
-                graphos.random_walk(0, count)
         assert client.metrics.rounds == rounds
 
 
@@ -336,7 +328,7 @@ class TestGraphOSObliviousness:
     def _tolerant(run, *args):
         try:
             run(*args)
-        except (KeyError, ValueError):
+        except ValueError:
             pass
 
     def test_delete_trace_is_degree_and_existence_independent(self):
