@@ -28,7 +28,22 @@ class KeyedStore[ConfigT: OramConfig](TreeStorageBase[ConfigT, KeyedBlock]):
         self._host_tree(self._build_tree(blocks))
 
     def read_padded(self, leaves: Iterable[int], width: int) -> None:
-        self._read_paths(self._padded_leaves(leaves, width))
+        self._read_paths(self.padded_leaves(leaves, width))
 
     def write_back(self) -> None:
         self._write_paths()
+
+    def new_leaf(self) -> int:
+        return self._get_new_leaf()
+
+    def take(self, keys: Iterable[bytes]) -> dict[bytes, KeyedBlock]:
+        wanted = set(keys)
+        return {block.key: block for block in self._stash if block.key in wanted}
+
+    def add(self, blocks: Iterable[KeyedBlock]) -> None:
+        self._stash.extend(blocks)
+        self._check_stash()
+
+    def drop(self, keys: Iterable[bytes]) -> None:
+        doomed = set(keys)
+        self._stash[:] = [block for block in self._stash if block.key not in doomed]

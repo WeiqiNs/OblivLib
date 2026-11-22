@@ -1,13 +1,12 @@
 import secrets
 import struct
 from collections import deque
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from functools import cached_property
 
-from oblivlib.dependency import ContractError
 from oblivlib.dependency.config import AvlOmapConfig, GraphOsConfig
-from oblivlib.dependency.contract import require_oram_key, require_room, require_value
+from oblivlib.dependency.contract import require_graph, require_neighbors, require_room, require_value, require_vertex
 from oblivlib.dependency.keyed_store import KeyedStore
 from oblivlib.dependency.layout import Bytes, Field, Pair, UInt
 from oblivlib.dependency.tree_storage_base import leaf_field
@@ -33,23 +32,6 @@ def _slot_key(vertex: int, neighbor: int) -> bytes:
     return b"P" + _ID.pack(vertex) + _ID.pack(neighbor)
 
 
-class _ValueStore(KeyedStore[GraphOsConfig]):
-    def new_leaf(self) -> int:
-        return self._get_new_leaf()
-
-    def take(self, keys: Iterable[bytes]) -> dict[bytes, KeyedBlock]:
-        wanted = set(keys)
-        return {block.key: block for block in self._stash if block.key in wanted}
-
-    def add(self, entries: Iterable[KeyedBlock]) -> None:
-        self._stash.extend(entries)
-        self._check_stash()
-
-    def drop(self, keys: Iterable[bytes]) -> None:
-        doomed = set(keys)
-        self._stash[:] = [block for block in self._stash if block.key not in doomed]
-
-
 class GraphOS:
     def __init__(self, config: GraphOsConfig):
         self._config: GraphOsConfig = config
@@ -58,7 +40,7 @@ class GraphOS:
         self._size: int = 0
         self._leaf: UInt = leaf_field(config.num_entries)
 
-        self._value_tree: _ValueStore = _ValueStore(
+        self._value_tree: KeyedStore[GraphOsConfig] = KeyedStore(
             replace(
                 config,
                 num_data=config.num_entries,
@@ -109,33 +91,10 @@ class GraphOS:
         return self._size
 
     def _require_vertex(self, vertex: object) -> None:
-        require_oram_key(self._identity, vertex, 1 << _ID_BITS)
+        require_vertex(self._identity, vertex)
 
     def _require_value(self, value: object) -> None:
         require_value(self._identity, value, self._config.data_size)
-
-    def _require_neighbors(self, vertex: int, neighbors: Sequence[int]) -> None:
-        for neighbor in neighbors:
-            self._require_vertex(neighbor)
-        if len(neighbors) > self._max_degree:
-            raise ContractError(
-                f"{self._identity}: vertex {vertex} has {len(neighbors)} neighbors, max_degree is {self._max_degree}."
-            )
-        if len(set(neighbors)) != len(neighbors):
-            raise ContractError(f"{self._identity}: vertex {vertex} lists a neighbor twice.")
-        if vertex in neighbors:
-            raise ContractError(f"{self._identity}: vertex {vertex} lists itself as a neighbor.")
-
-    def _require_graph(self, graph: Mapping[int, Sequence[int]], values: Mapping[int, bytes]) -> None:
-        require_room(self._identity, held=0, fresh=len(graph), capacity=self._config.num_data)
-        for vertex, neighbors in graph.items():
-            self._require_vertex(vertex)
-            self._require_neighbors(vertex, neighbors)
-            for neighbor in neighbors:
-                if vertex not in graph.get(neighbor, ()):
-                    raise ContractError(f"{self._identity}: edge ({vertex}, {neighbor}) is not listed both ways.")
-        for value in values.values():
-            self._require_value(value)
 
     def _encode_vertex(self, value: bytes, degree: int) -> bytes:
         return self._vertex_record.encode((value, degree))
@@ -148,7 +107,14 @@ class GraphOS:
     ) -> None:
         graph = graph or {}
         values = values or {}
-        self._require_graph(graph, values)
+        require_graph(
+            self._identity,
+            graph,
+            values,
+            capacity=self._config.num_data,
+            max_degree=self._max_degree,
+            data_size=self._config.data_size,
+        )
 
         entries: list[tuple[bytes, bytes]] = []
         for vertex, neighbors in graph.items():
@@ -328,7 +294,7 @@ class GraphOS:
     def insert(self, vertex: int, value: bytes, neighbors: Sequence[int]) -> None:
         self._require_vertex(vertex)
         self._require_value(value)
-        self._require_neighbors(vertex, neighbors)
+        require_neighbors(self._identity, vertex, neighbors, self._max_degree)
         require_room(self._identity, held=self._size, fresh=1, capacity=self._config.num_data)
 
         vertex_key = _vertex_key(vertex)
@@ -344,38 +310,37 @@ class GraphOS:
                 problem = f"neighbor {neighbor} does not exist"
             elif problem is None and block is not None and self._decode_vertex(block.value)[1] >= self._max_degree:
                 problem = f"neighbor {neighbor} already has max_degree {self._max_degree} neighbors"
-        linked: Sequence[int] = neighbors if problem is None else []
+        if problem is not None:
+            self._commit()
+            raise ValueError(f"{self._identity}: {problem}.")
         old_degrees: dict[int, int] = {}
-        for neighbor in linked:
+        for neighbor in neighbors:
             block = blocks[_vertex_key(neighbor)]
             neighbor_value, degree = self._decode_vertex(block.value)
             old_degrees[neighbor] = degree
             block.value = self._encode_vertex(neighbor_value, degree + 1)
         self._commit()
 
-        entries: list[tuple[bytes, bytes] | None] = (
-            [(vertex_key, self._encode_vertex(value, len(neighbors)))] if problem is None else [None]
-        )
-        for index, neighbor in enumerate(linked):
+        entries: list[tuple[bytes, bytes] | None] = [(vertex_key, self._encode_vertex(value, len(neighbors)))]
+        for index, neighbor in enumerate(neighbors):
             entries += [
                 (_edge_key(neighbor, old_degrees[neighbor]), self._id.encode(vertex)),
                 (_slot_key(neighbor, vertex), self._index.encode(old_degrees[neighbor])),
                 (_edge_key(vertex, index), self._id.encode(neighbor)),
                 (_slot_key(vertex, neighbor), self._index.encode(index)),
             ]
-        entries += [None] * (4 * (self._max_degree - len(linked)))
+        entries += [None] * (4 * (self._max_degree - len(neighbors)))
         self._add(entries)
-        if problem is not None:
-            raise ValueError(f"{self._identity}: {problem}.")
         self._size += 1
 
     def delete(self, vertex: int) -> bytes | None:
         self._require_vertex(vertex)
         vertex_key = _vertex_key(vertex)
         blocks = self._fetch([vertex_key])
-        exists = vertex_key in blocks
-        value, degree = self._decode_vertex(blocks[vertex_key].value) if exists else (None, 0)
         self._commit()
+        if vertex_key not in blocks:
+            return None
+        value, degree = self._decode_vertex(blocks[vertex_key].value)
 
         slots = self._neighbors_of([vertex], {vertex: degree})
         neighbors = [neighbor for neighbor in slots if neighbor is not None]
@@ -413,12 +378,11 @@ class GraphOS:
         self._commit()
 
         self._remove(
-            [vertex_key if exists else None]
+            [vertex_key]
             + [None if u is None else _edge_key(vertex, index) for index, u in enumerate(slots)]
             + [None if u is None else _slot_key(vertex, u) for u in slots]
             + [None if u is None else _edge_key(u, last[u]) for u in slots]
             + [None if u is None else _slot_key(u, vertex) for u in slots]
         )
-        if exists:
-            self._size -= 1
+        self._size -= 1
         return value

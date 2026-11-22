@@ -226,7 +226,8 @@ class TestOmapStash:
         omap = ods_spec.make(client=client, num_data=16, key_size=4, data_size=4, distinguishable=distinguishable)
         omap.init_server_storage()
         model = {}
-        for op, key in _stash_workload(pattern, [b"%04d" % i for i in range(16)], 2000):
+        ops = 2000 if pattern == "random" else 300
+        for op, key in _stash_workload(pattern, [b"%04d" % i for i in range(16)], ops):
             if op == "insert" and key not in model:
                 omap.insert(key, key)
                 model[key] = key

@@ -1,37 +1,36 @@
 # OblivLib
 
-OblivLib (`oblivlib`) implements classic oblivious algorithms (oblivious RAM and oblivious maps) for
+[![codecov](https://codecov.io/gh/WeiqiNs/OblivLib/graph/badge.svg)](https://codecov.io/gh/WeiqiNs/OblivLib)
+
+OblivLib (`oblivlib`) implements oblivious algorithms (oblivious RAM, oblivious maps and oblivious graphs) for
 client/server deployments where the client is trusted and may compute non-obliviously, and the server only
 stores encrypted data.
 
 Related publications by the maintainers:
 
-- [Towards Practical Oblivious Map](https://dl.acm.org/doi/10.14778/3712221.3712235)
+- [Towards Practical Oblivious Map](https://doi.org/10.14778/3712221.3712235)
+- [Enabling Index-free Adjacency in Oblivious Graph Processing with Delayed Duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf)
 
 ## ORAM
 
-- [Path ORAM](https://dl.acm.org/doi/10.1145/2508859.2516660):
-  [`path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/path_oram.py)
-- [Recursive Path ORAM](https://link.springer.com/chapter/10.1007/978-3-642-25385-0_11):
-  [`recursive_path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/recursive_path_oram.py)
-- [Freecursive ORAM](https://people.csail.mit.edu/devadas/pubs/freecursive.pdf), insecure
-  original: [`freecursive_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/freecursive_oram.py) with `reset_method="hard"`
-- [Freecursive ORAM with probabilistic resets](https://eprint.iacr.org/2016/1084):
-  [`freecursive_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/freecursive_oram.py) with `reset_method="prob"` (default)
-- [DAORAM, de-amortized fixed resets](https://dl.acm.org/doi/10.14778/3712221.3712235):
-  [`da_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/da_oram.py)
-- Multi-path and static (PRF-positioned) Path ORAM variants:
-  [`mul_path_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/mul_path_oram.py), [`static_oram.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/oram/static_oram.py)
+- [Path ORAM](https://doi.org/10.1145/2508859.2516660): `oblivlib.oram.PathOram`
+- [Recursive Path ORAM](https://doi.org/10.1007/978-3-642-25385-0_11): `oblivlib.oram.RecursivePathOram`
+- [Freecursive ORAM](https://doi.org/10.1145/2694344.2694353): `oblivlib.oram.FreecursiveOram` with
+  `reset_method="hard"` (insecure as published)
+- Freecursive ORAM with [probabilistic resets](https://eprint.iacr.org/2016/1084):
+  `oblivlib.oram.FreecursiveOram` with `reset_method="prob"` (default)
+- [DAORAM, de-amortized fixed resets](https://doi.org/10.14778/3712221.3712235): `oblivlib.oram.DAOram`
+- Multi-path and static (PRF-positioned) Path ORAM variants: `oblivlib.oram.MulPathOram`,
+  `oblivlib.oram.StaticOram`
 
 ## OMAP
 
-- [AVL-tree OMAP](https://dl.acm.org/doi/10.1145/2660267.2660314) with the
-  [streaming search](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf): [`avl_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/avl_omap.py)
-- [B+-tree OMAP](https://people.eecs.berkeley.edu/~matei/papers/2020/vldb_oblidb.pdf):
-  [`bplus_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/bplus_omap.py)
-- [ORAM + search-tree framework](https://dl.acm.org/doi/10.14778/3712221.3712235), composing
-  any ORAM with any tree OMAP: [`oram_ost_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/oram_ost_omap.py)
-- Group-by-hash OMAP: [`group_omap.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/omap/group_omap.py)
+- [AVL-tree OMAP](https://doi.org/10.1145/2660267.2660314) with the
+  [streaming search](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf): `oblivlib.omap.AVLOmap`
+- [B+-tree OMAP](https://doi.org/10.14778/3364324.3364331): `oblivlib.omap.BPlusOmap`
+- [ORAM + search-tree framework](https://doi.org/10.14778/3712221.3712235), composing any ORAM with any
+  tree OMAP: `oblivlib.omap.OramOstOmap`
+- Group-by-hash OMAP: `oblivlib.omap.GroupOmap`
 
 Tree OMAPs hide the operation type by default (`distinguishable=False`); set it to `True` to let each
 operation pad only to its own bound. Every search, insert, and delete pads to a fixed number of
@@ -47,23 +46,31 @@ same number of rounds as one key, each round reading up to `k` paths.
 
 ## Graph
 
-- [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf), over a batched AVL OMAP and a keyed value tree:
-  [`graphos.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/graphos.py)
+- [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf), over a batched AVL OMAP and a keyed value
+  tree: `oblivlib.graph.GraphOS`
+- [Grove, index-free adjacency with delayed duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf),
+  over an AVL OMAP index, a graph tree and two meta trees: `oblivlib.graph.Grove`
+
+Each scheme is built from its config in `oblivlib.dependency` (`PathOramConfig`, `AvlOmapConfig`,
+`GraphOsConfig`, ...).
 
 ## Installation
 
+OblivLib needs Python 3.12 or later and is not on PyPI yet; install it from GitHub:
+
 ```bash
-pip install oblivlib    # or: uv add oblivlib
+pip install git+https://github.com/WeiqiNs/OblivLib    # or: uv add git+https://github.com/WeiqiNs/OblivLib
 ```
 
-For development, clone the repository and run `pip install -e ".[dev]"`, which adds pytest, basedpyright,
-and ruff.
+For development, clone the repository and run `pip install -e ".[dev]"`, which adds pytest, pytest-cov,
+basedpyright and ruff. `pytest --cov` runs the suite and fails below 100% line and branch coverage.
 
 ## Usage
 
 ORAM keys are int addresses in `[0, num_data)` and OMAP keys are `bytes` of at most `key_size`; every
-value is `bytes` of at most `data_size`, so serialize your own data before storing it. A key or value
-outside that contract raises `ContractError` before anything touches the server.
+value is `bytes` of at most `data_size`, so serialize your own data before storing it. Graph vertices are
+int ids in `[0, 2**64)`, at most `num_data` of them, each with at most `max_degree` neighbors. A key or
+value outside that contract raises `ContractError` before anything touches the server.
 
 ### Local and simulated runs
 
@@ -140,8 +147,26 @@ with Client.connect("tcp://server-host:5555") as client:
     assert omap.search(b"alice") == b"42"
 ```
 
+Graphs are used the same way:
+
+```python
+from oblivlib.dependency import AesGcm, Client, GroveConfig
+from oblivlib.graph import Grove
+
+with Client.local() as client:
+    grove = Grove(GroveConfig(num_data=64, max_degree=4, data_size=16, client=client, encryptor=AesGcm()))
+    grove.init_server_storage({0: [1], 1: [0, 2], 2: [1]}, {0: b"a", 1: b"b", 2: b"c"})
+    assert grove.neighbor_values([1]) == {0: b"a", 2: b"c"}
+    assert grove.hop_neighborhood(0, 2) == {0: b"a", 1: b"b", 2: b"c"}
+```
+
 Runnable versions live in [`demo/`](https://github.com/WeiqiNs/OblivLib/tree/main/demo): start `python demo/server.py`, then run `python demo/client.py`.
 Every scheme gets a unique storage label by default, so several can share one client; pass `name=` in a
 config only to address storage by a known label. The shared test suites
 ([`tests/oram/test_oram_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/oram/test_oram_common.py),
-[`tests/omap/test_omap_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/omap/test_omap_common.py)) show every scheme in use.
+[`tests/omap/test_omap_common.py`](https://github.com/WeiqiNs/OblivLib/blob/main/tests/omap/test_omap_common.py)) and the graph tests
+([`tests/graph/`](https://github.com/WeiqiNs/OblivLib/tree/main/tests/graph)) show every scheme in use.
+
+## License
+
+Apache License 2.0; see [`LICENSE`](https://github.com/WeiqiNs/OblivLib/blob/main/LICENSE).

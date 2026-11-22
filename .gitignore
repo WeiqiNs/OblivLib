@@ -25,3 +25,4 @@ venv/
 # Test-generated storage files (e.g. test.bin, *_pos_map_*.bin)
 *.bin
 .coverage
+coverage.xml
