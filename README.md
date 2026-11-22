@@ -15,7 +15,7 @@ client holds the keys and runs the algorithm, and the server only stores encrypt
 | | [Freecursive ORAM](https://doi.org/10.1145/2694344.2694353), with [probabilistic resets](https://eprint.iacr.org/2016/1084) by default | `FreecursiveOram` |
 | | [DAORAM](https://doi.org/10.14778/3712221.3712235) | `DAOram` |
 | | Multi-path Path ORAM | `MulPathOram` |
-| | Static Path ORAM (PRF-positioned; reveals repeated accesses, a building block) | `StaticOram` |
+| | Static Path ORAM (leaks repeated keys) | `StaticOram` |
 | OMAP | [AVL-tree OMAP](https://doi.org/10.1145/2660267.2660314) | `AVLOmap` |
 | | [B+-tree OMAP](https://doi.org/10.14778/3364324.3364331) | `BPlusOmap` |
 | | [ORAM + search tree](https://doi.org/10.14778/3712221.3712235) | `OramOstOmap` |
