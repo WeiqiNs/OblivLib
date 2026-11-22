@@ -1,5 +1,7 @@
 """Tests for the delayed-duplication store: RL write paths, newest-wins merging, and the bucket bound."""
 
+from fractions import Fraction
+
 import pytest
 
 from oblivlib.dependency import Data
@@ -57,6 +59,11 @@ class TestDupStore:
 
 
 class TestBucketBound:
+    def test_matches_theorem_3_1_worked_by_hand(self):
+        by_hand = Fraction(972327175, 536870912)
+        computed = Fraction(overflow_probability(insertions=8, group=1, bucket_size=1, level=4))
+        assert abs(computed - by_hand) < Fraction(1, 10**40)
+
     def test_more_insertions_need_a_larger_bucket(self):
         small = meta_bucket_size(insertions=2**10, group=4, level=11)
         large = meta_bucket_size(insertions=2**20, group=4, level=11)

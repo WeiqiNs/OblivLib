@@ -7,7 +7,7 @@ from functools import cached_property
 from typing import Any, override
 
 from oblivlib.dependency import ContractError, Data, PathData
-from oblivlib.dependency.config import AvlOmapConfig, GroveConfig, OramConfig
+from oblivlib.dependency.config import ODS_OPS, AvlOmapConfig, GroveConfig, OdsOp, OramConfig
 from oblivlib.dependency.contract import require_value
 from oblivlib.dependency.heap_index import compute_level
 from oblivlib.dependency.layout import Bytes, Record, Seq, UInt
@@ -125,12 +125,14 @@ class Grove:
             ),
             meta=self._position_meta,
         )
-        self._index_paths = max(
-            sum(self._index._round_width(r) for r in range(config_budget))
-            for config_budget in (
-                self._index._config.budget(op).rounds(self._index._max_height) for op in ("search", "insert", "delete")
+        self._index_paths: dict[OdsOp, int] = {
+            op: sum(
+                self._index._round_width(r)
+                for r in range(self._index._config.budget(op).rounds(self._index._max_height))
             )
-        )
+            for op in ODS_OPS
+        }
+        round_insertions = self._width * self._max_deg + max(self._index_paths.values())
         self._graph_meta = DupStore(
             OramConfig(
                 num_data=config.num_vertices,
@@ -139,11 +141,11 @@ class Grove:
                 name=f"{config.name}_graph_meta",
                 bucket_size=config.meta_bucket_size
                 or meta_bucket_size(
-                    insertions=config.num_rounds * (self._width * self._max_deg + self._index_paths),
+                    insertions=config.num_rounds * round_insertions,
                     group=self._max_deg + 1,
                     level=level,
                 ),
-                stash_scale=config.stash_scale * (self._width * self._max_deg + self._index_paths),
+                stash_scale=config.stash_scale * round_insertions,
                 encryptor=config.encryptor,
             ),
             key_size=2 * ID_SIZE + 1,
@@ -278,14 +280,13 @@ class Grove:
         targets: Sequence[Target],
         placed: Placed,
         *,
+        index_paths: int = 0,
         edit: Callable[[dict[int, Vertex]], set[int]] | None = None,
     ) -> tuple[dict[int, Vertex], dict[int, int]]:
         real = {vertex: leaf for vertex, leaf in filter(None, targets)}
         width = len(targets)
         graph_leaves = self._padded(self._graph, list(real.values()), width)
-        graph_meta_leaves = graph_leaves + self._graph_meta.rl_leaves(
-            width * self._max_deg + (self._index_paths if placed else 0)
-        )
+        graph_meta_leaves = graph_leaves + self._graph_meta.rl_leaves(width * self._max_deg + index_paths)
         position_leaves = self._position_meta.rl_leaves(width)
         graph_path, graph_meta_path, position_path = open_paths_together(
             [(self._graph, graph_leaves), (self._graph_meta, graph_meta_leaves), (self._position_meta, position_leaves)]
@@ -350,12 +351,12 @@ class Grove:
             store._write_paths()
         return vertices, new_leaves
 
-    def _deliver_index_moves(self, placed: Placed) -> None:
+    def _deliver_index_moves(self, placed: Placed, op: OdsOp) -> None:
         dups = [
             self._position_dup(_vertex(key), self._leaf.decode(graph_leaf), position)
             for key, (position, graph_leaf) in placed.items()
         ]
-        self._graph_meta._read_paths(self._graph_meta.rl_leaves(self._index_paths))
+        self._graph_meta._read_paths(self._graph_meta.rl_leaves(self._index_paths[op]))
         self._graph_meta.add(dups)
         self._graph_meta._write_paths()
 
@@ -369,7 +370,7 @@ class Grove:
             for vertex, leaf in zip(vertices, found, strict=True)
         ], placed
 
-    def _lookup_chunk(self, vertices: Sequence[int | None]) -> dict[int, Vertex]:
+    def _lookup_chunk(self, vertices: Sequence[int | None]) -> tuple[dict[int, Vertex], dict[int, int]]:
         targets, placed = self._locate(vertices)
         seen: set[int] = set()
         unique: list[Target] = []
@@ -377,18 +378,26 @@ class Grove:
             unique.append(target if target is not None and target[0] not in seen else None)
             if target is not None:
                 seen.add(target[0])
-        return self._access(unique, placed)[0]
+        return self._access(unique, placed, index_paths=self._index_paths["search"])
+
+    @staticmethod
+    def _gather(found: dict[int, Vertex], layer: Mapping[int, Vertex], moved: Mapping[int, int]) -> None:
+        for vertex in found.values():
+            for neighbor in vertex.neighbors:
+                if neighbor in moved:
+                    vertex.neighbors[neighbor] = moved[neighbor]
+        found.update(layer)
 
     def _lookup_all(self, vertices: Sequence[int]) -> dict[int, Vertex]:
         found: dict[int, Vertex] = {}
         for start in range(0, len(vertices), self._index._batch_size):
-            found.update(self._lookup_chunk(vertices[start : start + self._index._batch_size]))
+            self._gather(found, *self._lookup_chunk(vertices[start : start + self._index._batch_size]))
         return found
 
     def _visit(self, targets: Sequence[Target]) -> dict[int, Vertex]:
         found: dict[int, Vertex] = {}
         for chunk in self._chunks(targets):
-            found.update(self._access(chunk, {})[0])
+            self._gather(found, *self._access(chunk, {}))
         return found
 
     def _layer(self, frontier: Mapping[int, Vertex], width: int, skip: set[int]) -> list[Target]:
@@ -488,11 +497,11 @@ class Grove:
 
         return self._traverse(source, next_vertex, expand)
 
-    def _finish_index_op(self, run: Callable[[], Any]) -> Any:
+    def _finish_index_op(self, op: OdsOp, run: Callable[[], Any]) -> Any:
         self._index.placed = {}
         result = run()
         placed, self._index.placed = self._index.placed, {}
-        self._deliver_index_moves(placed)
+        self._deliver_index_moves(placed, op)
         return result
 
     def insert(self, vertex: int, value: bytes, neighbors: Sequence[int]) -> None:
@@ -520,19 +529,69 @@ class Grove:
                     found[neighbor].neighbors[vertex] = 0
             return set()
 
-        _, new_leaves = self._access([None, *targets[1:]], placed, edit=link)
+        _, new_leaves = self._access([None, *targets[1:]], placed, index_paths=self._index_paths["search"], edit=link)
         if problem is not None:
-            self._finish_index_op(lambda: self._index.insert(None))
+            self._finish_index_op("insert", lambda: self._index.insert(None))
             raise ValueError(f"{self._identity}: {problem}.")
-        self._finish_index_op(lambda: self._index.insert(_key(vertex), self._leaf.encode(new_leaves[vertex])))
+        self._finish_index_op("insert", lambda: self._index.insert(_key(vertex), self._leaf.encode(new_leaves[vertex])))
         self._num_vertices += 1
 
     def delete(self, vertex: int) -> None:
         self._require_vertex(vertex)
         targets, placed = self._locate([vertex])
-        self._access(targets, placed, edit=lambda found: set(found))
+        self._access(targets, placed, index_paths=self._index_paths["search"], edit=lambda found: set(found))
         if targets[0] is None:
-            self._finish_index_op(lambda: self._index.delete(None))
+            self._finish_index_op("delete", lambda: self._index.delete(None))
             raise KeyError(f"{self._identity}: vertex {vertex} does not exist.")
-        self._finish_index_op(lambda: self._index.delete(_key(vertex)))
+        self._finish_index_op("delete", lambda: self._index.delete(_key(vertex)))
         self._num_vertices -= 1
+
+    def update(self, vertex: int, value: bytes) -> None:
+        self._require_vertex(vertex)
+        require_value(self._identity, value, self._config.data_size)
+        targets, placed = self._locate([vertex])
+
+        def change(found: dict[int, Vertex]) -> set[int]:
+            if vertex in found:
+                found[vertex].value = value
+            return set()
+
+        found, _ = self._access(targets, placed, index_paths=self._index_paths["search"], edit=change)
+        if vertex not in found:
+            raise KeyError(f"{self._identity}: vertex {vertex} does not exist.")
+
+    def _edit_edge(self, u: int, v: int, *, link: bool) -> None:
+        self._require_vertex(u)
+        self._require_vertex(v)
+        if u == v:
+            raise ContractError(f"{self._identity}: an edge needs two distinct vertices, got {u} twice.")
+        targets, placed = self._locate([u, v])
+        problem = None
+
+        def change(found: dict[int, Vertex]) -> set[int]:
+            nonlocal problem
+            if u not in found or v not in found:
+                problem = "an endpoint does not exist"
+            elif link and v in found[u].neighbors:
+                problem = f"vertices {u} and {v} are already adjacent"
+            elif link and max(len(found[u].neighbors), len(found[v].neighbors)) >= self._max_deg:
+                problem = f"an endpoint already has max_deg {self._max_deg} neighbors"
+            elif not link and v not in found[u].neighbors:
+                problem = f"vertices {u} and {v} are not adjacent"
+            elif link:
+                found[u].neighbors[v] = 0
+                found[v].neighbors[u] = 0
+            else:
+                del found[u].neighbors[v]
+                del found[v].neighbors[u]
+            return set()
+
+        self._access(targets, placed, index_paths=self._index_paths["search"], edit=change)
+        if problem is not None:
+            raise ValueError(f"{self._identity}: {problem}.")
+
+    def add_edge(self, u: int, v: int) -> None:
+        self._edit_edge(u, v, link=True)
+
+    def remove_edge(self, u: int, v: int) -> None:
+        self._edit_edge(u, v, link=False)

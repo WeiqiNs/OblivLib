@@ -116,7 +116,7 @@ class TestGrove:
         grove.init_server_storage(graph, values)
         consistent(grove, graph, values)
 
-        for step in range(60):
+        for step in range(100):
             roll = rng.random()
             vertex = rng.randrange(num_vertices + 2)
             if roll < 0.15:
@@ -141,7 +141,25 @@ class TestGrove:
                 bfs_order, dfs_order = reference_orders
                 assert list(grove.bfs(vertex).items()) == [(v, values[v]) for v in bfs_order(adjacency, vertex)]
                 assert list(grove.dfs(vertex).items()) == [(v, values[v]) for v in dfs_order(adjacency, vertex)]
-            elif roll < 0.78 and vertex not in graph and len(graph) < num_vertices:
+            elif roll < 0.63 and graph:
+                target = rng.choice(sorted(graph))
+                value = rng.randbytes(rng.randrange(9))
+                grove.update(target, value)
+                values[target] = value
+            elif roll < 0.68:
+                u, v = rng.sample(sorted(graph), 2) if len(graph) > 1 else (0, 1)
+                if u in graph and v in graph and v not in graph[u] and max(len(graph[u]), len(graph[v])) < MAX_DEG:
+                    grove.add_edge(u, v)
+                    graph[u].append(v)
+                    graph[v].append(u)
+            elif roll < 0.73:
+                edges = [(u, v) for u in graph for v in graph[u] if u < v]
+                if edges:
+                    u, v = rng.choice(edges)
+                    grove.remove_edge(u, v)
+                    graph[u].remove(v)
+                    graph[v].remove(u)
+            elif roll < 0.85 and vertex not in graph and len(graph) < num_vertices:
                 open_slots = [v for v in graph if len(graph[v]) < MAX_DEG]
                 neighbors = rng.sample(open_slots, min(len(open_slots), rng.randrange(MAX_DEG + 1)))
                 value = rng.randbytes(rng.randrange(9))
@@ -158,6 +176,15 @@ class TestGrove:
             assert grove.num_vertices == len(graph)
             if step % 10 == 9:
                 consistent(grove, graph, values)
+        consistent(grove, graph, values)
+
+    def test_neighbor_values_over_more_centers_than_one_index_batch(self, client, consistent):
+        graph = {0: [4], 1: [5], 2: [], 3: [6], 4: [0], 5: [1], 6: [3]}
+        values = {v: bytes([v]) for v in graph}
+        grove = _make(client, 16)
+        grove.init_server_storage(graph, values)
+        for _ in range(10):
+            assert grove.neighbor_values([0, 1, 2, 3, 4, 5, 6]) == {v: bytes([v]) for v in [0, 1, 3, 4, 5, 6]}
         consistent(grove, graph, values)
 
     def test_repeated_queries_keep_every_pointer_current(self, client, consistent):
@@ -206,6 +233,36 @@ class TestGrove:
             grove.delete(7)
         assert grove.neighbor_values([0]) == {1: b"v", 2: b"v", 3: b"v"}
         consistent(grove, graph, values)
+
+    def test_failed_edge_edits_and_updates_leave_the_graph_unchanged(self, client, consistent):
+        graph = {0: [1, 2, 3], 1: [0], 2: [0], 3: [0], 4: []}
+        values = dict.fromkeys(graph, b"v")
+        grove = _make(client, 8)
+        grove.init_server_storage(graph, values)
+        with pytest.raises(ValueError, match="already adjacent"):
+            grove.add_edge(0, 1)
+        with pytest.raises(ValueError, match="max_deg"):
+            grove.add_edge(0, 4)
+        with pytest.raises(ValueError, match="does not exist"):
+            grove.add_edge(4, 7)
+        with pytest.raises(ValueError, match="not adjacent"):
+            grove.remove_edge(1, 4)
+        with pytest.raises(KeyError, match="vertex 7 does not exist"):
+            grove.update(7, b"x")
+        with pytest.raises(ContractError):
+            grove.add_edge(4, 4)
+        consistent(grove, graph, values)
+
+    def test_edge_edits_rewire_both_endpoints(self, client, consistent):
+        graph = {0: [1], 1: [0], 2: []}
+        grove = _make(client, 8)
+        grove.init_server_storage(graph, dict.fromkeys(graph, b"v"))
+        grove.add_edge(1, 2)
+        grove.remove_edge(0, 1)
+        grove.update(2, b"w")
+        assert grove.neighbor_ids([0, 1, 2]) == {0: [], 1: [2], 2: [1]}
+        assert grove.neighbor_values([1]) == {2: b"w"}
+        consistent(grove, {0: [], 1: [2], 2: [1]}, {0: b"v", 1: b"v", 2: b"w"})
 
     def test_contract_violations_are_raised_before_any_io(self, client):
         grove = _make(client, 8)
@@ -273,11 +330,66 @@ class TestGroveObliviousness:
             traces.append(_request_trace(client, query, grove, vertex))
         self._same(traces)
 
+    @pytest.mark.parametrize(
+        "query",
+        [
+            lambda g: g.neighbor_values([0, 1, 2, 3, 4, 5]),
+            lambda g: g.lookup([0, 1, 2, 3, 4, 5, 0]),
+            lambda g: g.hop_neighborhood(1, 3),
+            lambda g: g.random_walk(0, 4),
+            lambda g: g.bfs(0),
+            lambda g: g.dfs(4),
+        ],
+        ids=["neighbor_values", "lookup", "hop_neighborhood", "random_walk", "bfs", "dfs"],
+    )
+    def test_every_target_is_found_where_it_is_sought(self, monkeypatch, query):
+        """No round seeks a vertex at a path it has left; a stale path would fail to find it and re-read a revealed leaf."""
+        for seed in range(10):
+            _, grove = self._grove(monkeypatch, seed)
+            original = grove._access
+
+            def access(targets, placed, original=original, seed=seed, **kwargs):
+                vertices, moved = original(targets, placed, **kwargs)
+                sought = {vertex for vertex, _ in filter(None, targets)}
+                assert sought <= set(vertices), f"seed {seed}: a vertex was sought at a stale path"
+                return vertices, moved
+
+            monkeypatch.setattr(grove, "_access", access)
+            query(grove)
+
+    @pytest.mark.parametrize(
+        "cases",
+        [
+            [
+                lambda g: g.add_edge(2, 3),
+                lambda g: g.add_edge(0, 5),
+                lambda g: g.add_edge(0, 1),
+                lambda g: g.add_edge(5, 9),
+            ],
+            [lambda g: g.remove_edge(0, 1), lambda g: g.remove_edge(1, 4), lambda g: g.remove_edge(2, 5)],
+            [lambda g: g.update(0, b"x"), lambda g: g.update(5, b"x"), lambda g: g.update(9, b"x")],
+        ],
+        ids=["add_edge", "remove_edge", "update"],
+    )
+    def test_edits_have_one_shape_whether_they_succeed_or_fail(self, monkeypatch, cases):
+        traces = []
+        for case in cases:
+            client, grove = self._grove(monkeypatch, 8)
+
+            def run(case=case, grove=grove):
+                try:
+                    case(grove)
+                except (KeyError, ValueError):
+                    pass
+
+            traces.append(_request_trace(client, run))
+        self._same(traces)
+
     def test_every_round_reads_its_full_rl_budget(self, monkeypatch):
         client, grove = self._grove(monkeypatch, 6)
         reads = [count for tree, count in _request_trace(client, grove.neighbor_values, [0]) if tree == "graph_meta"]
         k = MAX_DEG
-        assert reads == [1 + k + grove._index_paths, k + k * k]
+        assert reads == [1 + k + grove._index_paths["search"], k + k * k]
 
     def test_insert_trace_is_degree_independent(self, monkeypatch):
         traces = []
