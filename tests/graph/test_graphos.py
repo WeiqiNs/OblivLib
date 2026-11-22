@@ -167,6 +167,14 @@ class TestGraphOS:
 
         matches_model(graphos, graph, values)
 
+    def test_deep_hops_stay_bounded_by_the_graph(self, client):
+        graph = {0: [1, 2], 1: [0, 3], 2: [0], 3: [1], 4: []}
+        graphos = _make(client, 8)
+        graphos.init_server_storage(graph, {v: bytes([v]) for v in graph})
+        rounds = client.metrics.rounds
+        assert graphos.hop_neighborhood(0, 40) == {v: bytes([v]) for v in [0, 1, 2, 3]}
+        assert client.metrics.rounds - rounds < 40 * 4 * (graphos._omap._max_height + 2)
+
     def test_lookup_of_repeated_and_many_vertices(self, client):
         graph = {v: [] for v in range(10)}
         graphos = _make(client, 10)
@@ -239,7 +247,7 @@ class TestGraphOS:
             graphos.init_server_storage(graph, values)
 
     def test_updates_and_queries_reject_contract_violations_before_any_io(self, client):
-        graphos = _make(client, 2)
+        graphos = _make(client, 2, max_deg=1)
         graphos.init_server_storage({0: [], 1: []})
         with pytest.raises(ContractError):
             graphos.insert(2, b"x", [])
@@ -323,19 +331,26 @@ class TestGraphOsObliviousness:
             traces.append(_request_trace(client, query, graphos, vertex))
         assert all(trace == traces[0] for trace in traces)
 
-    def test_delete_trace_is_degree_independent(self):
-        traces = []
-        for vertex in [0, 4, 5]:
-            client, graphos = self._graphos()
-            traces.append(_request_trace(client, graphos.delete, vertex))
-        assert traces[0] == traces[1] == traces[2]
+    @staticmethod
+    def _tolerant(run, *args):
+        try:
+            run(*args)
+        except (KeyError, ValueError):
+            pass
 
-    def test_insert_trace_is_degree_independent(self):
+    def test_delete_trace_is_degree_and_existence_independent(self):
         traces = []
-        for neighbors in [[], [5], [2, 3, 5]]:
+        for vertex in [0, 4, 5, 7]:
             client, graphos = self._graphos()
-            traces.append(_request_trace(client, graphos.insert, 9, b"v", neighbors))
-        assert traces[0] == traces[1] == traces[2]
+            traces.append(_request_trace(client, self._tolerant, graphos.delete, vertex))
+        assert all(trace == traces[0] for trace in traces)
+
+    def test_insert_trace_is_degree_and_outcome_independent(self):
+        traces = []
+        for vertex, neighbors in [(9, []), (9, [5]), (9, [2, 3, 5]), (1, []), (9, [8]), (9, [0])]:
+            client, graphos = self._graphos()
+            traces.append(_request_trace(client, self._tolerant, graphos.insert, vertex, b"v", neighbors))
+        assert all(trace == traces[0] for trace in traces)
 
     @pytest.mark.parametrize(
         "update",

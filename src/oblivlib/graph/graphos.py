@@ -263,14 +263,15 @@ class GraphOS:
         self._require_count("hops", hops)
         info = self._vertices([vertex])
         frontier: list[int | None] = [vertex if vertex in info else None]
-        for _ in range(hops):
-            fresh: list[int | None] = []
-            for neighbor in self._neighbors_of(frontier, self._degrees(info)):
-                keep = neighbor is not None and neighbor not in info and neighbor not in fresh
-                fresh.append(neighbor if keep else None)
-            layer = self._vertices(fresh)
+        for hop in range(1, hops + 1):
+            reached = self._neighbors_of(frontier, self._degrees(info))
+            fresh = [neighbor for neighbor in dict.fromkeys(reached) if neighbor is not None and neighbor not in info]
+            width = min(self._max_deg**hop, self._num_vertices)
+            assert len(fresh) <= width
+            layer = self._vertices([*fresh, *[None] * (width - len(fresh))])
             info.update(layer)
             frontier = [neighbor if neighbor in layer else None for neighbor in fresh]
+            frontier += [None] * (width - len(frontier))
         return self._values(info)
 
     def random_walk(self, vertex: int, steps: int) -> dict[int, bytes]:
@@ -355,38 +356,37 @@ class GraphOS:
                 problem = f"neighbor {neighbor} does not exist"
             elif problem is None and block is not None and self._decode_vertex(block.value)[1] >= self._max_deg:
                 problem = f"neighbor {neighbor} already has max_deg {self._max_deg} neighbors"
-        if problem is not None:
-            self._commit()
-            raise ValueError(f"{self._identity}: {problem}.")
-
+        linked = neighbors if problem is None else []
         old_degrees: dict[int, int] = {}
-        for neighbor in neighbors:
+        for neighbor in linked:
             block = blocks[_vertex_key(neighbor)]
             neighbor_value, degree = self._decode_vertex(block.value)
             old_degrees[neighbor] = degree
             block.value = self._encode_vertex(neighbor_value, degree + 1)
         self._commit()
 
-        entries: list[tuple[bytes, bytes] | None] = [(vertex_key, self._encode_vertex(value, len(neighbors)))]
-        for index, neighbor in enumerate(neighbors):
+        entries: list[tuple[bytes, bytes] | None] = (
+            [(vertex_key, self._encode_vertex(value, len(neighbors)))] if problem is None else [None]
+        )
+        for index, neighbor in enumerate(linked):
             entries += [
                 (_edge_key(neighbor, old_degrees[neighbor]), self._id.encode(vertex)),
                 (_slot_key(neighbor, vertex), self._index.encode(old_degrees[neighbor])),
                 (_edge_key(vertex, index), self._id.encode(neighbor)),
                 (_slot_key(vertex, neighbor), self._index.encode(index)),
             ]
-        entries += [None] * (4 * (self._max_deg - len(neighbors)))
+        entries += [None] * (4 * (self._max_deg - len(linked)))
         self._add(entries)
+        if problem is not None:
+            raise ValueError(f"{self._identity}: {problem}.")
         self._num_vertices += 1
 
     def delete(self, vertex: int) -> None:
         self._require_vertex(vertex)
         vertex_key = _vertex_key(vertex)
         blocks = self._fetch([vertex_key])
-        if vertex_key not in blocks:
-            self._commit()
-            raise KeyError(f"{self._identity}: vertex {vertex} does not exist.")
-        _, degree = self._decode_vertex(blocks[vertex_key].value)
+        exists = vertex_key in blocks
+        degree = self._decode_vertex(blocks[vertex_key].value)[1] if exists else 0
         self._commit()
 
         slots = self._neighbors_of([vertex], {vertex: degree})
@@ -425,10 +425,12 @@ class GraphOS:
         self._commit()
 
         self._remove(
-            [vertex_key]
+            [vertex_key if exists else None]
             + [None if u is None else _edge_key(vertex, index) for index, u in enumerate(slots)]
             + [None if u is None else _slot_key(vertex, u) for u in slots]
             + [None if u is None else _edge_key(u, last[u]) for u in slots]
             + [None if u is None else _slot_key(u, vertex) for u in slots]
         )
+        if not exists:
+            raise KeyError(f"{self._identity}: vertex {vertex} does not exist.")
         self._num_vertices -= 1
