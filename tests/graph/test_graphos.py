@@ -29,11 +29,11 @@ def _random_graph(rng, num_vertices, max_deg):
     return graph
 
 
-def _within(graph, start, num_hop):
+def _within(graph, start, hops):
     if start not in graph:
         return set()
     seen, frontier = {start}, {start}
-    for _ in range(num_hop):
+    for _ in range(hops):
         frontier = {n for v in frontier for n in graph[v]} - seen
         seen |= frontier
     return seen
@@ -134,12 +134,12 @@ class TestGraphOS:
             elif roll < 0.35:
                 queried = rng.sample(range(num_vertices + 2), 2)
                 expected = {n for v in queried if v in graph for n in graph[v]}
-                assert graphos.neighbor(queried) == {n: values[n] for n in expected}
+                assert graphos.neighbor_values(queried) == {n: values[n] for n in expected}
             elif roll < 0.5:
                 hops = rng.randrange(3)
-                assert graphos.t_hop(vertex, hops) == {v: values[v] for v in _within(graph, vertex, hops)}
+                assert graphos.hop_neighborhood(vertex, hops) == {v: values[v] for v in _within(graph, vertex, hops)}
             elif roll < 0.6:
-                walk = graphos.t_traversal(vertex, 3)
+                walk = graphos.random_walk(vertex, 3)
                 if vertex in graph:
                     assert set(graph[vertex]) | {vertex} <= set(walk)
                 assert set(walk) <= _within(graph, vertex, 3)
@@ -192,14 +192,14 @@ class TestGraphOS:
         graphos.delete(1)
         graph = {0: [2, 3], 2: [0], 3: [0]}
         matches_model(graphos, graph, dict.fromkeys(graph, b"v"))
-        assert graphos.neighbor([0]) == {2: b"v", 3: b"v"}
+        assert graphos.neighbor_values([0]) == {2: b"v", 3: b"v"}
 
     def test_empty_graph_grows_from_inserts(self, client, matches_model):
         graphos = _make(client, 4)
         graphos.init_server_storage()
         graphos.insert(5, b"a", [])
         graphos.insert(6, b"b", [5])
-        assert graphos.neighbor([5]) == {6: b"b"}
+        assert graphos.neighbor_values([5]) == {6: b"b"}
         graphos.delete(5)
         graphos.delete(6)
         assert graphos.lookup([5, 6]) == {}
@@ -218,7 +218,7 @@ class TestGraphOS:
             graphos.insert(4, b"x", [0])
         with pytest.raises(KeyError, match="vertex 7 does not exist"):
             graphos.delete(7)
-        assert graphos.neighbor([0]) == {1: b"v", 2: b"v", 3: b"v"}
+        assert graphos.neighbor_values([0]) == {1: b"v", 2: b"v", 3: b"v"}
         matches_model(graphos, graph, values)
 
     @pytest.mark.parametrize(
@@ -254,11 +254,11 @@ class TestGraphOS:
             with pytest.raises(ContractError, match="vertex"):
                 traversal(-1)
         hops: list[Any] = [-1, 1.5, "2"]
-        for num_hop in hops:
-            with pytest.raises(ContractError, match="num_hop"):
-                graphos.t_hop(0, num_hop)
-            with pytest.raises(ContractError, match="num_hop"):
-                graphos.t_traversal(0, num_hop)
+        for count in hops:
+            with pytest.raises(ContractError, match="hops"):
+                graphos.hop_neighborhood(0, count)
+            with pytest.raises(ContractError, match="steps"):
+                graphos.random_walk(0, count)
         assert client.metrics.rounds == rounds
 
 
@@ -308,13 +308,13 @@ class TestGraphOsObliviousness:
         "query",
         [
             lambda g, v: g.lookup([v]),
-            lambda g, v: g.neighbor([v]),
-            lambda g, v: g.t_hop(v, 2),
-            lambda g, v: g.t_traversal(v, 2),
+            lambda g, v: g.neighbor_values([v]),
+            lambda g, v: g.hop_neighborhood(v, 2),
+            lambda g, v: g.random_walk(v, 2),
             lambda g, v: g.bfs(v),
             lambda g, v: g.dfs(v),
         ],
-        ids=["lookup", "neighbor", "t_hop", "t_traversal", "bfs", "dfs"],
+        ids=["lookup", "neighbor_values", "hop_neighborhood", "random_walk", "bfs", "dfs"],
     )
     def test_query_trace_is_degree_independent(self, query):
         traces = []
@@ -340,7 +340,7 @@ class TestGraphOsObliviousness:
     @pytest.mark.parametrize(
         "update",
         [
-            lambda g: g.neighbor([7]),
+            lambda g: g.neighbor_values([7]),
             lambda g: g.insert(9, b"v", []),
             lambda g: g.delete(5),
         ],

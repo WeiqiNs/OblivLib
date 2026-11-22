@@ -98,10 +98,10 @@ class GraphOS:
             raise ContractError(f"{self._identity}: a vertex must be an int in [0, 2**64), got {vertex!r}.")
         return vertex
 
-    def _require_hops(self, num_hop: object) -> int:
-        if type(num_hop) is not int or num_hop < 0:
-            raise ContractError(f"{self._identity}: num_hop must be an int >= 0, got {num_hop!r}.")
-        return num_hop
+    def _require_count(self, name: str, count: object) -> int:
+        if type(count) is not int or count < 0:
+            raise ContractError(f"{self._identity}: {name} must be an int >= 0, got {count!r}.")
+        return count
 
     def _require_value(self, value: object) -> None:
         require_value(self._identity, value, self._config.data_size)
@@ -252,18 +252,18 @@ class GraphOS:
             self._require_vertex(vertex)
         return self._values(self._vertices(vertices))
 
-    def neighbor(self, vertices: Sequence[int]) -> dict[int, bytes]:
+    def neighbor_values(self, vertices: Sequence[int]) -> dict[int, bytes]:
         for vertex in vertices:
             self._require_vertex(vertex)
         info = self._vertices(vertices)
         return self._values(self._vertices(self._neighbors_of(vertices, self._degrees(info))))
 
-    def t_hop(self, vertex: int, num_hop: int) -> dict[int, bytes]:
+    def hop_neighborhood(self, vertex: int, hops: int) -> dict[int, bytes]:
         self._require_vertex(vertex)
-        self._require_hops(num_hop)
+        self._require_count("hops", hops)
         info = self._vertices([vertex])
         frontier: list[int | None] = [vertex if vertex in info else None]
-        for _ in range(num_hop):
+        for _ in range(hops):
             fresh: list[int | None] = []
             for neighbor in self._neighbors_of(frontier, self._degrees(info)):
                 keep = neighbor is not None and neighbor not in info and neighbor not in fresh
@@ -273,13 +273,13 @@ class GraphOS:
             frontier = [neighbor if neighbor in layer else None for neighbor in fresh]
         return self._values(info)
 
-    def t_traversal(self, vertex: int, num_hop: int) -> dict[int, bytes]:
+    def random_walk(self, vertex: int, steps: int) -> dict[int, bytes]:
         self._require_vertex(vertex)
-        self._require_hops(num_hop)
+        self._require_count("steps", steps)
         info = self._vertices([vertex])
         current: int | None = vertex if vertex in info else None
         degrees = self._degrees(info)
-        for _ in range(num_hop):
+        for _ in range(steps):
             layer = self._vertices(self._neighbors_of([current], degrees))
             info.update(layer)
             degrees = self._degrees(layer)
