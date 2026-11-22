@@ -12,10 +12,15 @@ from oblivlib.oram.tree_base_oram import TreeBaseOram
 class OramOstOmap(BaseOmap):
     def __init__(self, config: OramOstOmapConfig, ost: OstBaseOmap[Any, Any], oram: TreeBaseOram[Any, Any]):
         required = self.oram_data_size(ost)
-        if oram._data_size < required:
+        if oram.data_size < required:
             raise ValueError(
-                f"OramOstOmap ORAM data_size={oram._data_size} is too small for an ODS root pointer; it must be at "
+                f"OramOstOmap ORAM data_size={oram.data_size} is too small for an ODS root pointer; it must be at "
                 + f"least {required}. Size it with OramOstOmap.oram_data_size(ost)."
+            )
+        if ost.num_data < config.num_data:
+            raise ValueError(
+                f"OramOstOmap num_data={config.num_data} exceeds its tree map's num_data={ost.num_data}; the tree "
+                + "map must be able to hold every key."
             )
 
         self._config: OramOstOmapConfig = config
@@ -25,6 +30,7 @@ class OramOstOmap(BaseOmap):
         self._ost.update_mul_tree_height(num_tree=self._num_data)
 
         self._prf: Blake2Prf = Blake2Prf()
+        self._size: int = 0
 
     @staticmethod
     def oram_data_size(ost: OstBaseOmap[Any, Any]) -> int:
@@ -42,11 +48,11 @@ class OramOstOmap(BaseOmap):
 
     @property
     def _identity(self) -> str:
-        return f"{type(self).__name__} {self._ost._name!r}"
+        return f"{type(self).__name__} {self._ost.name!r}"
 
     @override
     def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
-        require_omap_init(self._identity, data or [], key_size=self._ost._key_size, data_size=self._ost._data_size)
+        require_omap_init(self._identity, data or [], key_size=self._ost.key_size, data_size=self._ost.data_size)
         if len(data or []) > self._num_data:
             raise ContractError(f"{self._identity}: {len(data or [])} initial keys exceed num_data={self._num_data}.")
         data_map = hash_data_to_map(prf=self._prf, data=data or [], map_size=self._num_data)
@@ -54,6 +60,7 @@ class OramOstOmap(BaseOmap):
 
         roots = self._ost.init_mul_tree_server_storage(data_list=data_list)
         self._oram.init_server_storage((key, self._encode_root(root)) for key, root in enumerate(roots))
+        self._size = len(data or [])
 
     def _on_slot[T](self, key: bytes, op: Callable[[], T]) -> T:
         def run(slot: bytes) -> tuple[bytes, T]:
@@ -65,20 +72,23 @@ class OramOstOmap(BaseOmap):
 
     @override
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
-        require_omap_key(self._identity, key, self._ost._key_size)
+        require_omap_key(self._identity, key, self._ost.key_size)
         if value is not None:
-            require_value(self._identity, value, self._ost._data_size)
-        return self._on_slot(key, lambda: self._ost._search(key, value))
+            require_value(self._identity, value, self._ost.data_size)
+        return self._on_slot(key, lambda: self._ost.search(key, value))
 
     @override
     def insert(self, key: bytes, value: bytes) -> None:
-        require_omap_key(self._identity, key, self._ost._key_size)
-        require_value(self._identity, value, self._ost._data_size)
-        if self._ost._size >= self._num_data:
+        require_omap_key(self._identity, key, self._ost.key_size)
+        require_value(self._identity, value, self._ost.data_size)
+        if self._size >= self._num_data:
             raise ContractError(f"{self._identity}: the map already holds num_data={self._num_data} keys.")
-        self._ost._require_room(1)
-        self._on_slot(key, lambda: self._ost._insert(key, value))
+        self._on_slot(key, lambda: self._ost.insert(key, value))
+        self._size += 1
 
     def delete(self, key: bytes) -> bytes | None:
-        require_omap_key(self._identity, key, self._ost._key_size)
-        return self._on_slot(key, lambda: self._ost._delete(key))
+        require_omap_key(self._identity, key, self._ost.key_size)
+        deleted = self._on_slot(key, lambda: self._ost.delete(key))
+        if deleted is not None:
+            self._size -= 1
+        return deleted

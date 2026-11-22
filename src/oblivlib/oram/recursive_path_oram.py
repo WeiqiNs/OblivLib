@@ -20,7 +20,7 @@ class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
     def _value_field(self) -> Field[Any]:
         return Array(UInt.covering(self._child_leaf_range - 1), self._config.compression_ratio)
 
-    def _build_and_host(self, child_leaves: list[int]) -> list[int]:
+    def build_and_host(self, child_leaves: list[int]) -> list[int]:
         leaves = [self._get_new_leaf() for _ in range(self._num_data)]
         ratio = self._config.compression_ratio
         tree = self._build_tree(
@@ -39,9 +39,7 @@ class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
         self._host_tree(tree)
         return leaves
 
-    def _access_pos_map_level(
-        self, cur_key: int, cur_index: int, cur_leaf: int, new_cur_leaf: int, new_next_leaf: int
-    ) -> int:
+    def access(self, cur_key: int, cur_index: int, cur_leaf: int, new_cur_leaf: int, new_next_leaf: int) -> int:
         self._read_paths([cur_leaf])
         data = self._require_in_stash(key=cur_key)
         next_leaf = data.value[cur_index]
@@ -92,7 +90,7 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel])
         self._host_tree(self._build_tree(self._initial_blocks(data)))
         leaves = list(self._pos_map.values())
         for level in reversed(self._levels):
-            leaves = level._build_and_host(leaves)
+            leaves = level.build_and_host(leaves)
         self._pos_map = dict(enumerate(leaves))
 
     def _get_leaf_from_pos_map(self, key: int) -> tuple[int, int]:
@@ -104,7 +102,7 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel])
         children: list[TreeStorageBase[RecursiveOramConfig]] = [*self._levels[1:], self]
         for level, child, (cur_key, cur_index) in zip(self._levels, children, keys, strict=True):
             new_next_leaf = child._get_new_leaf()
-            cur_leaf = level._access_pos_map_level(
+            cur_leaf = level.access(
                 cur_key=cur_key,
                 cur_index=cur_index,
                 cur_leaf=cur_leaf,

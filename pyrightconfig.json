@@ -19,5 +19,7 @@
   "reportMissingParameterType": false,
   "reportUnannotatedClassAttribute": false,
   "reportUnusedCallResult": false,
-  "reportPrivateUsage": false
+
+  // Tests inspect scheme internals on purpose (budget witnesses read op counters); the library may not.
+  "executionEnvironments": [{ "root": "tests", "reportPrivateUsage": false }, { "root": "src" }]
 }

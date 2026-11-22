@@ -68,7 +68,7 @@ class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT], C
     def _value_field(self) -> Field[Any]:
         return UInt(self._config.count_length)
 
-    def _build_and_host(self) -> None:
+    def build_and_host(self) -> None:
         self._host_tree(
             self._build_tree(
                 Data(
@@ -126,4 +126,4 @@ class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
     def init_server_storage(self, data: InitData | None = None) -> None:
         self._host_tree(self._build_tree(self._initial_blocks(data)))
         for level in reversed(self._levels):
-            level._build_and_host()
+            level.build_and_host()

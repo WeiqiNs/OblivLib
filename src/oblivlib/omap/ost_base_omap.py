@@ -110,6 +110,10 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, LocalT: LocalNodesBase[Any]](
         return self._config.key_size
 
     @property
+    def key_size(self) -> int:
+        return self._key_size
+
+    @property
     def _distinguishable(self) -> bool:
         return self._config.distinguishable
 

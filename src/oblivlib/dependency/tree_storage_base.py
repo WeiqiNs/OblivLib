@@ -60,6 +60,22 @@ class TreeStorageBase[ConfigT: OramConfig]:
         return self._config.client
 
     @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def num_data(self) -> int:
+        return self._num_data
+
+    @property
+    def data_size(self) -> int:
+        return self._data_size
+
+    @property
+    def leaf_range(self) -> int:
+        return self._leaf_range
+
+    @property
     def stash_size(self) -> int:
         return len(self._stash)
 

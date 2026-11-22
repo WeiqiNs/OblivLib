@@ -28,3 +28,10 @@ def test_the_map_enforces_its_own_num_data_not_the_inner_maps(client):
         omap.insert(key=b"16", value=b"v")
     assert omap.delete(key=b"0") == b"v"
     omap.insert(key=b"16", value=b"v")
+
+
+def test_a_tree_map_smaller_than_the_map_is_refused(client):
+    ost = _avl(8, client)
+    oram = PathOram(PathOramConfig(num_data=16, data_size=OramOstOmap.oram_data_size(ost), client=client))
+    with pytest.raises(ValueError, match="tree map's num_data=8"):
+        OramOstOmap(OramOstOmapConfig(num_data=16), ost=ost, oram=oram)

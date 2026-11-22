@@ -23,6 +23,30 @@ class _BucketStore(TreeStorageBase[OramConfig]):
     def _key_field(self) -> Field[Any]:
         return Bytes(self._block_key_size)
 
+    def host(self, blocks: list[Data]) -> None:
+        self._host_tree(self._build_tree(blocks))
+
+    def open_bucket(self, leaves: list[int], width: int, in_bucket: Callable[[Any], bool]) -> list[Data]:
+        paths = set(leaves)
+        while len(paths) < width:
+            paths.add(self._get_new_leaf())
+        self._read_paths(sorted(paths))
+        return [data for data in self._stash if in_bucket(data.key)]
+
+    def close_bucket(self, blocks: list[Data], kept: list[Data]) -> None:
+        old = {id(data) for data in blocks}
+        dropped = old - {id(data) for data in kept}
+        self._stash = [data for data in self._stash if id(data) not in dropped]
+        self._stash += [data for data in kept if id(data) not in old]
+        self._check_stash()
+        self._write_paths()
+
+    def add_block(self, block: Data) -> None:
+        self._read_paths([self._get_new_leaf()])
+        self._stash.append(block)
+        self._check_stash()
+        self._write_paths()
+
 
 class GroupOmap(BaseOmap):
     SEED_SIZE = 32
@@ -40,9 +64,9 @@ class GroupOmap(BaseOmap):
         self._size = 0
 
         required = self.upper_oram_data_size(config.num_data)
-        if self._upper_oram._data_size < required:
+        if self._upper_oram.data_size < required:
             raise ValueError(
-                f"GroupOmap upper ORAM data_size={self._upper_oram._data_size} is too small for bucket "
+                f"GroupOmap upper ORAM data_size={self._upper_oram.data_size} is too small for bucket "
                 + f"metadata; it must be at least {required}. Size it with GroupOmap.upper_oram_data_size(num_data)."
             )
 
@@ -90,19 +114,13 @@ class GroupOmap(BaseOmap):
 
     @property
     def _width(self) -> int:
-        return min(self._upper_bound, self._lower_oram._leaf_range)
+        return min(self._upper_bound, self._lower_oram.leaf_range)
 
     def _slot_leaf(self, seed: bytes, slot: int) -> int:
-        return self._leaf_prf.digest_mod_n(message=seed + slot.to_bytes(4, "big"), mod=self._lower_oram._leaf_range)
+        return self._leaf_prf.digest_mod_n(message=seed + slot.to_bytes(4, "big"), mod=self._lower_oram.leaf_range)
 
     def _hash_key_to_bucket(self, key: bytes) -> int:
         return self._bucket_prf.digest_mod_n(message=key, mod=self._num_data)
-
-    def _padded_leaves(self, leaves: list[int]) -> list[int]:
-        paths = set(leaves)
-        while len(paths) < self._width:
-            paths.add(self._lower_oram._get_new_leaf())
-        return sorted(paths)
 
     @override
     def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
@@ -125,7 +143,7 @@ class GroupOmap(BaseOmap):
             )
 
         self._upper_oram.init_server_storage(upper_data)
-        self._lower_oram._host_tree(self._lower_oram._build_tree(lower_blocks))
+        self._lower_oram.host(lower_blocks)
         self._size = len(data)
 
     def _access_bucket[T](self, bucket_id: int, change: Callable[[list[Data]], tuple[list[Data], T]]) -> T:
@@ -133,19 +151,14 @@ class GroupOmap(BaseOmap):
 
         def rehome(metadata: bytes) -> tuple[bytes, T]:
             seed, count = self._metadata.decode(metadata)
-            lower._read_paths(self._padded_leaves([self._slot_leaf(seed, slot) for slot in range(1, count + 1)]))
-            blocks = [data for data in lower._stash if self._hash_key_to_bucket(data.key) == bucket_id]
+            leaves = [self._slot_leaf(seed, slot) for slot in range(1, count + 1)]
+            blocks = lower.open_bucket(leaves, self._width, lambda key: self._hash_key_to_bucket(key) == bucket_id)
             kept, result = change(blocks)
             assert len(kept) <= self._upper_bound
-            old = {id(data) for data in blocks}
-            dropped = old - {id(data) for data in kept}
-            lower._stash = [data for data in lower._stash if id(data) not in dropped]
-            lower._stash += [data for data in kept if id(data) not in old]
-            lower._check_stash()
             new_seed = os.urandom(self.SEED_SIZE)
             for slot, data in enumerate(kept, start=1):
                 data.leaf = self._slot_leaf(new_seed, slot)
-            lower._write_paths()
+            lower.close_bucket(blocks, kept)
             return self._metadata.encode((new_seed, len(kept))), result
 
         return self._upper_oram.update(bucket_id, rehome)
@@ -186,10 +199,7 @@ class GroupOmap(BaseOmap):
         def append(metadata: bytes) -> tuple[bytes, None]:
             seed, count = self._metadata.decode(metadata)
             assert count < self._upper_bound
-            lower._read_paths([lower._get_new_leaf()])
-            lower._stash.append(Data(key=key, leaf=self._slot_leaf(seed, count + 1), value=value))
-            lower._check_stash()
-            lower._write_paths()
+            lower.add_block(Data(key=key, leaf=self._slot_leaf(seed, count + 1), value=value))
             return self._metadata.encode((seed, count + 1)), None
 
         self._upper_oram.update(bucket_id, append)

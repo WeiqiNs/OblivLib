@@ -58,7 +58,7 @@ class DaCounterMixin(CounterMixin[DaOramConfig], Protocol):
 
 
 class DaPosMapLevel(CounterPosMapLevel[DaOramConfig], DaCounterMixin):
-    def _access_pos_map_level(
+    def access(
         self, cur_key: int, cur_index: int, new_leaf: int, r_key: int | None, r_new_leaf: int | None, leaves: list[int]
     ) -> DaStep:
         self._read_paths(leaves)
@@ -88,7 +88,7 @@ class DAOram(CounterOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
 
         for level, (cur_key, cur_index) in zip(self._levels, level_keys, strict=True):
             r_key = None if r_index == -1 else cur_key // self._num_ic * self._num_ic + r_index
-            cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf = level._access_pos_map_level(
+            cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf = level.access(
                 cur_key=cur_key,
                 cur_index=cur_index,
                 new_leaf=new_leaf,
