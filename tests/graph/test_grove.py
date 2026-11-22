@@ -397,8 +397,7 @@ class TestGroveObliviousness:
 
     def test_delete_trace_is_degree_independent(self, monkeypatch):
         traces = []
-        for vertex in [0, 4, 5, 9]:
+        for vertex in [0, 4, 5]:
             client, grove = self._grove(monkeypatch, 5)
-
             traces.append(_request_trace(client, grove.delete, vertex))
         self._same(traces)

@@ -511,7 +511,6 @@ class Grove:
 
         _, new_leaves = self._access([None, *targets[1:]], placed, index_paths=self._index_paths["search"], edit=link)
         if problem is not None:
-            self._finish_index_op("insert", lambda: self._index.insert(None))
             raise ValueError(f"{self._identity}: {problem}.")
         self._finish_index_op("insert", lambda: self._index.insert(_key(vertex), self._leaf.encode(new_leaves[vertex])))
         self._size += 1
@@ -520,10 +519,9 @@ class Grove:
         self._require_vertex(vertex)
         targets, placed = self._locate([vertex])
         found, _ = self._access(targets, placed, index_paths=self._index_paths["search"], edit=lambda found: set(found))
-        exists = targets[0] is not None
-        _ = self._finish_index_op("delete", lambda: self._index.delete(_key(vertex) if exists else None))
-        if not exists:
+        if targets[0] is None:
             return None
+        _ = self._finish_index_op("delete", lambda: self._index.delete(_key(vertex)))
         self._size -= 1
         return found[vertex].value
 
