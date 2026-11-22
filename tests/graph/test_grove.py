@@ -187,6 +187,16 @@ class TestGrove:
             assert grove.neighbor_values([0, 1, 2, 3, 4, 5, 6]) == {v: bytes([v]) for v in [0, 1, 3, 4, 5, 6]}
         consistent(grove, graph, values)
 
+    def test_deep_hops_stay_bounded_by_the_graph(self, client, consistent):
+        graph = {0: [1, 2], 1: [0, 3], 2: [0], 3: [1], 4: []}
+        values = {v: bytes([v]) for v in graph}
+        grove = _make(client, 8)
+        grove.init_server_storage(graph, values)
+        rounds = client.metrics.rounds
+        assert grove.hop_neighborhood(0, 40) == {v: values[v] for v in [0, 1, 2, 3]}
+        assert client.metrics.rounds - rounds < 40 * 3 + grove._index._max_height + 4
+        consistent(grove, graph, values)
+
     def test_repeated_queries_keep_every_pointer_current(self, client, consistent):
         graph = {0: [1, 2, 3], 1: [0, 2], 2: [0, 1], 3: [0]}
         values = {v: bytes([v]) for v in graph}

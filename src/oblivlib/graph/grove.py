@@ -401,13 +401,14 @@ class Grove:
         return found
 
     def _layer(self, frontier: Mapping[int, Vertex], width: int, skip: set[int]) -> list[Target]:
-        slots: list[Target] = []
+        fresh: dict[int, int] = {}
         for vertex in frontier.values():
             for neighbor, leaf in vertex.neighbors.items():
-                fresh = neighbor not in skip and all(slot is None or slot[0] != neighbor for slot in slots)
-                slots.append((neighbor, leaf) if fresh else None)
-        assert len(slots) <= width
-        return slots + [None] * (width - len(slots))
+                if neighbor not in skip:
+                    fresh.setdefault(neighbor, leaf)
+        width = min(width, self._num_vertices)
+        assert len(fresh) <= width
+        return [*fresh.items(), *[None] * (width - len(fresh))]
 
     def lookup(self, vertices: Sequence[int]) -> dict[int, bytes]:
         for vertex in vertices:
