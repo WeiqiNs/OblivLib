@@ -1,8 +1,6 @@
-import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cached_property
-from itertools import repeat
 from typing import override
 
 from oblivlib.dependency import ContractError, KVPair
@@ -175,12 +173,15 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
     def _return_local(self, keys: Iterable[KeyT]) -> None:
         self._return_to_stash([self._local.pop(key) for key in list(keys)])
 
+    @cached_property
+    def _descent_keys(self) -> list[int]:
+        keys = [1]
+        for _ in range(1, self._max_height):
+            keys.append(min(keys[-1] * self._fanout, self._batch_size))
+        return keys
+
     def _round_width(self, index: int) -> int:
-        keys = (
-            min(math.prod(repeat(self._fanout, index)), self._batch_size)
-            if index < self._max_height
-            else self._batch_size
-        )
+        keys = self._descent_keys[index] if index < self._max_height else self._batch_size
         return min(self._config.paths_per_round * keys, self._leaf_range)
 
     def _round_leaves(self, leaves: Iterable[int], width: int) -> list[int]:

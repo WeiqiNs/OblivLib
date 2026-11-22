@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from typing import Protocol, cast, override
+from typing import Protocol, override
 
 from oblivlib.dependency import UNSET, ContractError, InitData, OramConfig
 from oblivlib.dependency.contract import require_oram_key, require_value
@@ -27,7 +27,7 @@ def _initial_pairs(data: InitData | None) -> Iterable[tuple[int, bytes]]:
     if data is None:
         return ()
     if isinstance(data, Mapping):
-        return cast(Mapping[int, bytes], data).items()
+        return data.items()
     return data
 
 

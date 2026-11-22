@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final, Protocol
@@ -37,4 +37,4 @@ PathRows = dict[int, bytes]
 
 PosMap = dict[int, int]
 DataMap = dict[int, bytes]
-InitData = Mapping[int, bytes] | Iterable[tuple[int, bytes]]
+InitData = Mapping[int, bytes] | Sequence[tuple[int, bytes]] | Iterator[tuple[int, bytes]]
