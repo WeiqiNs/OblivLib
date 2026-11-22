@@ -8,7 +8,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Commands
 
-- Install: `pip install -e ".[dev]"` (pytest, basedpyright, ruff; everything is in `pyproject.toml`).
+- Install: `pip install -e . --group dev` (pytest, basedpyright, ruff; everything is in `pyproject.toml`).
 - Test: `pytest`, or one file / one test by path. `pytest --cov` measures line and branch coverage and fails below 100% (`[tool.coverage]` in `pyproject.toml`); CI runs it on the newest Python, where coverage is cheap, and uploads that report to Codecov. `NUM_DATA=256 pytest ...` shrinks the `num_data` fixture (default `2**12`, `tests/conftest.py`).
 - Types: `basedpyright` (`pyrightconfig.json`, `recommended` mode; `src` passes the dynamic-typing rules such as `reportAny` and `reportUnusedCallResult`, `tests` is exempt from them through its `executionEnvironments` entry). Warnings fail CI. Point it at the env with the deps (`--pythonpath`), or every import fails.
 - Lint: `ruff check`, `ruff format --check`.

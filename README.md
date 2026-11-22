@@ -14,7 +14,8 @@ client holds the keys and runs the algorithm, and the server only stores encrypt
 | | [Recursive Path ORAM](https://doi.org/10.1007/978-3-642-25385-0_11) | `oblivlib.oram.RecursivePathOram` |
 | | [Freecursive ORAM](https://doi.org/10.1145/2694344.2694353), with [probabilistic resets](https://eprint.iacr.org/2016/1084) by default | `oblivlib.oram.FreecursiveOram` |
 | | [DAORAM](https://doi.org/10.14778/3712221.3712235) | `oblivlib.oram.DAOram` |
-| | Multi-path and static (PRF-positioned) Path ORAM | `oblivlib.oram.MulPathOram`, `oblivlib.oram.StaticOram` |
+| | Multi-path Path ORAM | `oblivlib.oram.MulPathOram` |
+| | Static Path ORAM (PRF-positioned; reveals repeated accesses, a building block) | `oblivlib.oram.StaticOram` |
 | OMAP | [AVL-tree OMAP](https://doi.org/10.1145/2660267.2660314) | `oblivlib.omap.AVLOmap` |
 | | [B+-tree OMAP](https://doi.org/10.14778/3364324.3364331) | `oblivlib.omap.BPlusOmap` |
 | | [ORAM + search tree](https://doi.org/10.14778/3712221.3712235) | `oblivlib.omap.OramOstOmap` |
@@ -27,11 +28,11 @@ client holds the keys and runs the algorithm, and the server only stores encrypt
 Requires Python 3.12 or later.
 
 ```bash
-pip install git+https://github.com/WeiqiNs/OblivLib
+pip install oblivlib
 ```
 
-For development: `pip install -e ".[dev]"`, then `pytest --cov` (the suite requires 100% line and branch
-coverage).
+For development: `pip install -e . --group dev`, then `pytest --cov` (the suite requires 100% line and
+branch coverage).
 
 ## Usage
 
@@ -60,7 +61,8 @@ with Client.local() as client:
 Keys and values are bytes (ORAM keys are ints in `[0, num_data)`, graph vertices are ints); anything outside
 a scheme's limits raises `ContractError` before the server is touched.
 
-`Client.local()` runs the server in the same process. For a real deployment, run a server and connect to it:
+`Client.local()` runs the server in the same process. For a real deployment, run a server and connect to it.
+The server has no authentication, so bind it to a trusted network or put it behind an authenticated tunnel:
 
 ```python
 from oblivlib.dependency import StorageServer, ZmqListener, serve

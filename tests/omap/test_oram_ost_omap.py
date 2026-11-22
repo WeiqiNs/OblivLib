@@ -23,3 +23,11 @@ def test_a_mismatched_oram_is_refused(client, oram_num_data, spare_bytes, messag
         return
     with pytest.raises(ValueError, match=message):
         OramOstOmap(ost=AVLOmap, ost_config=ost, oram=oram)
+
+
+@pytest.mark.parametrize("option", [{"cached": True}, {"batch_size": 2}], ids=["cached", "batched"])
+def test_a_tree_map_it_cannot_drive_is_refused(client, option):
+    ost = AvlOmapConfig(num_data=64, key_size=10, data_size=10, client=client, **option)
+    oram = PathOram(PathOramConfig(num_data=64, data_size=OramOstOmap.oram_data_size(AVLOmap, ost), client=client))
+    with pytest.raises(ValueError, match="cached=False and batch_size=1"):
+        OramOstOmap(ost=AVLOmap, ost_config=ost, oram=oram)

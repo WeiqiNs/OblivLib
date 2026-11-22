@@ -31,7 +31,7 @@ def _row(name: str, measurement: Measurement) -> str:
         spent.crypto_ns / 1e6,
         measurement.client_ns / 1e6,
     )
-    return f"{name:<6}{spent.rounds:>13}" + "".join(f"{value:>13.1f}" for value in values)
+    return f"{name:<6}{spent.rounds:>18}" + "".join(f"{value:>18.1f}" for value in values)
 
 
 def run_oram(client: Client, num_data: int) -> Measurement:
@@ -76,7 +76,7 @@ def main() -> None:
     with Client.connect(args.endpoint) as client:
         oram = run_oram(client, args.num_data)
         omap = run_omap(client, args.num_data)
-    print(f"{'':<6}" + "".join(f"{column:>13}" for column in COLUMNS))
+    print(f"{'':<6}" + "".join(f"{column:>18}" for column in COLUMNS))
     print(_row("ORAM", oram))
     print(_row("OMAP", omap))
 

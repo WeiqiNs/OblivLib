@@ -60,8 +60,9 @@ def _newest(store):
 
 
 @pytest.fixture
-def consistent(read_all_blocks):
+def consistent(read_all_blocks, duplicate_blocks):
     def check(grove, graph, values):
+        assert duplicate_blocks(grove) == {}
         graph_blocks = {_vertex_id(b.key): b for b in read_all_blocks(grove._graph) + grove._graph._stash}
         assert set(graph_blocks) == set(graph)
         index_blocks = {

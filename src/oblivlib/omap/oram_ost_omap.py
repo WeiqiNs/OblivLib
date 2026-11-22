@@ -14,6 +14,11 @@ from oblivlib.oram.tree_base_oram import Oram, require_oram_fits
 
 class OramOstOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](BaseOmap):
     def __init__(self, *, ost: type[OstBaseOmap[OmapConfigT, KeyT, NodeT]], ost_config: OmapConfigT, oram: Oram):
+        if ost_config.cached or ost_config.batch_size > 1:
+            raise ValueError(
+                "OramOstOmap runs single-key ops on one tree at a time; its tree map must use cached=False and "
+                + "batch_size=1."
+            )
         num_data = ost_config.num_data
         self._root_layout: Optional[Root[KeyT]] = ost.root_layout(ost_config)
         require_oram_fits(
@@ -39,7 +44,7 @@ class OramOstOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](BaseO
         return self._root_layout.encode(root)
 
     def _decode_root(self, value: bytes) -> Root[KeyT] | None:
-        return None if value == b"" else self._root_layout.decode(value)
+        return self._root_layout.decode(value)
 
     @property
     def _num_data(self) -> int:
