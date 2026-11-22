@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from oblivlib.dependency import (
+    AccessBudget,
     AvlOmapConfig,
     BPlusLeaf,
     BPlusOmapConfig,
@@ -124,10 +125,6 @@ def verify_bplus_invariants(omap, model):
     assert collected == model, (
         f"leaves != model (missing {set(model) - set(collected)}, extra {set(collected) - set(model)})"
     )
-
-
-def _textbook(config_cls):
-    return config_cls.textbook_fields()
 
 
 ORAM_MAKERS = {
@@ -260,7 +257,15 @@ _SPECS: list[tuple[str, OmapSpec]] = [
     ("avl_cached", _avl({"search": 8, "insert": 9, "delete": 11, "hidden": 11}, cached=True)),
     ("avl_batched", _avl({"search": 8, "insert": 16, "delete": 16, "hidden": 16}, batch_size=4)),
     ("avl_batched_cached", _avl({"search": 8, "insert": 9, "delete": 11, "hidden": 11}, batch_size=4, cached=True)),
-    ("avl_textbook", _avl({"search": 25, "insert": 24, "delete": 26, "hidden": 26}, **_textbook(AvlOmapConfig))),
+    (
+        "avl_raised_budgets",
+        _avl(
+            {"search": 25, "insert": 24, "delete": 26, "hidden": 26},
+            search_budget=AccessBudget(3, 1),
+            insert_budget=AccessBudget(3, 0),
+            delete_budget=AccessBudget(3, 2),
+        ),
+    ),
     ("bplus", _bplus({"search": 4, "insert": 7, "delete": 7, "hidden": 7}, order=5)),
     ("bplus_one_path", _bplus({"search": 4, "insert": 10, "delete": 13, "hidden": 13}, order=5, paths_per_round=1)),
     ("bplus_cached", _bplus({"search": 4, "insert": 4, "delete": 4, "hidden": 4}, order=5, cached=True)),
@@ -284,8 +289,14 @@ _SPECS: list[tuple[str, OmapSpec]] = [
         ),
     ),
     (
-        "bplus_textbook",
-        _bplus({"search": 8, "insert": 12, "delete": 13, "hidden": 13}, order=5, **_textbook(BPlusOmapConfig)),
+        "bplus_one_path_raised_budgets",
+        _bplus(
+            {"search": 8, "insert": 12, "delete": 13, "hidden": 13},
+            order=5,
+            paths_per_round=1,
+            search_budget=AccessBudget(2, 0),
+            insert_budget=AccessBudget(3, 0),
+        ),
     ),
     *(_ost(ods_kind, oram_kind) for ods_kind in ("avl", "bplus") for oram_kind in ("path", "da", "recursive")),
     *(_group(oram_kind, distinguishable=flag) for oram_kind in ("path", "da", "recursive") for flag in (False, True)),

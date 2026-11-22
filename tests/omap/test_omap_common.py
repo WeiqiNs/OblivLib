@@ -9,7 +9,6 @@ from oblivlib.dependency import (
     AesGcm,
     AvlOmapConfig,
     BPlusOmapConfig,
-    Client,
     ContractError,
     GroupOmapConfig,
     PathOramConfig,
@@ -304,33 +303,6 @@ class TestOmapStash:
             padding = sum(_round_widths(ods_spec, omap, omap._budget)[omap._op_fetches :])
             assert omap._op_owed <= padding + omap._carry_limit
         assert omap._max_stash <= omap._stash_capacity
-
-
-@pytest.mark.parametrize(
-    ("cls", "config_cls", "extra"),
-    [(AVLOmap, AvlOmapConfig, {}), (BPlusOmap, BPlusOmapConfig, {"order": 3})],
-    ids=["avl", "bplus"],
-)
-def test_the_textbook_preset_takes_more_rounds_at_the_same_bytes_per_path(cls, config_cls, extra):
-    def bytes_per_path(make):
-        client = Client.local()
-        omap = cls(make(num_data=32, key_size=4, data_size=4, client=client, distinguishable=True, **extra))
-        omap.init_server_storage()
-        client.reset_metrics()
-        rounds = 0
-        for i in range(20):
-            omap.insert(b"%04d" % i, b"v")
-            rounds += omap._budget
-            omap.search(b"%04d" % (i // 2))
-            rounds += omap._budget
-        client.flush()
-        return client.metrics.payload_bytes / (rounds * omap._config.paths_per_round), rounds
-
-    _, default_rounds = bytes_per_path(config_cls)
-    one_path_bytes, _ = bytes_per_path(lambda **kw: config_cls(**kw, paths_per_round=1))
-    textbook_bytes, textbook_rounds = bytes_per_path(config_cls.textbook)
-    assert textbook_rounds > default_rounds
-    assert textbook_bytes == one_path_bytes
 
 
 def _round_widths(spec, omap, rounds: int) -> list[int]:

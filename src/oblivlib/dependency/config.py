@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypedDict, get_args, override
+from typing import TYPE_CHECKING, ClassVar, Literal, get_args, override
 
 from oblivlib.dependency.heap_index import compute_level
 
@@ -235,18 +235,10 @@ class AccessBudget:
         return math.floor(self.a * height + self.b)
 
 
-class TextbookFields(TypedDict):
-    paths_per_round: int
-    search_budget: AccessBudget
-    insert_budget: AccessBudget
-    delete_budget: AccessBudget
-
-
 @dataclass(frozen=True, kw_only=True)
 class TreeOmapConfig(OmapConfig):
     MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
     MIN_CACHED_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
-    TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
     PATHS_PER_ROUND: ClassVar[tuple[int, ...]] = (1,)
 
     cached: bool = False
@@ -261,20 +253,6 @@ class TreeOmapConfig(OmapConfig):
 
     def budget(self, op: OdsOp) -> AccessBudget:
         return getattr(self, f"{op}_budget") or self.minimums(cached=self.cached)[op]
-
-    @classmethod
-    def textbook_fields(cls) -> TextbookFields:
-        budgets = cls.TEXTBOOK_BUDGETS
-        return TextbookFields(
-            paths_per_round=1,
-            search_budget=budgets["search"],
-            insert_budget=budgets["insert"],
-            delete_budget=budgets["delete"],
-        )
-
-    @classmethod
-    def textbook(cls, **kwargs: Any) -> Self:  # pyright: ignore[reportAny, reportExplicitAny]
-        return cls(**kwargs, **cls.textbook_fields())  # pyright: ignore[reportAny]
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -307,11 +285,6 @@ class AvlOmapConfig(TreeOmapConfig):
         "insert": AccessBudget(1, 1),
         "delete": AccessBudget(Fraction(3, 2), Fraction(-1, 2)),
     }
-    TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
-        "search": AccessBudget(3, 1),
-        "insert": AccessBudget(3, 0),
-        "delete": AccessBudget(3, 2),
-    }
 
     name: str = field(default_factory=unique_name("avl"))
 
@@ -339,11 +312,6 @@ class BPlusOmapConfig(TreeOmapConfig):
         "search": AccessBudget(1, 0),
         "insert": AccessBudget(1, 0),
         "delete": AccessBudget(1, 0),
-    }
-    TEXTBOOK_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {
-        "search": AccessBudget(2, 0),
-        "insert": AccessBudget(3, 0),
-        "delete": AccessBudget(4, -3),
     }
     PATHS_PER_ROUND: ClassVar[tuple[int, ...]] = (1, 2)
 
