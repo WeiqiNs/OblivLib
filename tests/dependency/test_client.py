@@ -66,7 +66,7 @@ def test_measurements_count_what_crossed_the_wire_during_them():
         )
 
 
-def test_staging_checks_known_labels():
+def test_staging_a_read_for_an_unknown_label_raises():
     with Client.local() as client:
         _tree(client)
         with pytest.raises(UnknownLabelError, match="'missing'"):
@@ -127,7 +127,7 @@ def test_host_tree_streams_byte_bounded_chunks(recorded_client, monkeypatch):
     assert stored[100] == b""
 
 
-def test_flush_and_close(recorded_client):
+def test_flush_sends_deferred_writes_and_close_ends_the_session(recorded_client):
     unused, unused_recorder = recorded_client()
     unused.close()
     assert unused_recorder.messages == []

@@ -9,21 +9,21 @@ from oblivlib.dependency.heap_index import (
 )
 
 
-def test_compute_level_exact_at_powers_of_two():
+def test_compute_level_steps_up_just_past_each_power_of_two():
     for p in range(32):
         n = pow(2, p)
         assert pow(2, compute_level(n) - 1) == n
         assert compute_level(n + 1) == compute_level(n) + 1
 
 
-def test_path_to_root():
+def test_path_to_root_lists_indices_from_the_node_up():
     assert path_to_root(0) == [0]
     assert path_to_root(15) == [15, 7, 3, 1, 0]
     assert path_to_root(1023) == [1023, 511, 255, 127, 63, 31, 15, 7, 3, 1, 0]
     assert path_to_root(99)[1:] == path_to_root(100)[1:]
 
 
-def test_path_indices_dedup_root_first():
+def test_path_indices_are_the_sorted_union_of_the_paths():
     assert path_indices([0, 1], level=5) == [0, 1, 3, 7, 15, 16]
     assert path_indices([2, 0], level=11) == [0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 512, 1023, 1025]
     assert path_indices([], level=11) == []

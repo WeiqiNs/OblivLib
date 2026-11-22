@@ -20,8 +20,8 @@ def _b(number: int) -> bytes:
     return b"%d" % number
 
 
-class TestOmapBehavior:
-    def test_edge_sizes(self, omap_edge_size, client):
+class TestOmapCommon:
+    def test_a_map_fills_to_num_data_and_empties_at_edge_sizes(self, omap_edge_size, client):
         spec, num_data = omap_edge_size
         omap = spec.make(client=client, num_data=num_data)
         omap.init_server_storage()
@@ -31,7 +31,7 @@ class TestOmapBehavior:
         assert [omap.delete(key=_b(i)) for i in range(num_data)] == [_b(i * 10) for i in range(num_data)]
         assert [omap.search(key=_b(i)) for i in range(num_data)] == [None] * num_data
 
-    def test_rejects_contract_violations(self, omap_spec, recorded_client):
+    def test_contract_violations_raise_before_any_round(self, omap_spec, recorded_client):
         client, recorder = recorded_client()
         omap = omap_spec.make(client=client, num_data=64)
         omap.init_server_storage([(b"1", b"kept")])
@@ -91,7 +91,7 @@ class TestOmapBehavior:
         assert len(recorder.messages) == sent
 
     @pytest.mark.parametrize("storage", ["plain", "encrypted", "file"])
-    def test_init_with_data(self, omap_spec, client, tmp_path, encryptor, storage):
+    def test_init_with_data_serves_every_key(self, omap_spec, client, tmp_path, encryptor, storage):
         config: dict[str, Any] = {
             "plain": {},
             "encrypted": {"encryptor": encryptor},
