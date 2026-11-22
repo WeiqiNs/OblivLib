@@ -1,5 +1,6 @@
 # OblivLib
 
+[![OblivLib CI](https://github.com/WeiqiNs/OblivLib/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/WeiqiNs/OblivLib/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/WeiqiNs/OblivLib/graph/badge.svg)](https://codecov.io/gh/WeiqiNs/OblivLib)
 
 OblivLib (`oblivlib`) implements oblivious algorithms (oblivious RAM, oblivious maps and oblivious graphs) for
