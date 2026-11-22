@@ -22,7 +22,7 @@ def bplus_max_levels(num_keys: int, order: int) -> int:
     return levels
 
 
-class BPlusNodeLayout(Field[BPlusNode]):
+class _BPlusNodeLayout(Field[BPlusNode]):
     def __init__(self, *, key: Field[int], leaf: Field[int], order: int, key_size: int, data_size: int):
         self._key: Field[int] = key
         self._leaf: Field[int] = leaf
@@ -66,7 +66,7 @@ class BPlusNodeLayout(Field[BPlusNode]):
 
     @override
     def __repr__(self) -> str:
-        return f"BPlusNodeLayout({self._key!r}, {self._leaf!r}, {self._keys!r}, {self._values!r}, {self._children!r})"
+        return f"_BPlusNodeLayout({self._key!r}, {self._leaf!r}, {self._keys!r}, {self._values!r}, {self._children!r})"
 
 
 class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
@@ -101,7 +101,7 @@ class BPlusOmap(OstBaseOmap[BPlusOmapConfig, int, BPlusNode]):
     @property
     @override
     def _block_layout(self) -> Field[BPlusNode]:
-        return BPlusNodeLayout(
+        return _BPlusNodeLayout(
             key=self._key_field,
             leaf=self._leaf_field,
             order=self._order,

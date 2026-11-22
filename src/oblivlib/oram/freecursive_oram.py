@@ -9,17 +9,17 @@ from oblivlib.oram.tree_base_oram import pos_map_keys
 _CSPRNG = secrets.SystemRandom()
 
 
-class ResetEntry(NamedTuple):
+class _ResetEntry(NamedTuple):
     key: int | None
     cur_leaf: int
     new_leaf: int | None
 
 
-ResetChunk = list[ResetEntry]
+ResetChunk = list[_ResetEntry]
 ResetLeaves = list[ResetChunk]
 
 
-def _split_at_key(chunks: ResetLeaves, key: int) -> tuple[ResetLeaves, ResetEntry, ResetChunk, ResetLeaves]:
+def _split_at_key(chunks: ResetLeaves, key: int) -> tuple[ResetLeaves, _ResetEntry, ResetChunk, ResetLeaves]:
     for index, chunk in enumerate(chunks):
         for entry in chunk:
             if entry.key == key:
@@ -27,7 +27,7 @@ def _split_at_key(chunks: ResetLeaves, key: int) -> tuple[ResetLeaves, ResetEntr
     raise KeyError(f"Key {key} is in no reset chunk.")
 
 
-class FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
+class _FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
     def _read_paths(self, leaves: list[int]) -> None: ...
 
     def _write_paths(self) -> None: ...
@@ -70,13 +70,13 @@ class FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
         ic = [counters.get(word, self._ic(i)) for i in range(num_ic)]
 
         reset_leaves = [
-            ResetEntry(
+            _ResetEntry(
                 key * num_ic + i,
                 self._get_previous_leaf_from_prf(key=key * num_ic + i, gc=gc, ic=ic[i]),
                 self._get_previous_leaf_from_prf(key=key * num_ic + i, gc=gc + 1, ic=0),
             )
             if key * num_ic + i < self._last_oram_data
-            else ResetEntry(None, secrets.randbelow(1 << (self._last_oram_level - 1)), None)
+            else _ResetEntry(None, secrets.randbelow(1 << (self._last_oram_level - 1)), None)
             for i in range(num_ic)
         ]
         return [reset_leaves[i : i + 2] for i in range(0, len(reset_leaves), 2)]
@@ -85,7 +85,7 @@ class FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
         child = key * self._num_ic + offset
         return [
             [
-                ResetEntry(
+                _ResetEntry(
                     child,
                     self._get_previous_leaf_from_prf(key=child, gc=gc, ic=ic),
                     self._get_previous_leaf_from_prf(key=child, gc=gc, ic=ic + 1),
@@ -94,7 +94,7 @@ class FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
         ]
 
 
-class FreecursivePosMapLevel(CounterPosMapLevel[FreecursiveOramConfig], FreecursiveCounterMixin):
+class _FreecursivePosMapLevel(CounterPosMapLevel[FreecursiveOramConfig], _FreecursiveCounterMixin):
     def access(self, cur_key: int, cur_index: int, chunks: ResetLeaves) -> ResetLeaves:
         before, entry, chunk, after = _split_at_key(chunks, cur_key)
         for other in before:
@@ -114,7 +114,7 @@ class FreecursivePosMapLevel(CounterPosMapLevel[FreecursiveOramConfig], Freecurs
         return next_chunks
 
 
-class FreecursiveOram(CounterOram[FreecursiveOramConfig, FreecursivePosMapLevel], FreecursiveCounterMixin):
+class FreecursiveOram(CounterOram[FreecursiveOramConfig, _FreecursivePosMapLevel], _FreecursiveCounterMixin):
     def __init__(self, config: FreecursiveOramConfig):
         super().__init__(config)
         self._pending_reset_chunks: ResetLeaves = []
@@ -122,8 +122,8 @@ class FreecursiveOram(CounterOram[FreecursiveOramConfig, FreecursivePosMapLevel]
     @override
     def _new_level(
         self, config: FreecursiveOramConfig, *, last_oram_data: int, last_oram_level: int
-    ) -> FreecursivePosMapLevel:
-        return FreecursivePosMapLevel(config, last_oram_data=last_oram_data, last_oram_level=last_oram_level)
+    ) -> _FreecursivePosMapLevel:
+        return _FreecursivePosMapLevel(config, last_oram_data=last_oram_data, last_oram_level=last_oram_level)
 
     def _get_leaf_from_pos_map(self, key: int) -> ResetLeaves:
         (chip_key, chip_offset), *level_keys = pos_map_keys(key, ratio=self._num_ic, count=len(self._levels) + 1)

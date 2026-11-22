@@ -7,13 +7,13 @@ from oblivlib.oram.counter_oram import GC, CounterMixin, CounterOram, CounterPos
 from oblivlib.oram.tree_base_oram import pos_map_keys
 
 
-class ResetLeaf(NamedTuple):
+class _ResetLeaf(NamedTuple):
     offset: int
     cur_leaf: int
     new_leaf: int | None
 
 
-class DaStep(NamedTuple):
+class _DaStep(NamedTuple):
     cur_leaf: int
     new_leaf: int
     r_index: int
@@ -21,7 +21,7 @@ class DaStep(NamedTuple):
     r_new_leaf: int | None
 
 
-class DaCounterMixin(CounterMixin[DaOramConfig], Protocol):
+class _DaCounterMixin(CounterMixin[DaOramConfig], Protocol):
     def _indicator(self, offset: int) -> int:
         return 1 + self._num_ic + offset
 
@@ -48,20 +48,20 @@ class DaCounterMixin(CounterMixin[DaOramConfig], Protocol):
         new_leaf = self._get_previous_leaf_from_prf(key=child, gc=next_gc, ic=next_ic)
         return word, cur_leaf, new_leaf
 
-    def _reset(self, key: int, word: int) -> tuple[int, ResetLeaf]:
+    def _reset(self, key: int, word: int) -> tuple[int, _ResetLeaf]:
         counters = self._counters
         pending = (i for i in range(self._num_ic) if counters.get(word, self._indicator(i)))
         offset = next(pending, -1)
         if offset != -1 and key * self._num_ic + offset < self._last_oram_data:
             word, cur_leaf, new_leaf = self._step(key, word, offset)
-            return word, ResetLeaf(offset, cur_leaf, new_leaf)
-        return word, ResetLeaf(-1, secrets.randbelow(1 << (self._last_oram_level - 1)), None)
+            return word, _ResetLeaf(offset, cur_leaf, new_leaf)
+        return word, _ResetLeaf(-1, secrets.randbelow(1 << (self._last_oram_level - 1)), None)
 
 
-class DaPosMapLevel(CounterPosMapLevel[DaOramConfig], DaCounterMixin):
+class _DaPosMapLevel(CounterPosMapLevel[DaOramConfig], _DaCounterMixin):
     def access(
         self, cur_key: int, cur_index: int, new_leaf: int, r_key: int | None, r_new_leaf: int | None, leaves: list[int]
-    ) -> DaStep:
+    ) -> _DaStep:
         self._read_paths(leaves)
 
         data = self._require_in_stash(key=cur_key)
@@ -72,15 +72,15 @@ class DaPosMapLevel(CounterPosMapLevel[DaOramConfig], DaCounterMixin):
         self._update_stash_leaf(key=r_key, new_leaf=r_new_leaf)
 
         self._write_paths()
-        return DaStep(next_cur_leaf, next_new_leaf, *reset)
+        return _DaStep(next_cur_leaf, next_new_leaf, *reset)
 
 
-class DAOram(CounterOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
+class DAOram(CounterOram[DaOramConfig, _DaPosMapLevel], _DaCounterMixin):
     @override
-    def _new_level(self, config: DaOramConfig, *, last_oram_data: int, last_oram_level: int) -> DaPosMapLevel:
-        return DaPosMapLevel(config, last_oram_data=last_oram_data, last_oram_level=last_oram_level)
+    def _new_level(self, config: DaOramConfig, *, last_oram_data: int, last_oram_level: int) -> _DaPosMapLevel:
+        return _DaPosMapLevel(config, last_oram_data=last_oram_data, last_oram_level=last_oram_level)
 
-    def _get_leaf_from_pos_map(self, key: int) -> DaStep:
+    def _get_leaf_from_pos_map(self, key: int) -> _DaStep:
         (chip_key, chip_offset), *level_keys = pos_map_keys(key, ratio=self._num_ic, count=len(self._levels) + 1)
 
         word, cur_leaf, new_leaf = self._step(chip_key, self._on_chip_storage[chip_key], chip_offset)
@@ -98,7 +98,7 @@ class DAOram(CounterOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
                 leaves=[cur_leaf, r_cur_leaf],
             )
 
-        return DaStep(cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf)
+        return _DaStep(cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf)
 
     @override
     def _operate_on_key_without_eviction(self, key: int, value: bytes | Unset) -> bytes:

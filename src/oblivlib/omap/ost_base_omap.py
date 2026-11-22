@@ -17,7 +17,7 @@ from oblivlib.omap.base_omap import BaseOmap, KvList
 type Root[K] = tuple[K, int]
 
 
-class LocalNodes[KeyT, NodeT]:
+class _LocalNodes[KeyT, NodeT]:
     def __init__(self) -> None:
         self.nodes: dict[KeyT, NodeT] = {}
         self.parent_of: dict[KeyT, KeyT | None] = {}
@@ -86,7 +86,7 @@ class OstBaseOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](
         super().__init__(config)
 
         self.root: Root[KeyT] | None = None
-        self._local: LocalNodes[KeyT, NodeT] = LocalNodes()
+        self._local: _LocalNodes[KeyT, NodeT] = _LocalNodes()
         self._max_height: int = self._height_bound(self._num_data)
         self._budget: int = 0
         self._op_rounds: int = 0

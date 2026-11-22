@@ -16,41 +16,41 @@ _UNPLACED = 0
 
 
 @dataclass
-class GroupBlock:
+class _GroupBlock:
     key: bytes
     leaf: int
     value: bytes
 
 
-class _BucketStore(TreeStorageBase[OramConfig, GroupBlock]):
+class _BucketStore(TreeStorageBase[OramConfig, _GroupBlock]):
     def __init__(self, config: OramConfig, *, key_size: int):
         self._block_key_size: int = key_size
         super().__init__(config)
 
     @property
     @override
-    def _block_layout(self) -> Field[GroupBlock]:
-        return Record(GroupBlock, (Bytes(self._block_key_size), self._leaf_field, Bytes(self._data_size)))
+    def _block_layout(self) -> Field[_GroupBlock]:
+        return Record(_GroupBlock, (Bytes(self._block_key_size), self._leaf_field, Bytes(self._data_size)))
 
-    def host(self, blocks: list[GroupBlock]) -> None:
+    def host(self, blocks: list[_GroupBlock]) -> None:
         self._host_tree(self._build_tree(blocks))
 
-    def open_bucket(self, leaves: list[int], width: int, in_bucket: Callable[[bytes], bool]) -> list[GroupBlock]:
+    def open_bucket(self, leaves: list[int], width: int, in_bucket: Callable[[bytes], bool]) -> list[_GroupBlock]:
         paths = set(leaves)
         while len(paths) < width:
             paths.add(self._get_new_leaf())
         self._read_paths(sorted(paths))
         return [data for data in self._stash if in_bucket(data.key)]
 
-    def close_bucket(self, blocks: list[GroupBlock], kept: list[GroupBlock]) -> None:
+    def close_bucket(self, blocks: list[_GroupBlock], kept: list[_GroupBlock]) -> None:
         old = {id(data) for data in blocks}
         dropped = old - {id(data) for data in kept}
-        self._stash: list[GroupBlock] = [data for data in self._stash if id(data) not in dropped]
+        self._stash: list[_GroupBlock] = [data for data in self._stash if id(data) not in dropped]
         self._stash += [data for data in kept if id(data) not in old]
         self._check_stash()
         self._write_paths()
 
-    def add_block(self, block: GroupBlock) -> None:
+    def add_block(self, block: _GroupBlock) -> None:
         self._read_paths([self._get_new_leaf()])
         self._stash.append(block)
         self._check_stash()
@@ -140,14 +140,14 @@ class GroupOmap(BaseOmap):
         data_map = hash_data_to_map(prf=self._bucket_prf, data=data, map_size=self._num_data)
 
         upper_data: dict[int, bytes] = {}
-        lower_blocks: list[GroupBlock] = []
+        lower_blocks: list[_GroupBlock] = []
         for bucket_id in range(self._num_data):
             items = data_map[bucket_id]
             assert len(items) <= self._upper_bound
             seed = os.urandom(self.SEED_SIZE)
             upper_data[bucket_id] = self._metadata.encode((seed, len(items)))
             lower_blocks.extend(
-                GroupBlock(key=key, leaf=self._slot_leaf(seed, slot), value=value)
+                _GroupBlock(key=key, leaf=self._slot_leaf(seed, slot), value=value)
                 for slot, (key, value) in enumerate(items, start=1)
             )
 
@@ -155,7 +155,9 @@ class GroupOmap(BaseOmap):
         self._lower_oram.host(lower_blocks)
         self._size = len(data)
 
-    def _access_bucket[T](self, bucket_id: int, change: Callable[[list[GroupBlock]], tuple[list[GroupBlock], T]]) -> T:
+    def _access_bucket[T](
+        self, bucket_id: int, change: Callable[[list[_GroupBlock]], tuple[list[_GroupBlock], T]]
+    ) -> T:
         lower = self._lower_oram
 
         def rehome(metadata: bytes) -> tuple[bytes, T]:
@@ -178,7 +180,7 @@ class GroupOmap(BaseOmap):
         if value is not None:
             require_value(self._identity, value, self._data_size)
 
-        def find(blocks: list[GroupBlock]) -> tuple[list[GroupBlock], bytes | None]:
+        def find(blocks: list[_GroupBlock]) -> tuple[list[_GroupBlock], bytes | None]:
             for data in blocks:
                 if data.key == key:
                     found = data.value
@@ -200,7 +202,7 @@ class GroupOmap(BaseOmap):
             self._insert_into_next_slot(bucket_id, key, value)
         else:
             self._access_bucket(
-                bucket_id, lambda blocks: ([*blocks, GroupBlock(key=key, leaf=_UNPLACED, value=value)], None)
+                bucket_id, lambda blocks: ([*blocks, _GroupBlock(key=key, leaf=_UNPLACED, value=value)], None)
             )
         self._size += 1
 
@@ -210,7 +212,7 @@ class GroupOmap(BaseOmap):
         def append(metadata: bytes) -> tuple[bytes, None]:
             seed, count = self._metadata.decode(metadata)
             assert count < self._upper_bound
-            lower.add_block(GroupBlock(key=key, leaf=self._slot_leaf(seed, count + 1), value=value))
+            lower.add_block(_GroupBlock(key=key, leaf=self._slot_leaf(seed, count + 1), value=value))
             return self._metadata.encode((seed, count + 1)), None
 
         self._upper_oram.update(bucket_id, append)
@@ -218,7 +220,7 @@ class GroupOmap(BaseOmap):
     def delete(self, key: bytes) -> bytes | None:
         require_omap_key(self._identity, key, self._key_size)
 
-        def remove(blocks: list[GroupBlock]) -> tuple[list[GroupBlock], bytes | None]:
+        def remove(blocks: list[_GroupBlock]) -> tuple[list[_GroupBlock], bytes | None]:
             for data in blocks:
                 if data.key == key:
                     return [each for each in blocks if each is not data], data.value

@@ -14,13 +14,13 @@ GC = 0
 
 
 @dataclass
-class CounterBlock:
+class _CounterBlock:
     key: int
     leaf: int
     word: int
 
 
-class CounterLevel(PosMapLevel, Protocol):
+class _CounterLevel(PosMapLevel, Protocol):
     def build_and_host(self) -> None: ...
 
 
@@ -68,7 +68,7 @@ class CounterMixin[ConfigT: CounterOramConfig](Protocol):
         return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level, num_data=self._last_oram_data)
 
 
-class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT, CounterBlock], CounterMixin[ConfigT]):
+class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT, _CounterBlock], CounterMixin[ConfigT]):
     def __init__(self, config: ConfigT, *, last_oram_data: int, last_oram_level: int):
         super().__init__(config)
         self._prf: Blake2Prf = Blake2Prf(key=config.prf_key)
@@ -77,15 +77,15 @@ class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT, Co
 
     @property
     @override
-    def _block_layout(self) -> Field[CounterBlock]:
+    def _block_layout(self) -> Field[_CounterBlock]:
         return Record(
-            CounterBlock, (UInt.covering(self._num_data - 1), self._leaf_field, UInt(self._config.count_length))
+            _CounterBlock, (UInt.covering(self._num_data - 1), self._leaf_field, UInt(self._config.count_length))
         )
 
     def build_and_host(self) -> None:
         self._host_tree(
             self._build_tree(
-                CounterBlock(
+                _CounterBlock(
                     key=key,
                     leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data),
                     word=0,
@@ -95,7 +95,7 @@ class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT, Co
         )
 
 
-class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterLevel](
+class CounterOram[ConfigT: CounterOramConfig, LevelT: _CounterLevel](
     TreeBaseOram[ConfigT, LevelT], CounterMixin[ConfigT], ABC
 ):
     def __init__(self, config: ConfigT):
