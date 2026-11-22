@@ -22,6 +22,19 @@ def require_value(owner: str, value: object, data_size: int) -> None:
         raise ContractError(f"{owner}: a value is {len(value)} bytes, data_size is {data_size}.")
 
 
+def require_omap_pair(
+    owner: str, key: object, value: object, *, key_size: int, data_size: int, value_required: bool
+) -> None:
+    require_omap_key(owner, key, key_size)
+    if value_required or value is not None:
+        require_value(owner, value, data_size)
+
+
+def require_room(owner: str, *, held: int, fresh: int, capacity: int) -> None:
+    if held + fresh > capacity:
+        raise ContractError(f"{owner}: {held} held and {fresh} more exceed num_data={capacity}.")
+
+
 def require_omap_init(owner: str, pairs: Iterable[tuple[object, object]], *, key_size: int, data_size: int) -> None:
     seen: set[object] = set()
     for key, value in pairs:

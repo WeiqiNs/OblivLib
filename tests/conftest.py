@@ -79,7 +79,7 @@ def _storages(scheme):
     if isinstance(scheme, GraphOS):
         return [*_storages(scheme._omap), scheme._value_tree]
     if isinstance(scheme, GroupOmap):
-        return [*_storages(scheme._upper_oram), scheme._lower_oram]
+        return [*_storages(scheme._upper_oram), scheme._buckets]
     if isinstance(scheme, TreeBaseOram):
         levels: list[Any] = list(scheme._pos_map_levels())
         return [scheme, *levels]

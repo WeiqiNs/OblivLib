@@ -95,6 +95,13 @@ class TreeStorageBase[ConfigT: OramConfig, BlockT: Block[object]](ABC):
                 return data
         raise KeyError(f"Key {key} not found.")
 
+    def _padded_leaves(self, leaves: Iterable[int], width: int) -> list[int]:
+        paths = set(leaves)
+        assert len(paths) <= width
+        while len(paths) < width:
+            paths.add(self._get_new_leaf())
+        return sorted(paths)
+
     def _remap(self, moves: Iterable[tuple[object, int]]) -> None:
         for key, leaf in moves:
             self._require_in_stash(key).leaf = leaf

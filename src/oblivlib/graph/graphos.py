@@ -2,15 +2,16 @@ import secrets
 import struct
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import cached_property
-from typing import override
 
 from oblivlib.dependency import ContractError
-from oblivlib.dependency.config import AvlOmapConfig, GraphOsConfig, OramConfig
+from oblivlib.dependency.config import AvlOmapConfig, GraphOsConfig
 from oblivlib.dependency.contract import require_value
-from oblivlib.dependency.layout import Bytes, Col, Field, Pair, Record, UInt
-from oblivlib.dependency.tree_storage_base import TreeStorageBase, leaf_field
+from oblivlib.dependency.keyed_store import KeyedStore
+from oblivlib.dependency.layout import Bytes, Field, Pair, UInt
+from oblivlib.dependency.tree_storage_base import leaf_field
+from oblivlib.dependency.types import KeyedBlock
 from oblivlib.omap import AVLOmap
 
 _KEY_SIZE = 17
@@ -32,52 +33,21 @@ def _slot_key(vertex: int, neighbor: int) -> bytes:
     return b"P" + _ID.pack(vertex) + _ID.pack(neighbor)
 
 
-@dataclass
-class _Entry:
-    key: bytes
-    leaf: int
-    value: bytes
-
-
-class _ValueStore(TreeStorageBase[OramConfig, _Entry]):
-    @property
-    @override
-    def _block_layout(self) -> Field[_Entry]:
-        return Record(
-            _Entry,
-            [
-                Col(lambda block: block.key, Bytes(_KEY_SIZE)),
-                Col(lambda block: block.leaf, self._leaf_field),
-                Col(lambda block: block.value, Bytes(self.data_size)),
-            ],
-        )
-
+class _ValueStore(KeyedStore[GraphOsConfig]):
     def new_leaf(self) -> int:
         return self._get_new_leaf()
 
-    def host(self, entries: list[_Entry]) -> None:
-        self._host_tree(self._build_tree(entries))
-
-    def read_padded(self, leaves: Sequence[int], width: int) -> None:
-        paths = set(leaves)
-        while len(paths) < width:
-            paths.add(self._get_new_leaf())
-        self._read_paths(sorted(paths))
-
-    def take(self, keys: Iterable[bytes]) -> dict[bytes, _Entry]:
+    def take(self, keys: Iterable[bytes]) -> dict[bytes, KeyedBlock]:
         wanted = set(keys)
         return {block.key: block for block in self._stash if block.key in wanted}
 
-    def add(self, entries: Iterable[_Entry]) -> None:
+    def add(self, entries: Iterable[KeyedBlock]) -> None:
         self._stash.extend(entries)
         self._check_stash()
 
     def drop(self, keys: Iterable[bytes]) -> None:
         doomed = set(keys)
         self._stash[:] = [block for block in self._stash if block.key not in doomed]
-
-    def write_back(self) -> None:
-        self._write_paths()
 
 
 class GraphOS:
@@ -95,7 +65,8 @@ class GraphOS:
                 data_size=self._value_width,
                 name=f"{config.name}_values",
                 stash_scale=config.stash_scale * self._batch,
-            )
+            ),
+            key_size=_KEY_SIZE,
         )
         self._omap: AVLOmap = AVLOmap(
             AvlOmapConfig(
@@ -196,13 +167,13 @@ class GraphOS:
 
         leaves = {key: self._value_tree.new_leaf() for key, _ in entries}
         self._omap.init_server_storage([(key, self._leaf.encode(leaf)) for key, leaf in leaves.items()])
-        self._value_tree.host([_Entry(key=key, leaf=leaves[key], value=value) for key, value in entries])
+        self._value_tree.host([KeyedBlock(key=key, leaf=leaves[key], value=value) for key, value in entries])
         self._size = len(graph)
 
     def _chunks[T](self, items: Sequence[T]) -> list[Sequence[T]]:
         return [items[start : start + self._batch] for start in range(0, len(items), self._batch)]
 
-    def _fetch(self, keys: Sequence[_Slot]) -> dict[bytes, _Entry]:
+    def _fetch(self, keys: Sequence[_Slot]) -> dict[bytes, KeyedBlock]:
         lanes = [(key, self._value_tree.new_leaf()) for key in keys if key is not None]
         found = self._omap.search_batch([(key, self._leaf.encode(leaf)) for key, leaf in lanes])
 
@@ -232,7 +203,7 @@ class GraphOS:
     def _add(self, entries: Sequence[tuple[bytes, bytes] | None]) -> None:
         for chunk in self._chunks(entries):
             placed = [
-                _Entry(key=key, leaf=self._value_tree.new_leaf(), value=value) for key, value in filter(None, chunk)
+                KeyedBlock(key=key, leaf=self._value_tree.new_leaf(), value=value) for key, value in filter(None, chunk)
             ]
             self._omap.insert_batch([(entry.key, self._leaf.encode(entry.leaf)) for entry in placed])
             self._value_tree.read_padded([], len(chunk))

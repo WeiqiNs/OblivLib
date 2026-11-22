@@ -374,6 +374,6 @@ def test_composed_map_slots_are_sized_from_their_declared_layouts(client):
     upper_size = GroupOmap.upper_oram_data_size(config)
     upper = PathOram(PathOramConfig(num_data=64, data_size=upper_size, client=client, encryptor=AesGcm()))
     group = GroupOmap(config, upper_oram=upper)
-    assert (upper_size, upper._cipher.row_bytes, group._lower_oram._cipher.row_bytes) == (33, 173, 137)
+    assert (upper_size, upper._cipher.row_bytes, group._buckets._cipher.row_bytes) == (33, 173, 137)
     group.init_server_storage([(b"%08d" % i, b"\xff" * 16) for i in range(32)])
     assert group.search(b"%08d" % 3) == b"\xff" * 16

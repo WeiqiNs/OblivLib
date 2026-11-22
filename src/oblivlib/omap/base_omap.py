@@ -15,3 +15,7 @@ class BaseOmap(ABC):
     @abstractmethod
     def search(self, key: bytes, value: bytes | None = None) -> bytes | None:
         raise NotImplementedError
+
+    @abstractmethod
+    def delete(self, key: bytes) -> bytes | None:
+        raise NotImplementedError
