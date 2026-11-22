@@ -429,6 +429,7 @@ class Client:
         return ExecuteResult(results)
 
     def _call(self, message: Request) -> Reply:
+        reply = self._backend.call(message)
         self._requests += 1
         match message:
             case Batch(writes=writes):
@@ -438,7 +439,6 @@ class Client:
                 self._row_bytes_written += sum(len(row) for row in rows)
             case _:
                 pass
-        reply = self._backend.call(message)
         if isinstance(reply, BatchReply):
             self._row_bytes_read += sum(len(row) for rows in reply.results for row in rows)
         return reply

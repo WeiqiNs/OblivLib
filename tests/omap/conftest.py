@@ -25,11 +25,8 @@ class ReadCounter:
     def __init__(self, recorder):
         self._recorder = recorder
 
-    def _leaves_read(self) -> int:
-        return sum(len(op.leaves) for batch in self._recorder.batches for op in batch.reads if isinstance(op, ReadPath))
-
     def paths_read(self) -> int:
-        return self._leaves_read()
+        return sum(len(op.leaves) for batch in self._recorder.batches for op in batch.reads if isinstance(op, ReadPath))
 
     def _read_rounds(self) -> int:
         return sum(any(isinstance(op, ReadPath) for op in batch.reads) for batch in self._recorder.batches)
@@ -38,11 +35,6 @@ class ReadCounter:
         before = self._read_rounds()
         result = fn(*args, **kwargs)
         return self._read_rounds() - before, result
-
-    def rounds(self, fn, *args, **kwargs):
-        before = self._leaves_read()
-        result = fn(*args, **kwargs)
-        return self._leaves_read() - before, result
 
 
 def _read_all_blocks(scheme):

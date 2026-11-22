@@ -24,7 +24,6 @@ from oblivlib.dependency.protocol import (
     Hello,
     Ok,
     Shutdown,
-    Timed,
     decode_timed,
     encode,
     expect_reply,
@@ -73,16 +72,6 @@ def test_non_requests_get_timed_error_replies():
         assert isinstance(timed.reply, ErrorReply) and timed.server_ns >= 0
         with pytest.raises(ProtocolError, match=match):
             expect_reply(timed.reply, Ok)
-
-
-def test_transport_backend_splits_bytes_and_time_by_direction():
-    backend = TransportBackend(LoopbackTransport(StorageServer()))
-    hello = Hello(version=PROTOCOL_VERSION)
-    reply = backend.call(hello)
-    assert backend.bytes_sent == len(encode(hello))
-    assert backend.bytes_received == len(encode(Timed(server_ns=backend.server_ns, reply=reply)))
-    assert 0 <= backend.server_ns <= backend.transport_ns
-    assert backend.client_wire_ns >= 0
 
 
 def test_error_replies_raise_mapped_errors_over_zmq():

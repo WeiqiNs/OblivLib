@@ -52,6 +52,7 @@ _OMAP: dict[str, Any] = {**_ORAM, "key_size": 4}
         (AvlOmapConfig, _OMAP, {"paths_per_round": 2}, "paths_per_round"),
         (AvlOmapConfig, {**_OMAP, "cached": True}, {"delete_budget": AccessBudget(1, 9)}, r"a must be >= 3/2"),
         (AvlOmapConfig, _OMAP, {"batch_size": 0}, "batch_size must be >= 1"),
+        (AvlOmapConfig, _OMAP, {"batch_size": 17}, "exceeds the 16 leaves"),
         (OramOstOmapConfig, {"num_data": 16}, {"num_data": 0}, "num_data"),
     ],
 )

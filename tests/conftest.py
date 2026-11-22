@@ -106,18 +106,8 @@ def num_data() -> int:
 
 
 @pytest.fixture
-def test_file(tmp_path):
-    return tmp_path / "test.bin"
-
-
-@pytest.fixture
 def client():
     return Client.local()
-
-
-@pytest.fixture
-def remote_client():
-    return Client(TransportBackend(LoopbackTransport(StorageServer())))
 
 
 @pytest.fixture

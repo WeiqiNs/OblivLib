@@ -11,7 +11,7 @@ COLUMNS = (
     "sent KB",
     "received KB",
     "server ms",
-    "network ms",
+    "network+reply ms",
     "wire ms",
     "codec ms",
     "crypto ms",

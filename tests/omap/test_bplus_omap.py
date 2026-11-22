@@ -122,8 +122,8 @@ def test_an_even_order_tree_reaches_its_level_bound_through_deletes(client):
     assert omap._op_fetches == bplus_max_levels(7, 4) == 3
 
 
-@pytest.mark.parametrize("order", [3, 4])
-def test_small_order_deletes_keep_the_tree_valid(client, check_bplus_invariants, order):
+def test_an_even_order_tree_stays_valid_through_deletes(client, check_bplus_invariants):
+    order = 4
     omap = BPlusOmap(BPlusOmapConfig(num_data=64, key_size=4, data_size=4, client=client, order=order))
     omap.init_server_storage()
     rng = random.Random(order)

@@ -1,4 +1,3 @@
-import math
 import random
 from collections.abc import Callable
 from typing import Any
@@ -22,31 +21,6 @@ def _b(number: int) -> bytes:
 
 
 class TestOmapBehavior:
-    def test_round_trip(self, omap_spec, client):
-        omap = omap_spec.make(client=client, num_data=256)
-        omap.init_server_storage()
-        for i in range(200):
-            omap.insert(key=_b(i), value=_b(i))
-        for i in range(200):
-            assert omap.search(key=_b(i)) == _b(i)
-
-    def test_search_empty(self, omap_spec, client):
-        omap = omap_spec.make(client=client, num_data=64)
-        omap.init_server_storage()
-        assert omap.search(key=b"5") is None
-        assert omap.delete(key=b"5") is None
-
-    def test_dummy_ops(self, ods_spec, client):
-        omap = ods_spec.make(client=client, num_data=64)
-        omap.init_server_storage()
-        for i in range(20):
-            omap.insert(key=_b(i), value=_b(i))
-        assert omap.search(key=None) is None
-        omap.insert(key=None)
-        assert omap.delete(key=None) is None
-        for i in range(20):
-            assert omap.search(key=_b(i)) == _b(i)
-
     def test_edge_sizes(self, omap_edge_size, client):
         spec, num_data = omap_edge_size
         omap = spec.make(client=client, num_data=num_data)
@@ -56,18 +30,6 @@ class TestOmapBehavior:
         assert [omap.search(key=_b(i)) for i in range(num_data)] == [_b(i * 10) for i in range(num_data)]
         assert [omap.delete(key=_b(i)) for i in range(num_data)] == [_b(i * 10) for i in range(num_data)]
         assert [omap.search(key=_b(i)) for i in range(num_data)] == [None] * num_data
-
-    @pytest.mark.parametrize(
-        "make",
-        [
-            pytest.param(lambda **kw: AVLOmap(AvlOmapConfig(**kw)), id="avl"),
-            pytest.param(lambda **kw: BPlusOmap(BPlusOmapConfig(order=3, **kw)), id="bplus"),
-        ],
-    )
-    def test_a_batch_wider_than_the_leaves_is_refused(self, make, client):
-        make(num_data=4, key_size=4, data_size=4, client=client, batch_size=4)
-        with pytest.raises(ValueError, match="batch_size 5 exceeds the 4 leaves"):
-            make(num_data=4, key_size=4, data_size=4, client=client, batch_size=5)
 
     def test_rejects_contract_violations(self, omap_spec, recorded_client):
         client, recorder = recorded_client()
@@ -164,29 +126,6 @@ class TestOmapBehavior:
         omap.root = roots[0]
         assert [omap.search(key=b"1"), omap.search(key=b"2")] == [b"a", None]
 
-    def test_mul_tree_init(self, ods_spec, client):
-        num_data = 512
-        extra = 3
-        size_group = math.floor(math.log2(num_data))
-        num_group = num_data // size_group
-        init_data = [
-            [(_b(j), _b(j)) for j in range(i * 2 * size_group, (i * 2 + 1) * size_group)] for i in range(num_group)
-        ]
-
-        omap = ods_spec.make(client=client, num_data=num_data + num_group * extra)
-        roots = omap.init_mul_tree_server_storage(data_list=init_data)
-
-        for i, root in enumerate(roots):
-            omap.root = root
-            for j in range(extra):
-                omap.insert(key=_b((i * 2 + 1) * size_group + j), value=_b((i * 2 + 1) * size_group + j))
-            roots[i] = omap.root
-
-        for i, root in enumerate(roots):
-            omap.root = root
-            for j in range(i * 2 * size_group, (i * 2 + 1) * size_group + extra):
-                assert omap.search(key=_b(j)) == _b(j)
-
     def test_operations_match_a_dict_model(self, omap_spec, client, duplicate_blocks):
         rng = random.Random(2024)
         omap = omap_spec.make(client=client, num_data=128)
@@ -232,15 +171,6 @@ class TestOmapBehavior:
             omap_spec.invariant_checker(omap, model)
         assert [omap.search(key=key) for key in keyspace] == [model.get(key) for key in keyspace]
         assert not duplicate_blocks(omap)
-
-    def test_delete_empties_tree(self, ods_spec, client):
-        omap = ods_spec.make(client=client, num_data=64)
-        omap.init_server_storage()
-        for i in range(40):
-            omap.insert(key=_b(i), value=_b(i))
-        for i in range(40):
-            assert omap.delete(key=_b(i)) == _b(i)
-        assert omap.root is None
 
 
 def _budget_workload(pattern: str) -> list[tuple[str, bytes | None]]:

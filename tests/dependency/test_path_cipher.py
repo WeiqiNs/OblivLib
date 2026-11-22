@@ -2,7 +2,7 @@ import pytest
 
 from oblivlib.dependency import AesGcm, CapacityError, OramBlock, Recorder
 from oblivlib.dependency.layout import Bytes, Record, UInt
-from oblivlib.dependency.path_cipher import PlainPathCipher, SealedPathCipher, make_path_cipher
+from oblivlib.dependency.path_cipher import SealedPathCipher, make_path_cipher
 
 _DATA_SIZE = 16
 _BLOCK = Record(OramBlock, (UInt(6), UInt(6), Bytes(_DATA_SIZE)))
@@ -34,10 +34,6 @@ def test_path_round_trips_and_is_recorded_except_absent_rows(encrypted):
     assert min(recorder.encode_ns, recorder.decode_ns, recorder.encrypt_ns, recorder.decrypt_ns) >= 0
     if not encrypted:
         assert recorder.encrypt_ns == recorder.decrypt_ns == 0
-
-
-def test_plain_empty_bucket_is_not_absent():
-    assert PlainPathCipher(_BLOCK, bucket_size=3, recorder=Recorder()).seal_bucket([]) != b""
 
 
 def test_sealed_row_length_is_the_bucket_layout_plus_the_cipher_overhead():

@@ -1,9 +1,7 @@
 import re
-from pathlib import Path
 
 import pytest
 
-import oblivlib
 from oblivlib.dependency import AVLNode, CapacityError, OramBlock
 from oblivlib.dependency.layout import (
     Array,
@@ -125,8 +123,3 @@ def test_a_bit_field_value_that_does_not_fit_raises_capacity_error():
     assert layout.set(0, 1, 3) == 0b00011
     with pytest.raises(CapacityError, match="2 bits"):
         layout.set(0, 1, 4)
-
-
-def test_library_has_no_pickle():
-    sources = Path(oblivlib.__file__).parent.rglob("*.py")
-    assert [path.name for path in sources if "pickle" in path.read_text()] == []

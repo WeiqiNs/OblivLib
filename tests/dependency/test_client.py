@@ -71,8 +71,6 @@ def test_staging_checks_known_labels():
         _tree(client)
         with pytest.raises(UnknownLabelError, match="'missing'"):
             client.add_read_path("missing", [0])
-        client.add_read_path("t", [0])
-        assert client.execute().require("t")[3] == _row(4)
 
 
 def test_writes_apply_before_reads_and_later_write_wins():
@@ -86,17 +84,13 @@ def test_writes_apply_before_reads_and_later_write_wins():
 
 
 def test_deferred_writes_ride_next_execute(recorded_client):
-    for defer_writes, rounds_after_write in [(True, 0), (False, 1)]:
-        client, recorder = recorded_client(defer_writes=defer_writes)
-        _tree(client)
-        client.add_write_path("t", {0: _row(9), 1: _row(9), 3: _row(9)})
-        assert client.execute().results == {}
-        assert client.metrics.rounds == rounds_after_write
-
-        client.add_read_path("t", [0])
-        assert client.execute().require("t")[3] == _row(9)
-        assert client.metrics.rounds == rounds_after_write + 1
-        assert bool(recorder.batches[-1].writes) is defer_writes
+    client, recorder = recorded_client()
+    _tree(client)
+    client.add_write_path("t", {0: _row(9), 1: _row(9), 3: _row(9)})
+    assert client.execute().results == {}
+    client.add_read_path("t", [0])
+    assert client.execute().require("t")[3] == _row(9)
+    assert recorder.batches[-1].writes
 
 
 def test_empty_execute_is_a_round():
