@@ -47,6 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.0",
+    "pytest-cov>=7.0.0",
     "basedpyright>=1.39.0",
     "ruff>=0.15.0",
 ]
@@ -59,8 +60,15 @@ Issues = "https://github.com/WeiqiNs/OblivLib/issues"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["oblivlib"]
+branch = true
+
 [tool.coverage.report]
 exclude_also = ["raise NotImplementedError", "@abstractmethod", "\\.\\.\\.$"]
+fail_under = 100
+show_missing = true
+skip_covered = true
 
 [tool.ruff]
 target-version = "py312"

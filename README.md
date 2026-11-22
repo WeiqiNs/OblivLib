@@ -1,5 +1,7 @@
 # OblivLib
 
+[![codecov](https://codecov.io/gh/WeiqiNs/OblivLib/graph/badge.svg)](https://codecov.io/gh/WeiqiNs/OblivLib)
+
 OblivLib (`oblivlib`) implements classic oblivious algorithms (oblivious RAM and oblivious maps) for
 client/server deployments where the client is trusted and may compute non-obliviously, and the server only
 stores encrypted data.
