@@ -80,3 +80,4 @@ jobs:
           files: coverage.xml
           disable_search: true
           flags: unittests
+          fail_ci_if_error: true
