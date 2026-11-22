@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from oblivlib.dependency import AesGcm, Data, DuplicateLabelError
+from oblivlib.dependency import AesGcm, DuplicateLabelError, OramBlock
 from oblivlib.dependency.heap_index import tree_size
-from oblivlib.dependency.layout import Bytes, UInt, block_layout
+from oblivlib.dependency.layout import Bytes, Record, UInt
 from oblivlib.dependency.path_cipher import PathCipher, make_path_cipher
 from oblivlib.dependency.tree_builder import FileImage, MemoryImage, TreeImage, build_tree
 
-_BLOCK = block_layout(UInt(16), UInt(16), Bytes(32))
+_BLOCK = Record(OramBlock, (UInt(16), UInt(16), Bytes(32)))
 
 
 def _rows(image: TreeImage) -> list[bytes]:
@@ -21,14 +21,14 @@ def _rows(image: TreeImage) -> list[bytes]:
     return [data[i * image.row_bytes : (i + 1) * image.row_bytes] for i in range(tree_size(image.level))]
 
 
-def _keys(cipher: PathCipher, image: TreeImage) -> list[list[int]]:
+def _keys(cipher: PathCipher[OramBlock], image: TreeImage) -> list[list[int]]:
     return [[data.key for data in cipher.open_bucket(row)] for row in _rows(image)]
 
 
 @pytest.mark.parametrize("mode", ["memory_plain", "memory_sealed", "file_sealed"])
 def test_build_places_blocks_deepest_first_and_reports_overflow(mode, tmp_path):
     cipher = make_path_cipher(_BLOCK, None if mode == "memory_plain" else AesGcm(), bucket_size=1)
-    blocks = [Data(key=key, leaf=0, value=b"v") for key in range(5)] + [Data(key=9, leaf=5, value=b"w")]
+    blocks = [OramBlock(key=key, leaf=0, value=b"v") for key in range(5)] + [OramBlock(key=9, leaf=5, value=b"w")]
     build_file = tmp_path / "build.tree" if mode == "file_sealed" else None
 
     result = build_tree(blocks, level=4, bucket_size=1, cipher=cipher, build_file=build_file)
@@ -43,7 +43,7 @@ def test_build_places_blocks_deepest_first_and_reports_overflow(mode, tmp_path):
 
 def test_three_handovers_produce_identical_server_state(tmp_path, handover_client):
     cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
-    blocks = [Data(key=key, leaf=key % 8, value=bytes([key]) * 4) for key in range(12)]
+    blocks = [OramBlock(key=key, leaf=key % 8, value=bytes([key]) * 4) for key in range(12)]
     image = build_tree(blocks, level=4, bucket_size=2, cipher=cipher, build_file=tmp_path / "build.tree").image
     assert isinstance(image, FileImage)
     expected = _rows(image)
@@ -73,7 +73,7 @@ def test_a_failed_file_build_closes_its_file_and_leaves_it(tmp_path, fail_once, 
     cipher = make_path_cipher(_BLOCK, AesGcm(), bucket_size=2)
 
     def blocks():
-        yield Data(key=0, leaf=0, value=b"v")
+        yield OramBlock(key=0, leaf=0, value=b"v")
         raise RuntimeError("injected")
 
     if fail_at == "pre_sealing":

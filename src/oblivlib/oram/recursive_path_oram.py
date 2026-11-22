@@ -1,34 +1,42 @@
 import secrets
-from dataclasses import replace
-from functools import cached_property
-from typing import Any, override
+from dataclasses import dataclass, replace
+from typing import override
 
-from oblivlib.dependency import Data, InitData, PosMap
+from oblivlib.dependency import InitData, PosMap
 from oblivlib.dependency.config import RecursiveOramConfig
-from oblivlib.dependency.layout import Array, Field, UInt
+from oblivlib.dependency.layout import Array, Field, Record, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
+from oblivlib.dependency.types import Unset
 from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_keys, pos_map_level_count
 
 
-class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
+@dataclass
+class PosMapBlock:
+    key: int
+    leaf: int
+    leaves: list[int]
+
+
+class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig, PosMapBlock]):
     def __init__(self, config: RecursiveOramConfig, *, child_leaf_range: int):
         super().__init__(config)
-        self._child_leaf_range = child_leaf_range
+        self._child_leaf_range: int = child_leaf_range
 
-    @cached_property
+    @property
     @override
-    def _value_field(self) -> Field[Any]:
-        return Array(UInt.covering(self._child_leaf_range - 1), self._config.compression_ratio)
+    def _block_layout(self) -> Field[PosMapBlock]:
+        leaves = Array(UInt.covering(self._child_leaf_range - 1), self._config.compression_ratio)
+        return Record(PosMapBlock, (UInt.covering(self._num_data - 1), self._leaf_field, leaves))
 
     def build_and_host(self, child_leaves: list[int]) -> list[int]:
         leaves = [self._get_new_leaf() for _ in range(self._num_data)]
         ratio = self._config.compression_ratio
         tree = self._build_tree(
             [
-                Data(
+                PosMapBlock(
                     key=key,
                     leaf=leaf,
-                    value=[
+                    leaves=[
                         child_leaves[i] if i < len(child_leaves) else secrets.randbelow(self._num_data)
                         for i in range(key * ratio, (key + 1) * ratio)
                     ],
@@ -42,8 +50,8 @@ class RecursivePosMapLevel(TreeStorageBase[RecursiveOramConfig]):
     def access(self, cur_key: int, cur_index: int, cur_leaf: int, new_cur_leaf: int, new_next_leaf: int) -> int:
         self._read_paths([cur_leaf])
         data = self._require_in_stash(key=cur_key)
-        next_leaf = data.value[cur_index]
-        data.value[cur_index] = new_next_leaf
+        next_leaf = data.leaves[cur_index]
+        data.leaves[cur_index] = new_next_leaf
         data.leaf = new_cur_leaf
         self._write_paths()
         return next_leaf
@@ -56,7 +64,7 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel])
         super().__init__(config)
 
         self._pos_map: PosMap = {i: self._get_new_leaf() for i in range(self._num_data)}
-        self._levels = self._make_levels()
+        self._levels: list[RecursivePosMapLevel] = self._make_levels()
 
     @property
     def _on_chip_mem(self) -> int:
@@ -99,7 +107,7 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel])
         cur_leaf, new_cur_leaf = self._pos_map[top_key], self._levels[0]._get_new_leaf()
         self._pos_map[top_key] = new_cur_leaf
 
-        children: list[TreeStorageBase[RecursiveOramConfig]] = [*self._levels[1:], self]
+        children: list[RecursivePosMapLevel | RecursivePathOram] = [*self._levels[1:], self]
         for level, child, (cur_key, cur_index) in zip(self._levels, children, keys, strict=True):
             new_next_leaf = child._get_new_leaf()
             cur_leaf = level.access(
@@ -114,6 +122,6 @@ class RecursivePathOram(TreeBaseOram[RecursiveOramConfig, RecursivePosMapLevel])
         return cur_leaf, new_cur_leaf
 
     @override
-    def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
+    def _operate_on_key_without_eviction(self, key: int, value: bytes | Unset) -> bytes:
         leaf, new_leaf = self._get_leaf_from_pos_map(key=key)
         return self._read_block(key, value, leaves=[leaf], new_leaf=new_leaf)

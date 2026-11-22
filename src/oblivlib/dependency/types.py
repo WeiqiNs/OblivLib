@@ -1,51 +1,40 @@
-"""Type definitions and data classes used throughout the ORAM library."""
-
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import Field, dataclass, fields
-from typing import TYPE_CHECKING, Any, ClassVar, Self
-
-UNSET = object()
-"""Sentinel for "no value given": ``operate_on_key(key)`` reads, while ``operate_on_key(key, value)``
-writes. Compare with ``is``."""
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from enum import Enum
+from typing import Final, Protocol
 
 
-class FieldTuple:
-    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
+class Unset(Enum):
+    UNSET = "UNSET"
 
-    if TYPE_CHECKING:
 
-        def __init__(self, *args: Any) -> None: ...
+UNSET: Final = Unset.UNSET
 
-    @classmethod
-    def from_fields(cls, values: Sequence[Any]) -> Self:
-        return cls(*values)
 
-    def to_fields(self) -> list[Any]:
-        return [getattr(self, f.name) for f in fields(self)]
+class Block[K](Protocol):
+    leaf: int
+
+    @property
+    def key(self) -> K: ...
 
 
 @dataclass
-class Data(FieldTuple):
-    key: Any = None
-    leaf: int | None = None
-    value: Any = None
-
-    def require_leaf(self) -> int:
-        assert self.leaf is not None
-        return self.leaf
+class OramBlock:
+    key: int
+    leaf: int
+    value: bytes
 
 
 @dataclass
 class KVPair:
-    key: Any
-    value: Any
+    key: bytes
+    value: bytes
 
 
-Bucket = list[Data]
-
-PathData = dict[int, Bucket]
+type Bucket[B] = list[B]
+type PathData[B] = dict[int, list[B]]
 PathRows = dict[int, bytes]
 
 PosMap = dict[int, int]
-DataMap = dict[int, Any]
-InitData = Mapping[int, Any] | Iterable[tuple[int, Any]]
+DataMap = dict[int, bytes]
+InitData = Mapping[int, bytes] | Iterable[tuple[int, bytes]]

@@ -31,7 +31,7 @@ def handle_wire(server: StorageServer, data: bytes) -> tuple[bytes, bool]:
 
 class LoopbackTransport(Transport):
     def __init__(self, server: StorageServer):
-        self._server = server
+        self._server: StorageServer = server
 
     @override
     def request(self, data: bytes) -> bytes:
@@ -48,14 +48,14 @@ class ZmqTransport(Transport):
     start a new client."""
 
     def __init__(self, endpoint: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS):
-        self._endpoint = endpoint
-        self._timeout_ms = timeout_ms
-        self._context = zmq.Context()
-        self._socket = self._context.socket(zmq.REQ)
+        self._endpoint: str = endpoint
+        self._timeout_ms: int = timeout_ms
+        self._context: zmq.Context[zmq.Socket[bytes]] = zmq.Context()
+        self._socket: zmq.Socket[bytes] = self._context.socket(zmq.REQ)
         self._socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
         self._socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
         self._socket.setsockopt(zmq.LINGER, 0)
-        self._socket.connect(endpoint)
+        _ = self._socket.connect(endpoint)
 
     @override
     def request(self, data: bytes) -> bytes:
@@ -78,9 +78,9 @@ class ZmqListener:
     ``tcp://127.0.0.1:*`` picks a free port."""
 
     def __init__(self, endpoint: str):
-        self._context = zmq.Context()
-        self._socket = self._context.socket(zmq.REP)
-        self._socket.bind(endpoint)
+        self._context: zmq.Context[zmq.Socket[bytes]] = zmq.Context()
+        self._socket: zmq.Socket[bytes] = self._context.socket(zmq.REP)
+        _ = self._socket.bind(endpoint)
 
     @property
     def endpoint(self) -> str:
@@ -111,11 +111,11 @@ class SimulatedNetwork(Transport):
     over ``bytes_per_s`` per request, without sleeping."""
 
     def __init__(self, inner: Transport, *, rtt_s: float, bytes_per_s: float):
-        self._inner = inner
-        self._rtt_s = rtt_s
-        self._bytes_per_s = bytes_per_s
-        self._modeled_seconds = 0.0
-        self._request_count = 0
+        self._inner: Transport = inner
+        self._rtt_s: float = rtt_s
+        self._bytes_per_s: float = bytes_per_s
+        self._modeled_seconds: float = 0.0
+        self._request_count: int = 0
 
     @property
     def modeled_seconds(self) -> float:

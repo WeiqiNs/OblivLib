@@ -5,8 +5,8 @@ public surface is type-checker-visible, free of incidental stdlib/typing leakage
 and stated in one place — ``__all__``.
 """
 
-from .avl_tree import AVLData, AVLTree, AVLTreeNode
-from .bplus_tree import BPlusData, BPlusTree, BPlusTreeNode
+from .avl_tree import AVLNode, AVLTree, AVLTreeNode
+from .bplus_tree import BPlusInternal, BPlusLeaf, BPlusNode, BPlusTree, BPlusTreeNode
 from .client import Backend, Client, ExecuteResult, LocalBackend, Metrics, TransportBackend
 from .config import (
     AccessBudget,
@@ -52,21 +52,25 @@ from .transport import LoopbackTransport, SimulatedNetwork, Transport, ZmqListen
 from .tree_builder import BuildResult, FileImage, MemoryImage, TreeImage, build_tree
 from .types import (
     UNSET,
-    Data,
+    Block,
     DataMap,
     InitData,
     KVPair,
+    OramBlock,
     PathData,
     PathRows,
     PosMap,
+    Unset,
 )
 
 __all__ = [
     "AccessBudget",
-    "AVLData",
+    "AVLNode",
     "AVLTree",
     "AVLTreeNode",
-    "BPlusData",
+    "BPlusInternal",
+    "BPlusLeaf",
+    "BPlusNode",
     "BPlusTree",
     "BPlusTreeNode",
     "Backend",
@@ -93,7 +97,8 @@ __all__ = [
     "StorageError",
     "TransportError",
     "UnknownLabelError",
-    "Data",
+    "Block",
+    "OramBlock",
     "StorageServer",
     "LoopbackTransport",
     "SimulatedNetwork",
@@ -107,6 +112,7 @@ __all__ = [
     "TreeImage",
     "build_tree",
     "UNSET",
+    "Unset",
     "DataMap",
     "InitData",
     "KVPair",

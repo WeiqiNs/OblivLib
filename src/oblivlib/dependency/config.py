@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_args, override
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypedDict, get_args, override
 
 from oblivlib.dependency.heap_index import compute_level
 
@@ -235,6 +235,13 @@ class AccessBudget:
         return math.floor(self.a * height + self.b)
 
 
+class TextbookFields(TypedDict):
+    paths_per_round: int
+    search_budget: AccessBudget
+    insert_budget: AccessBudget
+    delete_budget: AccessBudget
+
+
 @dataclass(frozen=True, kw_only=True)
 class TreeOmapConfig(OmapConfig):
     MIN_BUDGETS: ClassVar[dict[OdsOp, AccessBudget]] = {}
@@ -256,12 +263,18 @@ class TreeOmapConfig(OmapConfig):
         return getattr(self, f"{op}_budget") or self.minimums(cached=self.cached)[op]
 
     @classmethod
-    def textbook_fields(cls) -> dict[str, Any]:
-        return {"paths_per_round": 1, **{f"{op}_budget": budget for op, budget in cls.TEXTBOOK_BUDGETS.items()}}
+    def textbook_fields(cls) -> TextbookFields:
+        budgets = cls.TEXTBOOK_BUDGETS
+        return TextbookFields(
+            paths_per_round=1,
+            search_budget=budgets["search"],
+            insert_budget=budgets["insert"],
+            delete_budget=budgets["delete"],
+        )
 
     @classmethod
-    def textbook(cls, **kwargs: Any) -> Self:
-        return cls(**kwargs, **cls.textbook_fields())
+    def textbook(cls, **kwargs: Any) -> Self:  # pyright: ignore[reportAny, reportExplicitAny]
+        return cls(**kwargs, **cls.textbook_fields())  # pyright: ignore[reportAny]
 
     def __post_init__(self) -> None:
         super().__post_init__()

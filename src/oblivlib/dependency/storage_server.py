@@ -57,11 +57,15 @@ def _check_tree_shape(level: int, row_bytes: int | None) -> None:
         raise ProtocolError(f"StorageServer: row_bytes must be >= 1, got {row_bytes}.")
 
 
-def _path_of(tree: TreeStore, leaves: list[int]) -> list[int]:
+def _check_leaves(tree: TreeStore, leaves: list[int]) -> None:
     leaf_range = 1 << (tree.level - 1)
     for leaf in leaves:
         if not 0 <= leaf < leaf_range:
             raise ProtocolError(f"StorageServer: leaf {leaf} is outside [0, {leaf_range}).")
+
+
+def _path_of(tree: TreeStore, leaves: list[int]) -> list[int]:
+    _check_leaves(tree, leaves)
     return path_indices(leaves, tree.level)
 
 
@@ -76,14 +80,14 @@ def _validate_batch(session: _Session, batch: Batch) -> None:
         for row in write.rows:
             tree.check_row(row)
     for read in batch.reads:
-        _path_of(session.require_tree(read.label), read.leaves)
+        _check_leaves(session.require_tree(read.label), read.leaves)
 
 
 def _apply_batch(session: _Session, batch: Batch) -> BatchReply:
     for write in batch.writes:
         tree = session.trees[write.label]
         tree.write_rows(path_indices(write.leaves, tree.level), write.rows)
-    results = []
+    results: list[list[bytes]] = []
     for read in batch.reads:
         tree = session.trees[read.label]
         results.append(tree.read_rows(path_indices(read.leaves, tree.level)))
@@ -101,7 +105,7 @@ class StorageServer:
     """
 
     def __init__(self, storage_dir: str | Path | None = None):
-        self._storage_dir = None if storage_dir is None else Path(storage_dir)
+        self._storage_dir: Path | None = None if storage_dir is None else Path(storage_dir)
         self._sessions: dict[str, _Session] = {}
 
     @property

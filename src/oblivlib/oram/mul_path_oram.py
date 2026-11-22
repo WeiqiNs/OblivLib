@@ -1,7 +1,9 @@
+from collections.abc import Mapping
 from dataclasses import replace
 
 from oblivlib.dependency import UNSET, DataMap
 from oblivlib.dependency.config import MulPathOramConfig
+from oblivlib.dependency.types import Unset
 from oblivlib.oram.path_oram import PathOram
 
 
@@ -9,7 +11,7 @@ class MulPathOram(PathOram[MulPathOramConfig]):
     def __init__(self, config: MulPathOramConfig):
         super().__init__(replace(config, stash_scale=config.stash_scale * config.stash_scale_multiplier))
 
-    def operate_on_keys(self, key_value_map: DataMap) -> DataMap:
+    def operate_on_keys(self, key_value_map: Mapping[int, bytes | Unset]) -> DataMap:
         for key, value in key_value_map.items():
             self._require_access(key, value)
         if not key_value_map:
@@ -27,5 +29,5 @@ class MulPathOram(PathOram[MulPathOramConfig]):
                 data.value = value
             data.leaf = new_leaves[key]
         self._write_back()
-        self._accessing = False
+        self._accessing: bool = False
         return read_values

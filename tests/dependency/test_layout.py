@@ -4,18 +4,17 @@ from pathlib import Path
 import pytest
 
 import oblivlib
-from oblivlib.dependency import AVLData, BPlusData, CapacityError, Data
+from oblivlib.dependency import AVLNode, CapacityError, OramBlock
 from oblivlib.dependency.layout import (
     Array,
     BitFields,
     Bytes,
     FixedBytes,
     Optional,
+    Pair,
     Record,
     Seq,
     UInt,
-    Variant,
-    block_layout,
 )
 
 
@@ -31,10 +30,13 @@ from oblivlib.dependency.layout import (
         pytest.param(Optional(UInt(8)), 0, id="optional-present-zero"),
         pytest.param(Array(UInt(4), 3), [0, 15, 7], id="array"),
         pytest.param(Seq(Bytes(2), 4), [b"a", b"bc"], id="seq-partial"),
-        pytest.param(Record((UInt(8), Bytes(2))), (5, b"hi"), id="record-tuple"),
+        pytest.param(Pair(UInt(8), Bytes(2)), (5, b"hi"), id="pair"),
         pytest.param(
             Record(
+                AVLNode,
                 (
+                    Bytes(2),
+                    UInt(6),
                     Bytes(4),
                     Optional(Bytes(2)),
                     Optional(UInt(6)),
@@ -43,9 +45,10 @@ from oblivlib.dependency.layout import (
                     Optional(UInt(6)),
                     UInt(8),
                 ),
-                AVLData,
             ),
-            AVLData(value=b"v", r_key=b"rk", r_leaf=3, r_height=2, l_key=None, l_leaf=None, l_height=0),
+            AVLNode(
+                key=b"k", leaf=5, value=b"v", r_key=b"rk", r_leaf=3, r_height=2, l_key=None, l_leaf=None, l_height=0
+            ),
             id="record-avl-node",
         ),
     ],
@@ -56,25 +59,12 @@ def test_every_value_encodes_to_the_declared_size_and_round_trips(field, value):
     assert field.decode(encoded) == value
 
 
-def test_a_variant_keeps_one_size_and_rebuilds_the_chosen_layout():
-    keys = Seq(Bytes(2), 2)
-    leaf = Record((keys, Seq(Bytes(3), 2)), BPlusData)
-    internal = Record((keys, Seq(Record((UInt(64), UInt(6))), 3)), BPlusData)
-    node = Variant((leaf, internal), lambda value: 0 if len(value.keys) == len(value.values) else 1)
-    leaf_value = BPlusData(keys=[b"a"], values=[b"xyz"])
-    internal_value = BPlusData(keys=[b"a", b"b"], values=[(2**64 - 1, 0), (1, 63), (2, 5)])
-
-    rows = [node.encode(leaf_value), node.encode(internal_value)]
-
-    assert {len(row) for row in rows} == {node.size}
-    assert [node.decode(row) for row in rows] == [leaf_value, internal_value]
-
-
-def test_a_block_layout_rebuilds_the_block_without_touching_it():
-    layout = block_layout(UInt(8), UInt(6), Bytes(4))
-    block = Data(key=200, leaf=63, value=b"abcd")
+def test_a_record_writes_its_fields_in_declaration_order_and_rebuilds_the_block_without_touching_it():
+    layout = Record(OramBlock, (UInt(8), UInt(6), Bytes(4)))
+    block = OramBlock(key=200, leaf=63, value=b"abcd")
+    assert layout.encode(block) == bytes([200, 63, 4]) + b"abcd"
     assert layout.decode(layout.encode(block)) == block
-    assert block == Data(key=200, leaf=63, value=b"abcd")
+    assert block == OramBlock(key=200, leaf=63, value=b"abcd")
 
 
 @pytest.mark.parametrize(
@@ -86,9 +76,8 @@ def test_a_block_layout_rebuilds_the_block_without_touching_it():
         pytest.param(FixedBytes(3), b"ab", "exactly 3", id="fixed-bytes-short"),
         pytest.param(Array(UInt(4), 2), [1, 2, 3], "exactly 2", id="array-wrong-count"),
         pytest.param(Seq(UInt(4), 2), [1, 2, 3], "at most 2", id="seq-too-many"),
-        pytest.param(Record((UInt(4), UInt(4))), (1, 16), "4-bit", id="record-inner-field"),
+        pytest.param(Pair(UInt(4), UInt(4)), (1, 16), "4-bit", id="pair-inner-field"),
         pytest.param(Optional(UInt(4)), 16, "4-bit", id="optional-inner-field"),
-        pytest.param(Record((UInt(4), UInt(4))), (1,), "1 values do not fit a record of 2", id="record-short"),
     ],
 )
 def test_a_value_that_does_not_fit_its_field_raises_capacity_error(field, value, message):
@@ -105,9 +94,8 @@ def test_a_value_that_does_not_fit_its_field_raises_capacity_error(field, value,
         pytest.param(Optional(UInt(4)), "Optional(UInt(4))", id="optional"),
         pytest.param(Array(UInt(4), 2), "Array(UInt(4), 2)", id="array"),
         pytest.param(Seq(Bytes(2), 3), "Seq(Bytes(2), 3)", id="seq"),
-        pytest.param(Record((UInt(8), Bytes(1))), "Record(tuple, [UInt(8), Bytes(1)])", id="record-tuple"),
-        pytest.param(block_layout(UInt(8), UInt(6), Bytes(4)), "Record(Data, [", id="record-class"),
-        pytest.param(Variant((UInt(8), Bytes(1)), lambda value: 0), "Variant([UInt(8), Bytes(1)])", id="variant"),
+        pytest.param(Pair(UInt(8), Bytes(1)), "Pair(UInt(8), Bytes(1))", id="pair"),
+        pytest.param(Record(OramBlock, (UInt(8), UInt(6), Bytes(4))), "Record(OramBlock, [", id="record-class"),
     ],
 )
 def test_a_row_of_the_wrong_length_names_its_layout(field, name):

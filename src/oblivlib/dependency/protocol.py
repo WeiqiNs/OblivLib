@@ -102,8 +102,8 @@ ERROR_KINDS: dict[str, type[OblivlibError]] = {
 }
 
 _ENCODER = msgspec.msgpack.Encoder()
-_REQUESTS = msgspec.msgpack.Decoder(Request)
-_REPLIES = msgspec.msgpack.Decoder(Reply)
+_REQUESTS: msgspec.msgpack.Decoder[Request] = msgspec.msgpack.Decoder(Request)
+_REPLIES: msgspec.msgpack.Decoder[Reply] = msgspec.msgpack.Decoder(Reply)
 
 
 def encode(message: Request | Reply) -> bytes:

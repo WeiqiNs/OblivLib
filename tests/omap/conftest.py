@@ -7,6 +7,7 @@ import pytest
 
 from oblivlib.dependency import (
     AvlOmapConfig,
+    BPlusLeaf,
     BPlusOmapConfig,
     DaOramConfig,
     GroupOmapConfig,
@@ -71,11 +72,10 @@ def verify_avl_invariants(omap, model):
         assert (low is None or low < key) and (high is None or key < high), (
             f"BST order violated at {key} (bounds {low}, {high})"
         )
-        value = data.value
-        l_height = walk(value.l_key, value.l_leaf, low, key) if value.l_key is not None else 0
-        r_height = walk(value.r_key, value.r_leaf, key, high) if value.r_key is not None else 0
-        assert value.l_height == l_height, f"node {key}: stored l_height {value.l_height} != {l_height}"
-        assert value.r_height == r_height, f"node {key}: stored r_height {value.r_height} != {r_height}"
+        l_height = walk(data.l_key, data.l_leaf, low, key) if data.l_key is not None else 0
+        r_height = walk(data.r_key, data.r_leaf, key, high) if data.r_key is not None else 0
+        assert data.l_height == l_height, f"node {key}: stored l_height {data.l_height} != {l_height}"
+        assert data.r_height == r_height, f"node {key}: stored r_height {data.r_height} != {r_height}"
         assert abs(l_height - r_height) <= 1, f"node {key} unbalanced (l={l_height}, r={r_height})"
         return 1 + max(l_height, r_height)
 
@@ -92,14 +92,11 @@ def verify_bplus_invariants(omap, model):
     leaf_depths = set()
     min_keys = (omap._order - 1) // 2
 
-    def is_leaf(value):
-        return len(value.keys) == len(value.values)
-
     def walk(block_id, leaf, low, high, depth):
         assert block_id in blocks, f"block {block_id} referenced by a pointer but not present"
         data = blocks[block_id]
         assert data.leaf == leaf, f"block {block_id}: stored leaf {data.leaf} != pointer {leaf}"
-        value = data.value
+        value = data
         assert list(value.keys) == sorted(value.keys), f"keys unsorted in block {block_id}: {value.keys}"
         assert len(value.keys) < omap._order, f"block {block_id} overfull: {len(value.keys)} keys"
         if depth > 0:
@@ -108,15 +105,15 @@ def verify_bplus_invariants(omap, model):
             assert (low is None or low <= k) and (high is None or k < high), (
                 f"key {k} outside routing bounds ({low}, {high}) in block {block_id}"
             )
-        if is_leaf(value):
+        if isinstance(value, BPlusLeaf):
             leaf_depths.add(depth)
             for k, v in zip(value.keys, value.values, strict=True):
                 assert k not in collected, f"duplicate key {k} across leaves"
                 collected[k] = v
         else:
-            assert len(value.values) == len(value.keys) + 1, f"internal arity off in block {block_id}"
+            assert len(value.children) == len(value.keys) + 1, f"internal arity off in block {block_id}"
             low_i = low
-            for i, (child_id, child_leaf) in enumerate(value.values):
+            for i, (child_id, child_leaf) in enumerate(value.children):
                 high_i = value.keys[i] if i < len(value.keys) else high
                 walk(child_id, child_leaf, low_i, high_i, depth + 1)
                 low_i = value.keys[i] if i < len(value.keys) else low_i

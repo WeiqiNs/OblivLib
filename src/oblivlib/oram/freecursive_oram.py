@@ -1,7 +1,8 @@
 import secrets
-from typing import Any, NamedTuple, Protocol, override
+from typing import NamedTuple, Protocol, override
 
 from oblivlib.dependency.config import FreecursiveOramConfig, ResetMethod
+from oblivlib.dependency.types import Unset
 from oblivlib.oram.counter_oram import GC, CounterMixin, CounterOram, CounterPosMapLevel
 from oblivlib.oram.tree_base_oram import pos_map_keys
 
@@ -75,7 +76,7 @@ class FreecursiveCounterMixin(CounterMixin[FreecursiveOramConfig], Protocol):
                 self._get_previous_leaf_from_prf(key=key * num_ic + i, gc=gc + 1, ic=0),
             )
             if key * num_ic + i < self._last_oram_data
-            else ResetEntry(None, secrets.randbelow(pow(2, self._last_oram_level - 1)), None)
+            else ResetEntry(None, secrets.randbelow(1 << (self._last_oram_level - 1)), None)
             for i in range(num_ic)
         ]
         return [reset_leaves[i : i + 2] for i in range(0, len(reset_leaves), 2)]
@@ -103,7 +104,7 @@ class FreecursivePosMapLevel(CounterPosMapLevel[FreecursiveOramConfig], Freecurs
         leaves = [each.cur_leaf for each in chunk]
         self._read_paths(leaves)
         data = self._require_in_stash(key=cur_key)
-        data.value, next_chunks = self._advance(cur_key, data.value, cur_index)
+        data.word, next_chunks = self._advance(cur_key, data.word, cur_index)
         data.leaf = entry.new_leaf
         self._remap_others(chunk, key=cur_key)
         self._write_paths()
@@ -133,7 +134,7 @@ class FreecursiveOram(CounterOram[FreecursiveOramConfig, FreecursivePosMapLevel]
         return chunks
 
     @override
-    def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
+    def _operate_on_key_without_eviction(self, key: int, value: bytes | Unset) -> bytes:
         before, entry, chunk, after = _split_at_key(self._get_leaf_from_pos_map(key=key), key)
         for other in before:
             self._pass_reset_chunk(other)

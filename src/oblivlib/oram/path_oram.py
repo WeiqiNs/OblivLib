@@ -1,6 +1,7 @@
-from typing import Any, Never, override
+from typing import Never, override
 
 from oblivlib.dependency import InitData, OramConfig, PosMap
+from oblivlib.dependency.types import Unset
 from oblivlib.oram.tree_base_oram import TreeBaseOram
 
 
@@ -22,7 +23,7 @@ class PathOram[ConfigT: OramConfig](TreeBaseOram[ConfigT, Never]):
         self._host_tree(self._build_tree(self._initial_blocks(data)))
 
     @override
-    def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
+    def _operate_on_key_without_eviction(self, key: int, value: bytes | Unset) -> bytes:
         leaf = self._pos_map[key]
         new_leaf = self._get_new_leaf()
         self._pos_map[key] = new_leaf

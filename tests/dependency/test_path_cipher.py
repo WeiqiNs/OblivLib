@@ -1,15 +1,15 @@
 import pytest
 
-from oblivlib.dependency import AesGcm, CapacityError, Data
-from oblivlib.dependency.layout import Bytes, UInt, block_layout
+from oblivlib.dependency import AesGcm, CapacityError, OramBlock
+from oblivlib.dependency.layout import Bytes, Record, UInt
 from oblivlib.dependency.path_cipher import PlainPathCipher, SealedPathCipher, make_path_cipher
 
 _DATA_SIZE = 16
-_BLOCK = block_layout(UInt(6), UInt(6), Bytes(_DATA_SIZE))
+_BLOCK = Record(OramBlock, (UInt(6), UInt(6), Bytes(_DATA_SIZE)))
 
 
-def _blocks(count: int, value_size: int = _DATA_SIZE) -> list[Data]:
-    return [Data(key=63 - i, leaf=63 - i, value=bytes([i + 1]) * value_size) for i in range(count)]
+def _blocks(count: int, value_size: int = _DATA_SIZE) -> list[OramBlock]:
+    return [OramBlock(key=63 - i, leaf=63 - i, value=bytes([i + 1]) * value_size) for i in range(count)]
 
 
 def test_sealed_rows_have_one_length_whatever_the_occupancy():

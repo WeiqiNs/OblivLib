@@ -1,6 +1,6 @@
 from collections.abc import Iterable
 
-from oblivlib.dependency.types import Data, PathData
+from oblivlib.dependency.types import Block, PathData
 
 
 def compute_level(num_data: int) -> int:
@@ -40,13 +40,14 @@ def leaf_lca(leaf_a: int, leaf_b: int, level: int) -> int:
     return (a >> (a ^ b).bit_length()) - 1
 
 
-def empty_path(level: int, leaves: list[int]) -> PathData:
+def empty_path[B](level: int, leaves: list[int]) -> PathData[B]:
     return {index: [] for index in path_indices(leaves, level)}
 
 
-def fill_data_to_path(data: Data, path: PathData, *, leaves: list[int], level: int, bucket_size: int) -> bool:
-    data_leaf = data.require_leaf()
-    index = max(leaf_lca(data_leaf, leaf, level) for leaf in leaves)
+def fill_data_to_path[B: Block[object]](
+    data: B, path: PathData[B], *, leaves: list[int], level: int, bucket_size: int
+) -> bool:
+    index = max(leaf_lca(data.leaf, leaf, level) for leaf in leaves)
 
     while index >= 0:
         if len(path[index]) < bucket_size:

@@ -3,7 +3,8 @@ from typing import Any
 
 import pytest
 
-from oblivlib.dependency import UNSET, ContractError, DaOramConfig, Data, FreecursiveOramConfig, RecursiveOramConfig
+from oblivlib.dependency import UNSET, ContractError, DaOramConfig, FreecursiveOramConfig, RecursiveOramConfig
+from oblivlib.dependency.types import OramBlock
 from oblivlib.oram import DAOram, FreecursiveOram, RecursivePathOram
 
 
@@ -107,7 +108,7 @@ class TestOramCommon:
 
     def test_a_full_bucket_of_widest_blocks_seals_to_one_row(self, make_oram, client, encryptor):
         oram = make_oram(num_data=1000, data_size=33, client=client, encryptor=encryptor, bucket_size=5)
-        widest = [Data(key=999, leaf=oram._leaf_range - 1, value=b"\xff" * 33) for _ in range(5)]
+        widest = [OramBlock(key=999, leaf=oram._leaf_range - 1, value=b"\xff" * 33) for _ in range(5)]
         row = oram._cipher.seal_bucket(widest)
         assert len(row) == oram._cipher.row_bytes
         assert oram._cipher.open_bucket(row) == widest

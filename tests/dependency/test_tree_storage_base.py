@@ -1,11 +1,11 @@
 import pytest
 
 from oblivlib.dependency import (
-    Data,
+    OramBlock,
     PathOramConfig,
     StashOverflowError,
 )
-from oblivlib.dependency.tree_storage_base import TreeStorageBase
+from oblivlib.oram import PathOram
 
 
 def test_default_names_are_unique_per_config(client):
@@ -16,20 +16,20 @@ def test_default_names_are_unique_per_config(client):
 
 
 def test_stash_overflow_raises(client):
-    base = TreeStorageBase(PathOramConfig(num_data=4, data_size=4, stash_scale=1, client=client, name="tiny"))
-    base._stash = [Data(key=i, leaf=0) for i in range(base._stash_capacity)]
+    base = PathOram(PathOramConfig(num_data=4, data_size=4, stash_scale=1, client=client, name="tiny"))
+    base._stash = [OramBlock(key=i, leaf=0, value=b"") for i in range(base._stash_capacity)]
     base._check_stash()
 
-    base._stash.append(Data(key=99, leaf=0))
-    with pytest.raises(StashOverflowError, match="TreeStorageBase 'tiny'") as raised:
+    base._stash.append(OramBlock(key=99, leaf=0, value=b""))
+    with pytest.raises(StashOverflowError, match="PathOram 'tiny'") as raised:
         base._check_stash()
     assert isinstance(raised.value, MemoryError)
 
 
 def test_require_in_stash_finds_the_block_or_names_the_missing_key(client):
-    base = TreeStorageBase(PathOramConfig(num_data=4, data_size=4, client=client, name="stash"))
-    block = Data(key=1, leaf=0)
-    base._stash = [Data(key=0, leaf=0), block]
+    base = PathOram(PathOramConfig(num_data=4, data_size=4, client=client, name="stash"))
+    block = OramBlock(key=1, leaf=0, value=b"")
+    base._stash = [OramBlock(key=0, leaf=0, value=b""), block]
     assert base._require_in_stash(1) is block
     with pytest.raises(KeyError, match="Key 2 not found"):
         base._require_in_stash(2)

@@ -1,16 +1,17 @@
 from collections.abc import Callable
-from typing import Any, override
+from typing import override
 
 from oblivlib.dependency import Blake2Prf, ContractError, hash_data_to_leaf, hash_data_to_map
-from oblivlib.dependency.config import OramOstOmapConfig
+from oblivlib.dependency.config import OramOstOmapConfig, TreeOmapConfig
 from oblivlib.dependency.contract import require_omap_init, require_omap_key, require_value
-from oblivlib.omap.base_omap import BaseOmap
-from oblivlib.omap.ost_base_omap import ROOT, OstBaseOmap
-from oblivlib.oram.tree_base_oram import TreeBaseOram
+from oblivlib.dependency.types import Block
+from oblivlib.omap.base_omap import BaseOmap, KvList
+from oblivlib.omap.ost_base_omap import OstBaseOmap, Root
+from oblivlib.oram.tree_base_oram import Oram
 
 
-class OramOstOmap(BaseOmap):
-    def __init__(self, config: OramOstOmapConfig, ost: OstBaseOmap[Any, Any], oram: TreeBaseOram[Any, Any]):
+class OramOstOmap[OmapConfigT: TreeOmapConfig, KeyT, NodeT: Block[object]](BaseOmap):
+    def __init__(self, config: OramOstOmapConfig, ost: OstBaseOmap[OmapConfigT, KeyT, NodeT], oram: Oram):
         required = self.oram_data_size(ost)
         if oram.data_size < required:
             raise ValueError(
@@ -24,8 +25,8 @@ class OramOstOmap(BaseOmap):
             )
 
         self._config: OramOstOmapConfig = config
-        self._ost: OstBaseOmap[Any, Any] = ost
-        self._oram: TreeBaseOram[Any, Any] = oram
+        self._ost: OstBaseOmap[OmapConfigT, KeyT, NodeT] = ost
+        self._oram: Oram = oram
 
         self._ost.update_mul_tree_height(num_tree=self._num_data)
 
@@ -33,13 +34,13 @@ class OramOstOmap(BaseOmap):
         self._size: int = 0
 
     @staticmethod
-    def oram_data_size(ost: OstBaseOmap[Any, Any]) -> int:
+    def oram_data_size[C: TreeOmapConfig, K, N: Block[object]](ost: OstBaseOmap[C, K, N]) -> int:
         return ost.root_layout.size
 
-    def _encode_root(self, root: ROOT | None) -> bytes:
+    def _encode_root(self, root: Root[KeyT] | None) -> bytes:
         return self._ost.root_layout.encode(root)
 
-    def _decode_root(self, value: bytes) -> ROOT | None:
+    def _decode_root(self, value: bytes) -> Root[KeyT] | None:
         return None if value == b"" else self._ost.root_layout.decode(value)
 
     @property
@@ -51,7 +52,7 @@ class OramOstOmap(BaseOmap):
         return f"{type(self).__name__} {self._ost.name!r}"
 
     @override
-    def init_server_storage(self, data: list[tuple[bytes, bytes]] | None = None) -> None:
+    def init_server_storage(self, data: KvList | None = None) -> None:
         require_omap_init(self._identity, data or [], key_size=self._ost.key_size, data_size=self._ost.data_size)
         if len(data or []) > self._num_data:
             raise ContractError(f"{self._identity}: {len(data or [])} initial keys exceed num_data={self._num_data}.")

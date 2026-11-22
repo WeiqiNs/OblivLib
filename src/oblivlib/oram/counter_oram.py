@@ -1,15 +1,27 @@
 from abc import ABC, abstractmethod
-from dataclasses import replace
-from functools import cache, cached_property
-from typing import Any, Protocol, override
+from dataclasses import dataclass, replace
+from functools import cache
+from typing import Protocol, override
 
-from oblivlib.dependency import Blake2Prf, Data, InitData
+from oblivlib.dependency import Blake2Prf, InitData
 from oblivlib.dependency.config import CounterOramConfig
-from oblivlib.dependency.layout import BitFields, Field, UInt
+from oblivlib.dependency.heap_index import compute_level
+from oblivlib.dependency.layout import BitFields, Field, Record, UInt
 from oblivlib.dependency.tree_storage_base import TreeStorageBase
-from oblivlib.oram.tree_base_oram import TreeBaseOram, pos_map_level_count
+from oblivlib.oram.tree_base_oram import PosMapLevel, TreeBaseOram, pos_map_level_count
 
 GC = 0
+
+
+@dataclass
+class CounterBlock:
+    key: int
+    leaf: int
+    word: int
+
+
+class CounterLevel(PosMapLevel, Protocol):
+    def build_and_host(self) -> None: ...
 
 
 @cache
@@ -50,38 +62,40 @@ class CounterMixin[ConfigT: CounterOramConfig](Protocol):
             + gc.to_bytes(-(-self._gc_length // 8), "big")
             + ic.to_bytes(-(-self._ic_length // 8), "big")
         )
-        return self._prf.digest_mod_n(message, pow(2, level - 1))
+        return self._prf.digest_mod_n(message, 1 << (level - 1))
 
     def _get_previous_leaf_from_prf(self, key: int, gc: int, ic: int) -> int:
         return self._prf_leaf(key=key, gc=gc, ic=ic, level=self._last_oram_level, num_data=self._last_oram_data)
 
 
-class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT], CounterMixin[ConfigT]):
+class CounterPosMapLevel[ConfigT: CounterOramConfig](TreeStorageBase[ConfigT, CounterBlock], CounterMixin[ConfigT]):
     def __init__(self, config: ConfigT, *, last_oram_data: int, last_oram_level: int):
         super().__init__(config)
-        self._prf = Blake2Prf(key=config.prf_key)
-        self._last_oram_data = last_oram_data
-        self._last_oram_level = last_oram_level
+        self._prf: Blake2Prf = Blake2Prf(key=config.prf_key)
+        self._last_oram_data: int = last_oram_data
+        self._last_oram_level: int = last_oram_level
 
-    @cached_property
+    @property
     @override
-    def _value_field(self) -> Field[Any]:
-        return UInt(self._config.count_length)
+    def _block_layout(self) -> Field[CounterBlock]:
+        return Record(
+            CounterBlock, (UInt.covering(self._num_data - 1), self._leaf_field, UInt(self._config.count_length))
+        )
 
     def build_and_host(self) -> None:
         self._host_tree(
             self._build_tree(
-                Data(
+                CounterBlock(
                     key=key,
                     leaf=self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data),
-                    value=0,
+                    word=0,
                 )
                 for key in range(self._num_data)
             )
         )
 
 
-class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
+class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterLevel](
     TreeBaseOram[ConfigT, LevelT], CounterMixin[ConfigT], ABC
 ):
     def __init__(self, config: ConfigT):
@@ -89,10 +103,11 @@ class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
             raise ValueError(f"num_data ({config.num_data}) must be greater than the on-chip size ({config.on_chip}).")
         super().__init__(config)
 
-        self._prf = Blake2Prf(key=config.prf_key)
-        self._levels = self._make_levels()
-        smallest = self._levels[0] if self._levels else self
-        self._last_oram_data, self._last_oram_level = smallest._num_data, smallest._level
+        self._prf: Blake2Prf = Blake2Prf(key=config.prf_key)
+        levels, (last_oram_data, last_oram_level) = self._make_levels()
+        self._levels: list[LevelT] = levels
+        self._last_oram_data: int = last_oram_data
+        self._last_oram_level: int = last_oram_level
         self._on_chip_storage: list[int] = [0] * -(-self._last_oram_data // self._num_ic)
 
     @abstractmethod
@@ -102,25 +117,26 @@ class CounterOram[ConfigT: CounterOramConfig, LevelT: CounterPosMapLevel[Any]](
     def _initial_leaf(self, key: int) -> int:
         return self._prf_leaf(key=key, gc=0, ic=0, level=self._level, num_data=self._num_data)
 
-    def _make_levels(self) -> list[LevelT]:
+    def _make_levels(self) -> tuple[list[LevelT], tuple[int, int]]:
         levels: list[LevelT] = []
         last_oram_data, last_oram_level = self._num_data, self._level
         count = pos_map_level_count(num_data=self._num_data, on_chip=self._config.on_chip, ratio=self._num_ic) - 1
         for i in range(count):
+            num_data = -(-last_oram_data // self._num_ic)
             level = self._new_level(
                 replace(
                     self._config,
                     prf_key=self._prf.key,
-                    num_data=-(-last_oram_data // self._num_ic),
+                    num_data=num_data,
                     name=f"{self._name}_pos_map_{count - i - 1}",
                 ),
                 last_oram_data=last_oram_data,
                 last_oram_level=last_oram_level,
             )
             levels.append(level)
-            last_oram_data, last_oram_level = level._num_data, level._level
+            last_oram_data, last_oram_level = num_data, compute_level(num_data)
         levels.reverse()
-        return levels
+        return levels, (last_oram_data, last_oram_level)
 
     @override
     def init_server_storage(self, data: InitData | None = None) -> None:

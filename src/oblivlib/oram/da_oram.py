@@ -1,7 +1,8 @@
 import secrets
-from typing import Any, NamedTuple, Protocol, override
+from typing import NamedTuple, Protocol, override
 
 from oblivlib.dependency.config import DaOramConfig
+from oblivlib.dependency.types import Unset
 from oblivlib.oram.counter_oram import GC, CounterMixin, CounterOram, CounterPosMapLevel
 from oblivlib.oram.tree_base_oram import pos_map_keys
 
@@ -54,7 +55,7 @@ class DaCounterMixin(CounterMixin[DaOramConfig], Protocol):
         if offset != -1 and key * self._num_ic + offset < self._last_oram_data:
             word, cur_leaf, new_leaf = self._step(key, word, offset)
             return word, ResetLeaf(offset, cur_leaf, new_leaf)
-        return word, ResetLeaf(-1, secrets.randbelow(pow(2, self._last_oram_level - 1)), None)
+        return word, ResetLeaf(-1, secrets.randbelow(1 << (self._last_oram_level - 1)), None)
 
 
 class DaPosMapLevel(CounterPosMapLevel[DaOramConfig], DaCounterMixin):
@@ -64,9 +65,9 @@ class DaPosMapLevel(CounterPosMapLevel[DaOramConfig], DaCounterMixin):
         self._read_paths(leaves)
 
         data = self._require_in_stash(key=cur_key)
-        word, next_cur_leaf, next_new_leaf = self._step(cur_key, data.value, cur_index)
+        word, next_cur_leaf, next_new_leaf = self._step(cur_key, data.word, cur_index)
         word, reset = self._reset(cur_key, word)
-        data.value = word
+        data.word = word
         data.leaf = new_leaf
         self._update_stash_leaf(key=r_key, new_leaf=r_new_leaf)
 
@@ -100,7 +101,7 @@ class DAOram(CounterOram[DaOramConfig, DaPosMapLevel], DaCounterMixin):
         return DaStep(cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf)
 
     @override
-    def _operate_on_key_without_eviction(self, key: int, value: Any) -> Any:
+    def _operate_on_key_without_eviction(self, key: int, value: bytes | Unset) -> bytes:
         cur_leaf, new_leaf, r_index, r_cur_leaf, r_new_leaf = self._get_leaf_from_pos_map(key=key)
 
         r_key = None if r_index == -1 else key // self._num_ic * self._num_ic + r_index

@@ -2,27 +2,28 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from typing import Any
 
-from oblivlib.dependency.types import Data, FieldTuple, KVPair
+from oblivlib.dependency.types import KVPair
 
 
 @dataclass
-class AVLData(FieldTuple):
-    value: Any = None
-    r_key: Any = None
+class AVLNode:
+    key: bytes
+    leaf: int
+    value: bytes
+    r_key: bytes | None = None
     r_leaf: int | None = None
     r_height: int = 0
-    l_key: Any = None
+    l_key: bytes | None = None
     l_leaf: int | None = None
     l_height: int = 0
 
 
 class AVLTreeNode:
     def __init__(self, kv_pair: KVPair):
-        self.key: Any = kv_pair.key
+        self.key: bytes = kv_pair.key
         self.leaf: int | None = None
-        self.value: Any = kv_pair.value
+        self.value: bytes = kv_pair.value
         self.height: int = 1
         self.left_node: AVLTreeNode | None = None
         self.right_node: AVLTreeNode | None = None
@@ -30,7 +31,7 @@ class AVLTreeNode:
 
 class AVLTree:
     def __init__(self, leaf_range: int):
-        self._leaf_range = leaf_range
+        self._leaf_range: int = leaf_range
 
     def _get_new_leaf(self) -> int:
         return secrets.randbelow(self._leaf_range)
@@ -100,30 +101,31 @@ class AVLTree:
 
         return self._balance(root)
 
-    def get_data_list(self, root: AVLTreeNode) -> list[Data]:
+    def get_data_list(self, root: AVLTreeNode) -> list[AVLNode]:
         root.leaf = self._get_new_leaf()
         stack = [root]
 
-        result = []
+        result: list[AVLNode] = []
 
         while stack:
             node = stack.pop()
-            avl_data = AVLData(value=node.value)
+            assert node.leaf is not None
+            block = AVLNode(key=node.key, leaf=node.leaf, value=node.value)
 
             if node.left_node:
                 node.left_node.leaf = self._get_new_leaf()
-                avl_data.l_key = node.left_node.key
-                avl_data.l_leaf = node.left_node.leaf
-                avl_data.l_height = node.left_node.height
+                block.l_key = node.left_node.key
+                block.l_leaf = node.left_node.leaf
+                block.l_height = node.left_node.height
                 stack.append(node.left_node)
 
             if node.right_node:
                 node.right_node.leaf = self._get_new_leaf()
-                avl_data.r_key = node.right_node.key
-                avl_data.r_leaf = node.right_node.leaf
-                avl_data.r_height = node.right_node.height
+                block.r_key = node.right_node.key
+                block.r_leaf = node.right_node.leaf
+                block.r_height = node.right_node.height
                 stack.append(node.right_node)
 
-            result.append(Data(key=node.key, leaf=node.leaf, value=avl_data))
+            result.append(block)
 
         return result

@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self, override
+from typing import Self, override
 
 from oblivlib.dependency.errors import MissingResultError, UnknownLabelError
 from oblivlib.dependency.heap_index import path_indices, path_leaves
@@ -51,9 +51,9 @@ class ExecuteResult:
     """The reads of one ``Client.execute()``, keyed by label: each path read maps each node's heap index to
     its row (``b""`` for an absent node)."""
 
-    results: dict[str, Any]
+    results: dict[str, PathRows]
 
-    def require(self, label: str) -> Any:
+    def require(self, label: str) -> PathRows:
         if label not in self.results:
             raise MissingResultError(f"ExecuteResult has no result for label {label!r}.")
         return self.results[label]
@@ -78,7 +78,7 @@ class Backend(ABC):
 
 class LocalBackend(Backend):
     def __init__(self, server: StorageServer):
-        self._server = server
+        self._server: StorageServer = server
 
     @override
     def call(self, message: Request) -> Reply:
@@ -101,8 +101,8 @@ class LocalBackend(Backend):
 
 class TransportBackend(Backend):
     def __init__(self, transport: Transport):
-        self._transport = transport
-        self._wire_bytes = 0
+        self._transport: Transport = transport
+        self._wire_bytes: int = 0
 
     @override
     def call(self, message: Request) -> Reply:
@@ -132,6 +132,7 @@ class Client:
     ``add_*`` calls only stage queries, keyed by storage label. ``execute()`` sends them as one batch
     whose writes (merged per label, a later write winning) apply before its reads (deduplicated per label), and returns their ``ExecuteResult``. A failed batch raises
     the server's error and leaves nothing staged. An ``execute()`` with nothing staged is still a round.
+    ``send_writes()`` is ``execute()`` for a batch that stages no reads, so it returns nothing.
 
     With ``defer_writes`` (the default), an ``execute()`` that stages only writes sends nothing: its writes
     ride on the next batch, ahead of that batch's reads. ``flush()`` sends them on their own, every
@@ -153,9 +154,9 @@ class Client:
         defer_writes: bool = True,
         ship_file: Callable[[Path], str] | None = None,
     ) -> None:
-        self._backend = backend
-        self._defer_writes = defer_writes
-        self._ship_file = ship_file
+        self._backend: Backend = backend
+        self._defer_writes: bool = defer_writes
+        self._ship_file: Callable[[Path], str] | None = ship_file
 
         self._session: str | None = None
         self._levels: dict[str, int] = {}
@@ -163,10 +164,10 @@ class Client:
         self._read_paths: dict[str, set[int]] = {}
         self._write_paths: dict[str, PathRows] = {}
 
-        self._rounds = 0
-        self._payload_bytes = 0
-        self._wire_baseline = 0
-        self._closed = False
+        self._rounds: int = 0
+        self._payload_bytes: int = 0
+        self._wire_baseline: int = 0
+        self._closed: bool = False
 
     @classmethod
     def local(cls, storage_dir: str | Path | None = None, *, defer_writes: bool = True) -> Self:
@@ -198,12 +199,11 @@ class Client:
         self._wire_baseline = self._backend.wire_bytes
 
     def level_of(self, label: str) -> int:
-        if label not in self._levels:
-            raise UnknownLabelError(f"Client: tree label {label!r} is not hosted by this client.")
+        self._require_label(label)
         return self._levels[label]
 
     def add_read_path(self, label: str, leaves: Iterable[int]) -> None:
-        self.level_of(label)
+        self._require_label(label)
         self._read_paths.setdefault(label, set()).update(leaves)
 
     def add_write_path(self, label: str, data: PathRows) -> None:
@@ -219,9 +219,14 @@ class Client:
             return ExecuteResult({})
         return self._send_batch(self._take_writes(), reads)
 
+    def send_writes(self) -> None:
+        assert not self._read_paths, "send_writes() sends no reads; stage reads only before execute()"
+        if not (self._defer_writes and self._has_pending_writes()):
+            self._send_writes(self._take_writes())
+
     def flush(self) -> None:
         if self._has_pending_writes():
-            self._send_batch(self._take_writes(), [])
+            self._send_writes(self._take_writes())
 
     def create_tree(self, label: str, *, level: int, row_bytes: int | None) -> None:
         self.flush()
@@ -254,8 +259,12 @@ class Client:
             self._session = expect_reply(self._backend.call(Hello(version=PROTOCOL_VERSION)), HelloReply).session
         return self._session
 
+    def _require_label(self, label: str) -> None:
+        if label not in self._levels:
+            raise UnknownLabelError(f"Client: tree label {label!r} is not hosted by this client.")
+
     def _expect_ok(self, message: Request) -> None:
-        expect_reply(self._backend.call(message), Ok)
+        _ = expect_reply(self._backend.call(message), Ok)
 
     def _host_file(self, label: str, image: FileImage) -> None:
         self.flush()
@@ -274,7 +283,7 @@ class Client:
         except BaseException:
             adopted = None if self._ship_file is not None else self._backend.storage_dir
             if adopted is not None and (adopted / filename).is_file():
-                shutil.move(adopted / filename, image.path)
+                _ = shutil.move(adopted / filename, image.path)
             raise
         self._levels[label] = image.level
 
@@ -287,7 +296,7 @@ class Client:
         if storage_dir is None:
             return None
         filename = f"adopt-{secrets.token_hex(8)}.tree"
-        shutil.move(path, storage_dir / filename)
+        _ = shutil.move(path, storage_dir / filename)
         return filename
 
     def _stream_rows(self, label: str, rows: Iterable[bytes]) -> None:
@@ -326,13 +335,16 @@ class Client:
         self._read_paths = {}
         return reads
 
+    def _send_writes(self, writes: list[WritePath]) -> None:
+        _ = self._send_batch(writes, [])
+
     def _send_batch(self, writes: list[WritePath], reads: list[ReadPath]) -> ExecuteResult:
         batch = Batch(session=self._require_session(), writes=writes, reads=reads)
         self._rounds += 1
         reply = expect_reply(self._backend.call(batch), BatchReply)
 
         payload = sum(len(row) for op in writes for row in op.rows)
-        results: dict[str, Any] = {}
+        results: dict[str, PathRows] = {}
         for op, rows in zip(reads, reply.results, strict=True):
             payload += sum(len(row) for row in rows)
             results[op.label] = dict(zip(path_indices(op.leaves, self._levels[op.label]), rows, strict=True))
