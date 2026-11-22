@@ -334,3 +334,37 @@ class BPlusOmapConfig(TreeOmapConfig):
 @dataclass(frozen=True, kw_only=True)
 class GroupOmapConfig(OmapConfig):
     name: str = field(default_factory=unique_name("group_omap"))
+
+
+@dataclass(frozen=True, kw_only=True)
+class GraphOsConfig:
+    """Construction parameters for GraphOS, an undirected graph over an AVL OMAP and a keyed value tree.
+
+    ``num_vertices``: the most vertices the graph may hold. ``max_deg``: the most neighbors a vertex may
+    have; every query pads to it. ``data_size``: the most bytes a vertex value may hold. The remaining
+    fields configure both trees as in ``OramConfig``.
+    """
+
+    num_vertices: int
+    max_deg: int
+    data_size: int
+    client: Client
+    name: str = field(default_factory=unique_name("graphos"))
+    bucket_size: int = 4
+    stash_scale: int = 7
+    encryptor: Encryptor | None = None
+
+    def __post_init__(self) -> None:
+        if self.num_vertices < 1:
+            raise ValueError(f"num_vertices must be >= 1, got {self.num_vertices}.")
+        if not 1 <= self.max_deg < self.num_vertices:
+            raise ValueError(
+                f"max_deg must be >= 1 and below num_vertices ({self.num_vertices}), as in a simple graph, "
+                + f"got {self.max_deg}."
+            )
+        if self.data_size < 0:
+            raise ValueError(f"data_size must be >= 0, got {self.data_size}.")
+
+    @property
+    def num_entries(self) -> int:
+        return self.num_vertices * (1 + 2 * self.max_deg)

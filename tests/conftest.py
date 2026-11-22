@@ -18,6 +18,7 @@ from oblivlib.dependency import (
     TransportBackend,
 )
 from oblivlib.dependency.protocol import Batch, Reply, Request
+from oblivlib.graph import GraphOS
 from oblivlib.omap import GroupOmap, OramOstOmap
 from oblivlib.omap.ost_base_omap import OstBaseOmap
 from oblivlib.oram import TreeBaseOram, freecursive_oram
@@ -75,6 +76,8 @@ def _read_all_blocks(storage):
 def _storages(scheme):
     if isinstance(scheme, OramOstOmap):
         return [*_storages(scheme._oram), *_storages(scheme._ost)]
+    if isinstance(scheme, GraphOS):
+        return [*_storages(scheme._omap), scheme._store]
     if isinstance(scheme, GroupOmap):
         return [*_storages(scheme._upper_oram), scheme._lower_oram]
     if isinstance(scheme, TreeBaseOram):
@@ -171,6 +174,11 @@ def assert_deferral_preserves_access(seeded_access):
 @pytest.fixture
 def duplicate_blocks():
     return _duplicate_blocks
+
+
+@pytest.fixture
+def read_all_blocks():
+    return _read_all_blocks
 
 
 @pytest.fixture

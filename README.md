@@ -45,6 +45,11 @@ handover to settle them in a fixed number of rounds.
 `batch_size=k` (AVL and B+) adds `search_batch` / `insert_batch` for up to `k` keys in the
 same number of rounds as one key, each round reading up to `k` paths.
 
+## Graph
+
+- [GraphOS](https://www.vldb.org/pvldb/vol16/p4324-chamani.pdf), over a batched AVL OMAP and a keyed value tree:
+  [`graphos.py`](https://github.com/WeiqiNs/OblivLib/blob/main/src/oblivlib/graph/graphos.py)
+
 ## Installation
 
 ```bash
