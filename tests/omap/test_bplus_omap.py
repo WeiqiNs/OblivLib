@@ -1,226 +1,163 @@
-import math
+import random
 
-from daoram.omap import BPlusOmap
+import pytest
+
+from oblivlib.dependency import AesGcm, BPlusOmapConfig
+from oblivlib.omap import BPlusOmap
+from oblivlib.omap.bplus_omap import bplus_max_levels
 
 
-class TestBPlusOmap:
-    def test_int_key(self, num_data, client):
-        # Create the omap instance.
-        omap = BPlusOmap(order=5, num_data=num_data, key_size=10, data_size=10, client=client)
+@pytest.mark.parametrize(
+    ("order", "num_keys", "levels"),
+    [(3, 2, 1), (3, 3, 2), (3, 4, 2), (3, 5, 3), (3, 9, 4), (3, 17, 5), (4, 6, 2), (4, 7, 3), (5, 12, 2), (5, 13, 3)],
+)
+def test_level_bound_is_the_fewest_keys_a_root_split_needs(order, num_keys, levels):
+    assert bplus_max_levels(num_keys, order) == levels
 
-        # Initialize an empty storage.
-        omap.init_server_storage()
 
-        # Issue some insert queries.
-        for i in range(num_data):
-            omap.insert(key=i, value=i)
-
-        # Issue some search update queries.
-        for i in range(num_data):
-            omap.search(key=i, value=i * 2)
-
-        # Issue some search queries.
-        for i in range(num_data):
-            assert omap.search(key=i) == i * 2
-
-        # Issue some fast update queries.
-        for i in range(num_data):
-            omap.fast_search(key=i, value=i * 3)
-
-        # Issue some fast search queries.
-        for i in range(num_data):
-            assert omap.fast_search(key=i) == i * 3
-
-    def test_str_key(self, num_data, client):
-        # Create the omap instance.
-        omap = BPlusOmap(order=10, num_data=num_data, key_size=10, data_size=10, client=client)
-
-        # Initialize an empty storage.
-        omap.init_server_storage()
-
-        # Issue some insert queries.
-        for i in range(num_data):
-            omap.insert(key=f"{i}", value=f"{i}")
-
-        # Issue some search queries.
-        for i in range(num_data):
-            assert omap.search(key=f"{i}") == f"{i}"
-
-        # Issue some fast search queries.
-        for i in range(num_data):
-            assert omap.fast_search(key=f"{i}") == f"{i}"
-
-    def test_str_key_with_enc(self, num_data, client, encryptor):
-        # Create the omap instance.
-        omap = BPlusOmap(
-            order=10, num_data=num_data, key_size=10, data_size=10, client=client, encryptor=encryptor
-        )
-
-        # Initialize an empty storage.
-        omap.init_server_storage()
-
-        # Issue some insert queries.
-        for i in range(num_data // 10):
-            omap.insert(key=f"{i}", value=f"{i}")
-
-        # Issue some search queries.
-        for i in range(num_data // 10):
-            assert omap.search(key=f"{i}") == f"{i}"
-
-        # Issue some fast search queries.
-        for i in range(num_data // 10):
-            assert omap.fast_search(key=f"{i}") == f"{i}"
-
-    def test_str_key_with_enc_file(self, num_data, client, encryptor, test_file):
-        # Create the omap instance.
-        omap = BPlusOmap(
-            order=10,
+def _witness_omap(client, order, num_data, paths_per_round, *, cached=False):
+    return BPlusOmap(
+        BPlusOmapConfig(
+            order=order,
             num_data=num_data,
-            key_size=10,
-            data_size=10,
+            key_size=4,
+            data_size=4,
             client=client,
-            filename=str(test_file),
-            encryptor=encryptor
+            distinguishable=True,
+            paths_per_round=paths_per_round,
+            cached=cached,
         )
+    )
 
-        # Initialize an empty storage.
-        omap.init_server_storage()
 
-        # Issue some insert queries.
-        for i in range(num_data // 10):
-            omap.insert(key=f"{i}", value=f"{i}")
+@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
+def test_sorted_inserts_reach_every_single_path_bplus_bound(client, order, num_data, witness):
+    omap = _witness_omap(client, order, num_data, paths_per_round=1)
+    height = bplus_max_levels(num_data, order)
+    assert bplus_max_levels(num_data + 1, order) == height + 1
+    omap.init_server_storage()
+    for i in range(witness):
+        omap.insert(b"%04d" % i, b"v")
+    assert (omap._op_fetches, omap._op_owed) == (height, 2 * height - 2)
+    assert omap._op_fetches + omap._op_owed == omap._budget == 3 * height - 2
+    omap.search(b"0000")
+    assert omap._op_fetches == omap._budget == height
+    omap.delete(b"9999")
+    assert (omap._op_fetches, omap._op_owed) == (2 * height - 1, 2 * height - 2)
+    assert omap._op_fetches + omap._op_owed == omap._budget == 4 * height - 3
 
-        # Issue some search queries.
-        for i in range(num_data // 10):
-            assert omap.search(key=f"{i}") == f"{i}"
 
-        # Issue some fast search queries.
-        for i in range(num_data // 10):
-            assert omap.fast_search(key=f"{i}") == f"{i}"
+@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
+def test_sorted_inserts_reach_every_two_path_bplus_bound(client, order, num_data, witness):
+    omap = _witness_omap(client, order, num_data, paths_per_round=2)
+    height = bplus_max_levels(num_data, order)
+    omap.init_server_storage()
+    for i in range(witness):
+        omap.insert(b"%04d" % i, b"v")
+    assert (omap._op_fetches, omap._op_owed) == (height, 2 * height - 3)
+    assert omap._op_fetches + -(-omap._op_owed // 2) == omap._budget == 2 * height - 1
+    omap.search(b"0000")
+    assert omap._op_fetches == omap._budget == height
+    omap.delete(b"9999")
+    assert (omap._op_fetches, omap._op_owed) == (height, 2 * height - 3)
+    assert omap._op_fetches + -(-omap._op_owed // 2) == omap._budget == 2 * height - 1
 
-    def test_data_init(self, num_data, client):
-        # Set the init number of data.
-        num_init = pow(2, 8)
 
-        # Create the omap instance.
-        omap = BPlusOmap(order=20, num_data=num_data, key_size=10, data_size=10, client=client)
+@pytest.mark.parametrize(("order", "num_data", "witness"), [(3, 8, 7), (3, 16, 13), (5, 36, 19), (5, 108, 55)])
+@pytest.mark.parametrize(
+    ("paths_per_round", "insert_rounds", "insert_carry", "delete_rounds", "delete_carry"),
+    [(2, 1, -3, 1, -3), (1, 2, -1, 2, -2)],
+    ids=["two_path", "one_path"],
+)
+def test_sorted_inserts_reach_every_cached_bplus_bound(
+    client, order, num_data, witness, paths_per_round, insert_rounds, insert_carry, delete_rounds, delete_carry
+):
+    omap = _witness_omap(client, order, num_data, paths_per_round, cached=True)
+    height = bplus_max_levels(num_data, order)
+    omap.init_server_storage()
+    for i in range(witness - 1):
+        omap.insert(b"%04d" % i, b"v")
+    omap.drain()
+    omap.insert(b"%04d" % (witness - 1), b"v")
+    assert omap._op_fetches == height
+    assert omap._budget == insert_rounds * height - (insert_rounds - 1)
+    assert omap._owed == (2 if paths_per_round == 2 else 1) * height + insert_carry
+    omap.drain()
+    omap.delete(b"9999")
+    assert omap._budget == delete_rounds * height - (delete_rounds - 1)
+    assert omap._owed == 2 * height + delete_carry <= omap._carry_limit == 2 * height - 2
+    assert omap.search(b"0000") == b"v"
 
-        # Initialize storage with a list of key-value pairs.
-        omap.init_server_storage(data=[(f"{i}", f"{i}") for i in range(num_init)])
 
-        # Issue some insert queries.
-        for i in range(num_init, num_data):
-            omap.insert(key=f"{i}", value=f"{i}")
+def _batch_bplus(client, *, batch_size, num_data=64, **config):
+    omap = BPlusOmap(
+        BPlusOmapConfig(
+            order=3, num_data=num_data, key_size=4, data_size=4, client=client, batch_size=batch_size, **config
+        )
+    )
+    omap.init_server_storage()
+    return omap
 
-        # Issue some search queries.
-        for i in range(num_data):
-            assert omap.search(key=f"{i}") == f"{i}"
 
-        # Issue some fast search queries.
-        for i in range(num_data):
-            assert omap.fast_search(key=f"{i}") == f"{i}"
+def test_a_batch_of_sorted_keys_splits_one_leaf_repeatedly(client, check_bplus_invariants):
+    omap = _batch_bplus(client, batch_size=8)
+    pairs = [(b"%04d" % i, b"v") for i in range(8)]
+    omap.insert_batch(pairs)
+    check_bplus_invariants(omap, dict(pairs))
+    omap.insert_batch([(b"%04d" % i, b"w") for i in range(8, 16)])
+    check_bplus_invariants(omap, {**dict(pairs), **{b"%04d" % i: b"w" for i in range(8, 16)}})
 
-    def test_mul_data_init(self, num_data, client):
-        # Set extra data to insert.
-        extra = 3
-        size_group = math.floor(math.log2(num_data))
-        num_group = num_data // size_group
 
-        # Set the init number of data.
-        init_data = [[(j, j) for j in range(i * 2 * size_group, (i * 2 + 1) * size_group)] for i in range(num_group)]
+def test_an_even_order_tree_reaches_its_level_bound_through_deletes(client):
+    omap = BPlusOmap(BPlusOmapConfig(order=4, num_data=7, key_size=4, data_size=4, client=client))
+    omap.init_server_storage()
+    history = [("i", 3), ("i", 34), ("i", 37), ("i", 32), ("i", 5), ("i", 4), ("i", 35), ("d", 32)]
+    history += [("i", 36), ("d", 3), ("d", 36), ("d", 34), ("i", 25), ("i", 14), ("i", 8)]
+    for op, key in history:
+        if op == "i":
+            omap.insert(b"%04d" % key, b"v")
+        else:
+            omap.delete(b"%04d" % key)
+    omap.search(b"0004")
+    assert omap._op_fetches == bplus_max_levels(7, 4) == 3
 
-        # Create the omap instance.
-        omap = BPlusOmap(order=30, num_data=num_data, key_size=10, data_size=10, client=client)
 
-        # Initialize storage with lists of key-value pairs.
-        roots = omap.init_mul_tree_server_storage(data_list=init_data)
+@pytest.mark.parametrize("order", [3, 4])
+def test_small_order_deletes_keep_the_tree_valid(client, check_bplus_invariants, order):
+    omap = BPlusOmap(BPlusOmapConfig(num_data=64, key_size=4, data_size=4, client=client, order=order))
+    omap.init_server_storage()
+    rng = random.Random(order)
+    model: dict[bytes, bytes] = {}
+    for step in range(400):
+        key = b"%02d" % rng.randrange(48)
+        if key in model and rng.random() < 0.5:
+            assert omap.delete(key) == model.pop(key)
+        elif key not in model:
+            omap.insert(key, b"%d" % step)
+            model[key] = b"%d" % step
+        if step % 20 == 0:
+            check_bplus_invariants(omap, model)
+    check_bplus_invariants(omap, model)
 
-        # Insert some data to each subgroup.
-        for i, root in enumerate(roots):
-            # Update root.
-            omap.root = root
-            # Insert some new data to this root.
-            for j in range(extra):
-                omap.insert(key=(i * 2 + 1) * size_group + j, value=(i * 2 + 1) * size_group + j)
-            # Update the stored root.
-            roots[i] = omap.root
 
-        # For each root, search the key stored in this root.
-        for i, root in enumerate(roots):
-            # Update root.
-            omap.root = root
-            # Search for data in this root.
-            for j in range(i * 2 * size_group, (i * 2 + 1) * size_group + extra):
-                assert omap.search(key=j) == j
-
-            # Fast search for data in this root.
-            for j in range(i * 2 * size_group, (i * 2 + 1) * size_group + extra):
-                assert omap.fast_search(key=j) == j
-
-    def test_delete_int_key(self, num_data, client):
-        # Create the omap instance with lower order to test underflow handling.
-        omap = BPlusOmap(order=5, num_data=num_data, key_size=10, data_size=10, client=client)
-
-        # Initialize an empty storage.
-        omap.init_server_storage()
-
-        # Insert enough data to create a multi-level tree.
-        num_insert = 30
-        for i in range(num_insert):
-            omap.insert(key=i, value=i)
-
-        # Verify all inserted.
-        for i in range(num_insert):
-            assert omap.search(key=i) == i
-
-        # Delete every other element (triggers underflow handling).
-        for i in range(0, num_insert, 2):
-            deleted = omap.delete(key=i)
-            assert deleted == i
-
-        # Verify deleted elements return None.
-        for i in range(0, num_insert, 2):
-            assert omap.search(key=i) is None
-
-        # Verify remaining elements still exist.
-        for i in range(1, num_insert, 2):
-            assert omap.search(key=i) == i
-
-    def test_delete_all(self, num_data, client):
-        # Create the omap instance with lower order to test underflow.
-        omap = BPlusOmap(order=5, num_data=num_data, key_size=10, data_size=10, client=client)
-
-        # Initialize an empty storage.
-        omap.init_server_storage()
-
-        # Insert enough data to create a multi-level tree.
-        num_insert = 20
-        for i in range(num_insert):
-            omap.insert(key=i, value=i)
-
-        # Delete all in reverse order (triggers cascading underflows).
-        for i in range(num_insert - 1, -1, -1):
-            deleted = omap.delete(key=i)
-            assert deleted == i
-
-        # Verify tree is empty.
-        assert omap.root is None
-
-    def test_delete_nonexistent(self, num_data, client):
-        # Create the omap instance.
-        omap = BPlusOmap(order=5, num_data=num_data, key_size=10, data_size=10, client=client)
-
-        # Initialize an empty storage.
-        omap.init_server_storage()
-
-        # Insert some data.
-        for i in range(10):
-            omap.insert(key=i, value=i)
-
-        # Delete nonexistent key.
-        result = omap.delete(key=999)
-        assert result is None
-
-        # Verify existing data still intact.
-        for i in range(10):
-            assert omap.search(key=i) == i
+@pytest.mark.parametrize("first_block_id", [0, 2**40])
+def test_insert_delete_churn_never_outgrows_the_row(client, first_block_id):
+    omap = BPlusOmap(
+        BPlusOmapConfig(order=3, num_data=64, key_size=10, data_size=10, client=client, encryptor=AesGcm())
+    )
+    omap._block_id = first_block_id
+    omap.init_server_storage()
+    model = {}
+    workload = random.Random(f"churn-{first_block_id}")
+    for _ in range(1500):
+        key = b"%010d" % workload.randrange(48)
+        if key in model and workload.random() < 0.5:
+            assert omap.delete(key) == model.pop(key)
+        elif key not in model:
+            model[key] = workload.randbytes(10)
+            omap.insert(key, model[key])
+        else:
+            assert omap.search(key) == model[key]
+    assert omap._block_id - first_block_id > 64
+    for key, value in model.items():
+        assert omap.search(key) == value

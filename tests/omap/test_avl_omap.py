@@ -1,156 +1,222 @@
-import math
+import random
 
-from daoram.omap import AVLOmap
+import pytest
+
+from oblivlib.dependency import AvlOmapConfig
+from oblivlib.omap import AVLOmap
+from oblivlib.omap.avl_omap import avl_delete_fetches, avl_max_height
 
 
-class TestAVLOmap:
-    def test_int_key(self, num_data, client):
-        # Create the omap instance.
-        omap = AVLOmap(num_data=num_data, key_size=10, data_size=10, client=client)
+def _key(i: int) -> bytes:
+    return f"{i:06d}".encode()
 
-        # Initialize an empty storage.
-        omap.init_server_storage()
 
-        # Issue some insert queries.
-        for i in range(num_data):
-            omap.insert(key=i, value=i)
+@pytest.mark.parametrize(
+    ("num_nodes", "height"), [(1, 1), (2, 2), (3, 2), (4, 3), (6, 3), (7, 4), (53, 7), (54, 8), (87, 8), (88, 9)]
+)
+def test_height_bound_is_the_tallest_avl_tree_with_that_many_nodes(num_nodes, height):
+    assert avl_max_height(num_nodes) == height
 
-        # Issue some search update queries.
-        for i in range(num_data):
-            omap.search(key=i, value=i * 2)
 
-        # Issue some search queries.
-        for i in range(num_data):
-            assert omap.search(key=i) == i * 2
+@pytest.mark.parametrize(("height", "fetches"), [(1, 1), (2, 2), (3, 4), (4, 5), (5, 7), (8, 11), (11, 16)])
+def test_delete_fetch_bound_is_the_longest_path_plus_two_fetches_per_rotation(height, fetches):
+    assert avl_delete_fetches(height) == fetches
 
-        # Issue some fast update queries.
-        for i in range(num_data):
-            omap.fast_search(key=i, value=i * 3)
 
-        # Issue some fast search queries.
-        for i in range(num_data):
-            assert omap.fast_search(key=i) == i * 3
+def _fibonacci(height, *, mirror=False):
+    if height <= 0:
+        return None
+    taller, shorter = _fibonacci(height - 1, mirror=mirror), _fibonacci(height - 2, mirror=mirror)
+    return (shorter, taller) if mirror else (taller, shorter)
 
-    def test_int_key_with_enc(self, num_data, client, encryptor):
-        # Create the omap instance.
-        omap = AVLOmap(
-            num_data=num_data, key_size=10, data_size=10, client=client, encryptor=encryptor
-        )
 
-        # Initialize an empty storage.
-        omap.init_server_storage()
+def _rotation_chain(height):
+    if height <= 0:
+        return None
+    if height == 1:
+        return (None, None)
+    return (_fibonacci(height - 1, mirror=True), _rotation_chain(height - 2))
 
-        # Issue some insert queries.
-        for i in range(num_data // 10):
-            omap.insert(key=i, value=i)
 
-        # Issue some search queries.
-        for i in range(num_data // 10):
-            assert omap.search(key=i) == i
+def _balanced_spine(height):
+    if height == 1:
+        return (None, None)
+    return (_fibonacci(height - 1), _balanced_spine(height - 1))
 
-        # Issue some fast search queries.
-        for i in range(num_data // 10):
-            assert omap.fast_search(key=i) == i
 
-    def test_int_key_with_enc_file(self, num_data, client, encryptor, test_file):
-        # Create the omap instance.
-        omap = AVLOmap(
-            num_data=num_data,
-            key_size=10,
-            data_size=10,
-            client=client,
-            filename=str(test_file),
-            encryptor=encryptor
-        )
+def _worst_insert_tree(height):
+    return (_fibonacci(height - 2), _balanced_spine(height - 1))
 
-        # Initialize an empty storage.
-        omap.init_server_storage()
 
-        # Issue some insert queries.
-        for i in range(num_data // 10):
-            omap.insert(key=i, value=i)
+def _worst_delete_tree(height):
+    if height % 2:
+        return _rotation_chain(height)
+    return (_fibonacci(height - 2), _rotation_chain(height - 1))
 
-        # Issue some search queries.
-        for i in range(num_data // 10):
-            assert omap.search(key=i) == i
 
-        # Issue some fast search queries.
-        for i in range(num_data // 10):
-            assert omap.fast_search(key=i) == i
+def _keys_by_path(tree):
+    keys = {}
 
-    def test_str_key(self, num_data, client):
-        # Create the omap instance.
-        omap = AVLOmap(num_data=num_data, key_size=10, data_size=10, client=client)
+    def walk(node, path):
+        if node is not None:
+            walk(node[0], path + "L")
+            keys[path] = len(keys)
+            walk(node[1], path + "R")
 
-        # Initialize an empty storage.
-        omap.init_server_storage()
+    walk(tree, "")
+    return keys
 
-        # Issue some insert queries.
-        for i in range(num_data):
-            omap.insert(key=f"{i}", value=f"{i}")
 
-        # Issue some search queries.
-        for i in range(num_data):
-            assert omap.search(key=f"{i}") == f"{i}"
+def _build(client, num_data, keys_by_path, scale=1, *, cached=False):
+    omap = AVLOmap(
+        AvlOmapConfig(num_data=num_data, key_size=8, data_size=8, client=client, distinguishable=True, cached=cached)
+    )
+    omap.init_server_storage()
+    for path in sorted(keys_by_path, key=lambda path: (len(path), path)):
+        omap.insert(_key(scale * keys_by_path[path]), b"v")
+    return omap
 
-        # Issue some fast search queries.
-        for i in range(num_data):
-            assert omap.fast_search(key=f"{i}") == f"{i}"
 
-    def test_data_init(self, num_data, client):
-        # Set the init number of data.
-        num_init = pow(2, 8)
+def _work(omap):
+    return omap._op_fetches + omap._op_owed
 
-        # Create the omap instance.
-        omap = AVLOmap(num_data=num_data, key_size=10, data_size=10, client=client)
 
-        # Initialize storage with a list of key-value pairs.
-        omap.init_server_storage(data=[(f"{i}", f"{i}") for i in range(num_init)])
+@pytest.mark.parametrize("height", [3, 5, 6, 8])
+def test_each_avl_bound_is_reached(client, height):
+    tree = _keys_by_path(_fibonacci(height))
+    deepest = max(tree, key=len)
+    fibonacci_nodes = len(tree)
 
-        # Issue some insert queries.
-        for i in range(num_init, num_data):
-            omap.insert(key=f"{i}", value=f"{i}")
+    omap = _build(client, fibonacci_nodes, tree)
+    omap.search(_key(tree[deepest]))
+    assert (omap._op_fetches, omap._op_owed) == (height, 0)
+    assert _work(omap) == omap._budget
 
-        # Issue some search queries.
-        for i in range(num_data):
-            assert omap.search(key=f"{i}") == f"{i}"
+    spine = _keys_by_path(_worst_insert_tree(height))
+    omap = _build(client, len(spine) + 1, spine, scale=2)
+    assert avl_max_height(len(spine) + 1) == height
+    omap.insert(_key(2 * spine["R" * (height - 1)] + 1), b"v")
+    assert (omap._op_fetches, omap._op_owed) == (height, height)
+    assert _work(omap) == omap._budget
 
-        # Issue some fast search queries.
-        for i in range(num_data):
-            assert omap.fast_search(key=f"{i}") == f"{i}"
+    worst = _keys_by_path(_worst_delete_tree(height))
+    omap = _build(client, len(worst), worst)
+    assert len(worst) == fibonacci_nodes
+    end_of_short_path = max((path for path in worst if set(path) <= {"R"}), key=len)
+    omap.delete(_key(worst[end_of_short_path]))
+    fetches = avl_delete_fetches(height)
+    assert (omap._op_fetches, omap._op_owed) == (fetches, 2 * height - fetches)
+    assert _work(omap) == omap._budget
 
-    def test_mul_data_init(self, num_data, client):
-        # Set extra data to insert.
-        extra = 3
-        size_group = math.floor(math.log2(num_data))
-        num_group = num_data // size_group
 
-        # Set the init number of data.
-        init_data = [[(j, j) for j in range(i * 2 * size_group, (i * 2 + 1) * size_group)] for i in range(num_group)]
+@pytest.mark.parametrize(
+    ("rounds_short", "message"), [(1, "needs more than its"), (0, "still need an eviction")], ids=["fetch", "evict"]
+)
+def test_an_op_short_of_its_bound_raises_instead_of_skipping_evictions(client, monkeypatch, rounds_short, message):
+    spine = _keys_by_path(_worst_insert_tree(5))
+    omap = _build(client, len(spine) + 1, spine, scale=2)
+    begin = omap._begin_op
 
-        # Create the omap instance.
-        omap = AVLOmap(num_data=num_data, key_size=10, data_size=10, client=client)
+    def short_begin(op):
+        begin(op)
+        omap._budget = omap._max_height - rounds_short
 
-        # Initialize storage with lists of key-value pairs.
-        roots = omap.init_mul_tree_server_storage(data_list=init_data)
+    monkeypatch.setattr(omap, "_begin_op", short_begin)
+    with pytest.raises(ValueError, match=message):
+        omap.insert(_key(2 * spine["R" * 4] + 1), b"v")
 
-        # Insert some data to each subgroup.
-        for i, root in enumerate(roots):
-            # Update root.
-            omap.root = root
-            # Insert some new data to this root.
-            for j in range(extra):
-                omap.insert(key=(i * 2 + 1) * size_group + j, value=(i * 2 + 1) * size_group + j)
-            # Update the stored root.
-            roots[i] = omap.root
 
-        # For each root, search the key stored in this root.
-        for i, root in enumerate(roots):
-            # Update root.
-            omap.root = root
-            # Search for data in this root.
-            for j in range(i * 2 * size_group, (i * 2 + 1) * size_group + extra):
-                assert omap.search(key=j) == j
-            # Fast search for data in this root.
-            for j in range(i * 2 * size_group, (i * 2 + 1) * size_group + extra):
-                assert omap.fast_search(key=j) == j
+@pytest.mark.parametrize("height", [3, 5, 6, 8])
+def test_each_cached_avl_bound_is_reached(client, height):
+    spine = _keys_by_path(_worst_insert_tree(height))
+    omap = _build(client, len(spine) + 1, spine, scale=2, cached=True)
+    omap.insert(_key(2 * spine["R" * (height - 1)] + 1), b"v")
+    assert omap._op_fetches == height
+    assert omap._budget == height + 1
+
+    worst = _keys_by_path(_worst_delete_tree(height))
+    omap = _build(client, len(worst), worst, cached=True)
+    end_of_short_path = max((path for path in worst if set(path) <= {"R"}), key=len)
+    omap.drain()
+    assert omap.delete(_key(worst[end_of_short_path])) == b"v"
+    fetches = avl_delete_fetches(height)
+    assert omap._op_fetches == omap._budget == fetches == (3 * height - 1) // 2
+    assert omap._owed == 2 * height - fetches <= omap._carry_limit
+    rest = [path for path in worst if path != end_of_short_path]
+    assert [omap.search(_key(worst[path])) for path in rest] == [b"v"] * len(rest)
+
+
+def test_a_wide_batch_holds_its_extra_paths_without_overflowing_the_stash(client):
+    omap = AVLOmap(AvlOmapConfig(num_data=1024, key_size=8, data_size=8, client=client, batch_size=128))
+    omap.init_server_storage([(_key(i), b"v") for i in range(1024)])
+    for start in range(0, 1024, 128):
+        assert omap.search_batch([(_key(i), None) for i in range(start, start + 128)]) == [b"v"] * 128
+    assert omap._max_stash > omap._stash_capacity
+
+
+def _omap(client, num_data: int) -> AVLOmap:
+    omap = AVLOmap(AvlOmapConfig(num_data=num_data, key_size=8, data_size=8, client=client))
+    omap.init_server_storage([(_key(i), _key(i)) for i in range(0, num_data, 2)])
+    return omap
+
+
+def test_delete_miss_moves_the_root(client):
+    omap = _omap(client, num_data=1024)
+    moved = 0
+    for i in range(1, 41, 2):
+        before = omap.root
+        assert omap.delete(_key(i)) is None
+        assert omap.root is not None and before is not None
+        assert omap.root[0] == before[0]
+        moved += omap.root[1] != before[1]
+    assert moved >= 18
+
+
+def _record_returns(omap: AVLOmap) -> dict[bytes, tuple[int | None, bytes | None, int]]:
+    returned: dict[bytes, tuple[int | None, bytes | None, int]] = {}
+    return_to_stash = omap._return_to_stash
+
+    def recording_return(blocks):
+        returned.update({node.key: (node.leaf, node.value.l_key, node.value.l_height) for node in blocks})
+        return_to_stash(blocks)
+
+    omap._return_to_stash = recording_return
+    return returned
+
+
+def test_rebalance_fetches_get_fresh_leaves(client):
+    omap = _omap(client, num_data=2048)
+    returned = _record_returns(omap)
+    fetched: list[tuple[bytes, int]] = []
+    fetch = omap._fetch_for_rebalance
+
+    def recording_fetch(key, leaf, parent_key):
+        fetched.append((key, leaf))
+        fetch(key=key, leaf=leaf, parent_key=parent_key)
+
+    omap._fetch_for_rebalance = recording_fetch
+    keys = list(range(0, 2048, 2))
+    random.Random(4).shuffle(keys)
+    total = stale = 0
+    for i in keys[:600]:
+        fetched.clear()
+        returned.clear()
+        assert omap.delete(_key(i)) == _key(i)
+        for key, leaf in fetched:
+            if key in returned:
+                total += 1
+                stale += returned[key][0] == leaf
+    assert total > 50
+    assert stale <= 2
+
+
+def test_two_children_delete_keeps_the_height_of_an_empty_key_child(client):
+    omap = AVLOmap(AvlOmapConfig(num_data=64, key_size=8, data_size=8, client=client))
+    omap.init_server_storage()
+    for key in [b"05", b"02", b"08", b"01", b"03", b"09", b""]:
+        omap.insert(key, b"v")
+    returned = _record_returns(omap)
+    assert omap.delete(b"02") == b"v"
+    _, l_key, l_height = returned[b"01"]
+    assert l_key == b""
+    assert l_height == 1
