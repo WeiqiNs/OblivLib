@@ -6,11 +6,6 @@
 OblivLib implements oblivious RAM, oblivious maps and oblivious graphs for a client/server setting: the
 client holds the keys and runs the algorithm, and the server only stores encrypted data.
 
-Related publications by the maintainers:
-
-- [Towards Practical Oblivious Map](https://doi.org/10.14778/3712221.3712235)
-- [Enabling Index-free Adjacency in Oblivious Graph Processing with Delayed Duplications](https://www.vldb.org/pvldb/vol19/p1826-cao.pdf)
-
 ## Schemes
 
 | Kind | Scheme | Class |
@@ -83,6 +78,35 @@ Runnable versions are in [`demo/`](demo): `python demo/server.py`, then `python 
 
 `client.metrics` counts rounds, bytes and time (server, network, encryption) across every scheme on that
 client, and `with client.measure() as m:` gives the same numbers for one span of work in `m.result`.
+
+## Citation
+
+If OblivLib is useful in your work, please cite our papers:
+
+```bibtex
+@article{cao2024oblivious,
+  title   = {Towards Practical Oblivious Map},
+  author  = {Cao, Xinle and Feng, Weiqi and Liu, Jian and Zhou, Jinjin and Fang, Wenjing and Wang, Lei and
+             Xu, Quanqing and Yang, Chuanhui and Ren, Kui},
+  journal = {Proceedings of the VLDB Endowment},
+  volume  = {18},
+  number  = {3},
+  pages   = {688--701},
+  year    = {2024},
+  doi     = {10.14778/3712221.3712235}
+}
+
+@article{feng2026grove,
+  title   = {Enabling Index-free Adjacency in Oblivious Graph Processing with Delayed Duplications},
+  author  = {Feng, Weiqi and Cao, Xinle and O'Neill, Adam and Yang, Chuanhui},
+  journal = {Proceedings of the VLDB Endowment},
+  volume  = {19},
+  number  = {8},
+  pages   = {1826--1839},
+  year    = {2026},
+  url     = {https://www.vldb.org/pvldb/vol19/p1826-cao.pdf}
+}
+```
 
 ## License
 
